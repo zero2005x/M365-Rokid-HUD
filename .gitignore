@@ -1,0 +1,57 @@
+# Android
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/captures
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# App build outputs
+/app/build/
+/app/release/
+
+# Kotlin
+*.class
+*.jar
+*.kotlin_module
+
+# Rust
+/ninebot-ffi/target/
+/ninebot-ble/target/
+**/*.rs.bk
+Cargo.lock
+
+# JNI Libraries (keep structure but ignore large binaries for now)
+# Uncomment if you want to include pre-built .so files:
+# /app/src/main/jniLibs/
+
+# Logs
+*.log
+log_*.txt
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.keystore
+*.jks
+google-services.json
+
+# Test outputs
+/app/build/outputs/
+/app/build/reports/

@@ -1,0 +1,26 @@
+# Ignore build directories
+.mi-token
+jniLibs/
+
+/jniLibs
+
+# Build artifacts
+target/
+
+# Rust-specific files
+*.rlib
+*.so
+*.dll
+*.dylib
+*.exe
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs and temporary files
+*.log

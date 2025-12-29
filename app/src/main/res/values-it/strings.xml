@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">M365 BLE App</string>
+    
+    <!-- Common -->
+    <string name="back">Indietro</string>
+    <string name="cancel">Annulla</string>
+    <string name="connect">Connetti</string>
+    <string name="disconnect">Disconnetti</string>
+    <string name="connected">Connesso</string>
+    <string name="connecting">Connessione…</string>
+    <string name="error">Errore</string>
+    <string name="unknown">Sconosciuto</string>
+    <string name="share">Condividi</string>
+    <string name="registered">Registrato</string>
+    
+    <!-- Units -->
+    <string name="unit_kmh">km/h</string>
+    <string name="unit_km">km</string>
+    <string name="unit_m">m</string>
+    <string name="unit_percent">%</string>
+    <string name="unit_celsius">°C</string>
+    <string name="unit_kb">KB</string>
+    
+    <!-- ScanScreen -->
+    <string name="scan_title">Scanner M365</string>
+    <string name="scan_bluetooth_permission_required">Autorizzazioni Bluetooth richieste!</string>
+    <string name="scan_failed_tap_retry">Scansione fallita: %1$s. Tocca per riprovare.</string>
+    <string name="scan_scanning">Ricerca monopattini M365…</string>
+    <string name="scan_rssi">RSSI: %1$d</string>
+    
+    <!-- ConnectDialog -->
+    <string name="dialog_connect_title">Connetti a %1$s</string>
+    <string name="dialog_address">Indirizzo: %1$s</string>
+    <string name="dialog_register_checkbox">Registra (Prima associazione)</string>
+    <string name="dialog_register_warning">ATTENZIONE: La registrazione disassocerà questo monopattino da altre app (es. Mi Home). Procedi solo se sei il proprietario.</string>
+    
+    <!-- DashboardScreen -->
+    <string name="dashboard_title">Dashboard M365</string>
+    <string name="dashboard_view_details">Visualizza Dettagli</string>
+    <string name="dashboard_view_logs">Visualizza Log</string>
+    
+    <!-- ScooterInfoScreen -->
+    <string name="scooter_info_title">Dettagli Monopattino</string>
+    <string name="info_speed_section">Info Velocità</string>
+    <string name="info_current_speed">Velocità Attuale</string>
+    <string name="info_avg_speed">Velocità Media</string>
+    <string name="info_battery_section">Info Batteria</string>
+    <string name="info_battery_level">Livello Batteria</string>
+    <string name="info_remaining_range">Autonomia Stimata</string>
+    <string name="info_trip_section">Viaggio Attuale</string>
+    <string name="info_trip_time">Tempo di Viaggio</string>
+    <string name="info_trip_distance">Distanza del Viaggio</string>
+    <string name="info_time_format">%1$d min %2$d sec</string>
+    <string name="info_stats_section">Statistiche Totali</string>
+    <string name="info_total_mileage">Chilometraggio Totale</string>
+    <string name="info_system_section">Stato del Sistema</string>
+    <string name="info_controller_temp">Temp. Controller</string>
+    
+    <!-- LoggingScreen -->
+    <string name="logs_title">Log</string>
+    <string name="logs_no_logs">Nessun log trovato.</string>
+    <string name="logs_share_title">Condividi Log</string>
+    
+    <!-- Connection States -->
+    <string name="state_logging_in">Accesso in corso…</string>
+    <string name="state_press_power_button">🔥 Premi il pulsante di accensione del monopattino! 🔥</string>
+    <string name="state_unknown_error">Errore sconosciuto</string>
+    
+    <!-- Errors -->
+    <string name="error_gatt_failed">Connessione GATT fallita</string>
+    <string name="error_token_missing">Token mancante dopo la registrazione!</string>
+    <string name="error_no_token">Nessun token per questo dispositivo. Scansiona e registra.</string>
+</resources>

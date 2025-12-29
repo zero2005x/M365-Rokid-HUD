@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">M365 BLE App</string>
+    
+    <!-- Common -->
+    <string name="back">Back</string>
+    <string name="cancel">Cancel</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="connected">Connected</string>
+    <string name="connecting">Connecting…</string>
+    <string name="error">Error</string>
+    <string name="unknown">Unknown</string>
+    <string name="share">Share</string>
+    <string name="registered">Registered</string>
+    
+    <!-- Units -->
+    <string name="unit_kmh">km/h</string>
+    <string name="unit_km">km</string>
+    <string name="unit_m">m</string>
+    <string name="unit_percent">%</string>
+    <string name="unit_celsius">°C</string>
+    <string name="unit_kb">KB</string>
+    
+    <!-- ScanScreen -->
+    <string name="scan_title">M365 Scanner</string>
+    <string name="scan_bluetooth_permission_required">Bluetooth permissions required!</string>
+    <string name="scan_failed_tap_retry">Scan failed: %1$s. Tap to retry.</string>
+    <string name="scan_scanning">Scanning for M365 scooters…</string>
+    <string name="scan_rssi">RSSI: %1$d</string>
+    
+    <!-- ConnectDialog -->
+    <string name="dialog_connect_title">Connect to %1$s</string>
+    <string name="dialog_address">Address: %1$s</string>
+    <string name="dialog_register_checkbox">Register (First Time Binding)</string>
+    <string name="dialog_register_warning">WARNING: Registration will unpair this scooter from other apps (e.g., Mi Home). Proceed only if you own this device.</string>
+    
+    <!-- DashboardScreen -->
+    <string name="dashboard_title">M365 Dashboard</string>
+    <string name="dashboard_view_details">View Details</string>
+    <string name="dashboard_view_logs">View Logs</string>
+    
+    <!-- ScooterInfoScreen -->
+    <string name="scooter_info_title">Scooter Details</string>
+    <string name="info_speed_section">Speed Info</string>
+    <string name="info_current_speed">Current Speed</string>
+    <string name="info_avg_speed">Average Speed</string>
+    <string name="info_battery_section">Battery Info</string>
+    <string name="info_battery_level">Battery Level</string>
+    <string name="info_remaining_range">Estimated Range</string>
+    <string name="info_trip_section">Current Trip</string>
+    <string name="info_trip_time">Trip Time</string>
+    <string name="info_trip_distance">Trip Distance</string>
+    <string name="info_time_format">%1$d min %2$d sec</string>
+    <string name="info_stats_section">Total Statistics</string>
+    <string name="info_total_mileage">Total Mileage</string>
+    <string name="info_system_section">System Status</string>
+    <string name="info_controller_temp">Controller Temp</string>
+    
+    <!-- LoggingScreen -->
+    <string name="logs_title">Logs</string>
+    <string name="logs_no_logs">No logs found.</string>
+    <string name="logs_share_title">Share Log</string>
+    
+    <!-- Connection States -->
+    <string name="state_logging_in">Logging in…</string>
+    <string name="state_press_power_button">🔥 Press the scooter power button! 🔥</string>
+    <string name="state_unknown_error">Unknown error</string>
+    
+    <!-- Errors -->
+    <string name="error_gatt_failed">GATT Connection failed</string>
+    <string name="error_token_missing">Token missing after registration!</string>
+    <string name="error_no_token">No token for this device. Please Scan &amp; Register.</string>
+</resources>

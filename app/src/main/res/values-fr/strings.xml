@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">M365 BLE App</string>
+    
+    <!-- Common -->
+    <string name="back">Retour</string>
+    <string name="cancel">Annuler</string>
+    <string name="connect">Connecter</string>
+    <string name="disconnect">Déconnecter</string>
+    <string name="connected">Connecté</string>
+    <string name="connecting">Connexion…</string>
+    <string name="error">Erreur</string>
+    <string name="unknown">Inconnu</string>
+    <string name="share">Partager</string>
+    <string name="registered">Enregistré</string>
+    
+    <!-- Units -->
+    <string name="unit_kmh">km/h</string>
+    <string name="unit_km">km</string>
+    <string name="unit_m">m</string>
+    <string name="unit_percent">%</string>
+    <string name="unit_celsius">°C</string>
+    <string name="unit_kb">Ko</string>
+    
+    <!-- ScanScreen -->
+    <string name="scan_title">Scanner M365</string>
+    <string name="scan_bluetooth_permission_required">Autorisations Bluetooth requises !</string>
+    <string name="scan_failed_tap_retry">Échec du scan : %1$s. Appuyez pour réessayer.</string>
+    <string name="scan_scanning">Recherche de trottinettes M365…</string>
+    <string name="scan_rssi">RSSI : %1$d</string>
+    
+    <!-- ConnectDialog -->
+    <string name="dialog_connect_title">Connecter à %1$s</string>
+    <string name="dialog_address">Adresse : %1$s</string>
+    <string name="dialog_register_checkbox">Enregistrer (Première liaison)</string>
+    <string name="dialog_register_warning">ATTENTION : L\'enregistrement dissociera cette trottinette des autres applications (ex. Mi Home). Continuez uniquement si vous êtes le propriétaire.</string>
+    
+    <!-- DashboardScreen -->
+    <string name="dashboard_title">Tableau de bord M365</string>
+    <string name="dashboard_view_details">Voir les Détails</string>
+    <string name="dashboard_view_logs">Voir les Journaux</string>
+    
+    <!-- ScooterInfoScreen -->
+    <string name="scooter_info_title">Détails de la Trottinette</string>
+    <string name="info_speed_section">Info Vitesse</string>
+    <string name="info_current_speed">Vitesse Actuelle</string>
+    <string name="info_avg_speed">Vitesse Moyenne</string>
+    <string name="info_battery_section">Info Batterie</string>
+    <string name="info_battery_level">Niveau de Batterie</string>
+    <string name="info_remaining_range">Autonomie Estimée</string>
+    <string name="info_trip_section">Trajet Actuel</string>
+    <string name="info_trip_time">Durée du Trajet</string>
+    <string name="info_trip_distance">Distance du Trajet</string>
+    <string name="info_time_format">%1$d min %2$d sec</string>
+    <string name="info_stats_section">Statistiques Totales</string>
+    <string name="info_total_mileage">Kilométrage Total</string>
+    <string name="info_system_section">État du Système</string>
+    <string name="info_controller_temp">Temp. Contrôleur</string>
+    
+    <!-- LoggingScreen -->
+    <string name="logs_title">Journaux</string>
+    <string name="logs_no_logs">Aucun journal trouvé.</string>
+    <string name="logs_share_title">Partager le Journal</string>
+    
+    <!-- Connection States -->
+    <string name="state_logging_in">Connexion…</string>
+    <string name="state_press_power_button">🔥 Appuyez sur le bouton d\'alimentation de la trottinette ! 🔥</string>
+    <string name="state_unknown_error">Erreur inconnue</string>
+    
+    <!-- Errors -->
+    <string name="error_gatt_failed">Échec de connexion GATT</string>
+    <string name="error_token_missing">Token manquant après l\'enregistrement !</string>
+    <string name="error_no_token">Aucun token pour cet appareil. Veuillez scanner et enregistrer.</string>
+</resources>

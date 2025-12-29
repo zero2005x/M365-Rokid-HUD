@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">M365 BLE 앱</string>
+    
+    <!-- Common -->
+    <string name="back">뒤로</string>
+    <string name="cancel">취소</string>
+    <string name="connect">연결</string>
+    <string name="disconnect">연결 해제</string>
+    <string name="connected">연결됨</string>
+    <string name="connecting">연결 중…</string>
+    <string name="error">오류</string>
+    <string name="unknown">알 수 없음</string>
+    <string name="share">공유</string>
+    <string name="registered">등록됨</string>
+    
+    <!-- Units -->
+    <string name="unit_kmh">km/h</string>
+    <string name="unit_km">km</string>
+    <string name="unit_m">m</string>
+    <string name="unit_percent">%</string>
+    <string name="unit_celsius">°C</string>
+    <string name="unit_kb">KB</string>
+    
+    <!-- ScanScreen -->
+    <string name="scan_title">M365 스캐너</string>
+    <string name="scan_bluetooth_permission_required">블루투스 권한이 필요합니다!</string>
+    <string name="scan_failed_tap_retry">스캔 실패: %1$s. 탭하여 다시 시도.</string>
+    <string name="scan_scanning">M365 스쿠터 검색 중…</string>
+    <string name="scan_rssi">신호 강도: %1$d</string>
+    
+    <!-- ConnectDialog -->
+    <string name="dialog_connect_title">%1$s에 연결</string>
+    <string name="dialog_address">주소: %1$s</string>
+    <string name="dialog_register_checkbox">등록 (최초 페어링)</string>
+    <string name="dialog_register_warning">경고: 등록하면 이 스쿠터가 다른 앱(예: Mi Home)과의 페어링이 해제됩니다. 소유자인 경우에만 계속하세요.</string>
+    
+    <!-- DashboardScreen -->
+    <string name="dashboard_title">M365 대시보드</string>
+    <string name="dashboard_view_details">세부 정보 보기</string>
+    <string name="dashboard_view_logs">로그 보기</string>
+    
+    <!-- ScooterInfoScreen -->
+    <string name="scooter_info_title">스쿠터 상세 정보</string>
+    <string name="info_speed_section">속도 정보</string>
+    <string name="info_current_speed">현재 속도</string>
+    <string name="info_avg_speed">평균 속도</string>
+    <string name="info_battery_section">배터리 정보</string>
+    <string name="info_battery_level">배터리 잔량</string>
+    <string name="info_remaining_range">예상 주행 거리</string>
+    <string name="info_trip_section">현재 주행</string>
+    <string name="info_trip_time">주행 시간</string>
+    <string name="info_trip_distance">주행 거리</string>
+    <string name="info_time_format">%1$d분 %2$d초</string>
+    <string name="info_stats_section">총 통계</string>
+    <string name="info_total_mileage">총 주행 거리</string>
+    <string name="info_system_section">시스템 상태</string>
+    <string name="info_controller_temp">컨트롤러 온도</string>
+    
+    <!-- LoggingScreen -->
+    <string name="logs_title">로그</string>
+    <string name="logs_no_logs">로그가 없습니다.</string>
+    <string name="logs_share_title">로그 공유</string>
+    
+    <!-- Connection States -->
+    <string name="state_logging_in">로그인 중…</string>
+    <string name="state_press_power_button">🔥 스쿠터 전원 버튼을 누르세요! 🔥</string>
+    <string name="state_unknown_error">알 수 없는 오류</string>
+    
+    <!-- Errors -->
+    <string name="error_gatt_failed">GATT 연결 실패</string>
+    <string name="error_token_missing">등록 후 토큰이 손실되었습니다!</string>
+    <string name="error_no_token">이 기기의 토큰이 없습니다. 스캔하고 등록하세요.</string>
+</resources>

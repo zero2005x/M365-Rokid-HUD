@@ -7,7 +7,7 @@
 
 A modern Android application for connecting to and monitoring Xiaomi/Ninebot M365 electric scooters via Bluetooth Low Energy (BLE).
 
-> 📖 **[繁體中文](README_zh-TW.md)** | **[简体中文](README_zh-CN.md)**
+> 📖 **[繁體中文](doc/README_zh-TW.md)** | **[简体中文](doc/README_zh-CN.md)**
 
 ---
 

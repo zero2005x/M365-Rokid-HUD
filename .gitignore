@@ -16,6 +16,8 @@
 # App build outputs
 /app/build/
 /app/release/
+/glass-hud/build/
+/glass-hud/local.properties
 
 # Kotlin
 *.class

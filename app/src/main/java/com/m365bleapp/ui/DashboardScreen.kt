@@ -1,15 +1,18 @@
 package com.m365bleapp.ui
 
+import android.content.Context
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.m365bleapp.R
+import com.m365bleapp.gateway.GatewayService
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
 import kotlinx.coroutines.flow.collect
@@ -24,8 +27,12 @@ fun DashboardScreen(
     onScooterInfo: () -> Unit,
     onDisconnect: () -> Unit
 ) {
+    val context = LocalContext.current
     val motorInfo by repository.motorInfo.collectAsState()
     val connState by repository.connectionState.collectAsState()
+    
+    // Gateway state
+    var gatewayEnabled by remember { mutableStateOf(false) }
 
     // Auto-disconnect handling removed to prevent double-pop with Button.
     // Error state is displayed in UI.
@@ -70,6 +77,53 @@ fun DashboardScreen(
             }
             
             Spacer(modifier = Modifier.weight(1f))
+            
+            // Gateway Toggle for Rokid HUD
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (gatewayEnabled) 
+                        MaterialTheme.colorScheme.primaryContainer 
+                    else 
+                        MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = stringResource(R.string.gateway_hud),
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = if (gatewayEnabled) 
+                                stringResource(R.string.gateway_broadcasting)
+                            else 
+                                stringResource(R.string.gateway_off),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = gatewayEnabled,
+                        onCheckedChange = { enabled ->
+                            gatewayEnabled = enabled
+                            if (enabled) {
+                                GatewayService.start(context)
+                            } else {
+                                GatewayService.stop(context)
+                            }
+                        }
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
             
             Button(
                 onClick = onScooterInfo,

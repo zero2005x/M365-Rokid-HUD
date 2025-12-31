@@ -40,6 +40,13 @@
     <string name="dashboard_view_details">View Details</string>
     <string name="dashboard_view_logs">View Logs</string>
     
+    <!-- Gateway HUD -->
+    <string name="gateway_hud">Rokid HUD Gateway</string>
+    <string name="gateway_broadcasting">Broadcasting to Glasses</string>
+    <string name="gateway_off">Off</string>
+    <string name="gateway_notification_title">M365 HUD Gateway</string>
+    <string name="gateway_notification_text">Broadcasting telemetry to Rokid Glasses</string>
+    
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Scooter Details</string>
     <string name="info_speed_section">Speed Info</string>

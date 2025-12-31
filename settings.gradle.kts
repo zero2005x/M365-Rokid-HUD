@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "M365BleApp"
 include(":app")
+include(":glass-hud")

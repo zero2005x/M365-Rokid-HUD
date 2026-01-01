@@ -49,7 +49,9 @@ pub enum Attribute {
   Supplementary,
   Cruise,
   TailLight,
-  BatteryInfo
+  BatteryInfo,
+  Lock,
+  Unlock
 }
 
 impl Attribute {
@@ -67,7 +69,9 @@ impl Attribute {
       Attribute::Supplementary        => 0x7B,
       Attribute::Cruise               => 0x7C,
       Attribute::TailLight            => 0x7D,
-      Attribute::BatteryInfo          => 0x31
+      Attribute::BatteryInfo          => 0x31,
+      Attribute::Lock                 => 0x70,
+      Attribute::Unlock               => 0x71
     }
   }
 }

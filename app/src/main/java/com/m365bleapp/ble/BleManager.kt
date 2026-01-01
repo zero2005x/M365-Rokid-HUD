@@ -72,7 +72,9 @@ class BleManager(private val context: Context) {
             }
         }
         
+        @Deprecated("Deprecated in API 33")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            @Suppress("DEPRECATION")
             onNotifyCallback?.invoke(characteristic.uuid, characteristic.value)
         }
 
@@ -155,9 +157,11 @@ class BleManager(private val context: Context) {
             return@suspendCancellableCoroutine
         }
         
+        @Suppress("DEPRECATION")
         char.value = value
         char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
         
+        @Suppress("DEPRECATION")
         if (!gatt.writeCharacteristic(char)) {
             Log.e("BleManager", "writeCharacteristic failed for $charUuid")
             if (waitForResponse) writeContinuation = null
@@ -172,7 +176,8 @@ class BleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    suspend fun enableNotifications(gatt: BluetoothGatt, serviceUuid: UUID, charUuid: UUID, callback: (ByteArray) -> Unit): Boolean = suspendCancellableCoroutine { cont ->
+    @Suppress("UNUSED_PARAMETER")
+    suspend fun enableNotifications(gatt: BluetoothGatt, serviceUuid: UUID, charUuid: UUID, @Suppress("unused") callback: (ByteArray) -> Unit): Boolean = suspendCancellableCoroutine { cont ->
         if (descriptorContinuation != null) {
             cont.resume(false)
             return@suspendCancellableCoroutine
@@ -194,7 +199,9 @@ class BleManager(private val context: Context) {
         val descriptor = char.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
         if (descriptor != null) {
             descriptorContinuation = cont
+            @Suppress("DEPRECATION")
             descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            @Suppress("DEPRECATION")
             if (!gatt.writeDescriptor(descriptor)) {
                 descriptorContinuation = null
                 cont.resume(false)

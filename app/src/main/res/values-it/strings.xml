@@ -62,6 +62,16 @@
     <string name="logs_no_logs">Nessun log trovato.</string>
     <string name="logs_share_title">Condividi Log</string>
     
+    <!-- Language Settings -->
+    <string name="language_title">Lingua</string>
+    <string name="language_system_section">Sistema</string>
+    <string name="language_system_default">Segui Sistema</string>
+    <string name="language_system_not_supported">Lingua di sistema non supportata, verrà usato l\'inglese</string>
+    <string name="language_available_section">Lingue Disponibili</string>
+    <string name="language_restart_notice">L\'app verrà riavviata per applicare la nuova lingua.</string>
+    <string name="language_apply_restart">Applica e Riavvia</string>
+    <string name="language_restarting">Riavvio in corso…</string>
+    
     <!-- Connection States -->
     <string name="state_logging_in">Accesso in corso…</string>
     <string name="state_press_power_button">🔥 Premi il pulsante di accensione del monopattino! 🔥</string>

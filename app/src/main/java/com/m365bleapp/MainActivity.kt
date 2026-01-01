@@ -1,5 +1,6 @@
 package com.m365bleapp
 
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -11,6 +12,7 @@ import androidx.compose.ui.Modifier
 import com.m365bleapp.repository.ScooterRepository
 import com.m365bleapp.ui.NavHostContainer
 import com.m365bleapp.ui.theme.M365BleAppTheme
+import com.m365bleapp.utils.LocaleHelper
 
 class MainActivity : ComponentActivity() {
     private lateinit var repository: ScooterRepository
@@ -29,10 +31,15 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    override fun attachBaseContext(newBase: Context) {
+        // Apply saved locale before activity is created
+        super.attachBaseContext(LocaleHelper.applyLocale(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        repository = ScooterRepository(applicationContext)
+        repository = ScooterRepository.getInstance(applicationContext)
         repository.init()
 
         // Prompt for permissions at startup is now handled in ScanScreen to prevent race conditions 

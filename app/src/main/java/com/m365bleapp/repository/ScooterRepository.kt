@@ -10,7 +10,7 @@ import android.util.Log
 import androidx.annotation.RequiresPermission
 import androidx.core.app.ActivityCompat
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import androidx.security.crypto.MasterKey
 import com.m365bleapp.R
 import com.m365bleapp.ble.BleManager
 import com.m365bleapp.ffi.M365Native
@@ -43,7 +43,19 @@ data class MotorInfo(
     val remainingKm: Double = 0.0
 )
 
-class ScooterRepository(private val context: Context) {
+class ScooterRepository private constructor(private val context: Context) {
+    
+    companion object {
+        @Volatile
+        private var INSTANCE: ScooterRepository? = null
+        
+        fun getInstance(context: Context): ScooterRepository {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: ScooterRepository(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+    }
+    
     private val native = M365Native()
     private val bleManager = BleManager(context)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -51,11 +63,13 @@ class ScooterRepository(private val context: Context) {
     // Helper function to get localized strings
     private fun getString(resId: Int): String = context.getString(resId)
 
-    private val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+    private val masterKey = MasterKey.Builder(context)
+        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+        .build()
     private val sharedPreferences: SharedPreferences = EncryptedSharedPreferences.create(
-        "secret_shared_prefs",
-        masterKeyAlias,
         context,
+        "secret_shared_prefs",
+        masterKey,
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
@@ -69,6 +83,13 @@ class ScooterRepository(private val context: Context) {
 
     private val _motorInfo = MutableStateFlow<MotorInfo?>(null)
     val motorInfo = _motorInfo.asStateFlow()
+    
+    // Lock and Light state tracking
+    private val _isLocked = MutableStateFlow(false)
+    val isLocked = _isLocked.asStateFlow()
+    
+    private val _isLightOn = MutableStateFlow(false)
+    val isLightOn = _isLightOn.asStateFlow()
     
     private val _isScanning = MutableStateFlow(false)
     val isScanning = _isScanning.asStateFlow()
@@ -118,6 +139,16 @@ class ScooterRepository(private val context: Context) {
 
                 val gatt = bleManager.connect(device) { uuid, data ->
                     Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
+                    
+                    // Log BLE receive to CSV
+                    val charName = when (uuid) {
+                        BleManager.UART_RX -> "UART_RX"
+                        BleManager.AUTH_AVDTP -> "AUTH_AVDTP"
+                        BleManager.AUTH_UPNP -> "AUTH_UPNP"
+                        else -> uuid.toString().takeLast(8)
+                    }
+                    logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
+                    
                     if (uuid == BleManager.UART_RX) {
                         uartRxChannel.trySend(data)
                     } else {
@@ -182,6 +213,10 @@ class ScooterRepository(private val context: Context) {
                 _connectionState.value = ConnectionState.Ready
                 // Beep to confirm connection (Optional but nice)
                 beep()
+                
+                // Read initial states (light, etc.) to sync UI with scooter
+                delay(500)  // Wait for connection to stabilize
+                readInitialStates()
                 
                 startTelemetryLoop()
 
@@ -445,6 +480,194 @@ class ScooterRepository(private val context: Context) {
         }
     }
     
+    // ========== Lock/Unlock Control ==========
+    
+    /**
+     * Lock the scooter motor
+     * When locked, the motor is disabled and throttle input is ignored.
+     * 
+     * Protocol: Write 0x0001 to address 0x70
+     * Direction: Master to Motor (0x20), Command: Write (0x03)
+     */
+    suspend fun lock(): Result<Unit> = withContext(Dispatchers.IO) {
+        if (sessionPtr == 0L) {
+            return@withContext Result.failure(Exception("No active session"))
+        }
+        try {
+            Log.d("ScooterRepo", "Locking scooter motor")
+            val packet = buildPacket(
+                dest = 0x20.toByte(),    // Master to Motor
+                rw = 0x03.toByte(),      // Write
+                attr = 0x70.toByte(),    // Lock address
+                payload = byteArrayOf(0x01, 0x00)  // Value 0x0001 (little-endian: LSB first)
+            )
+            sendCommand(packet, "Lock Motor")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("ScooterRepo", "Lock failed: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * Unlock the scooter motor
+     * Re-enables the motor after being locked.
+     * 
+     * Protocol: Write 0x0001 to address 0x71
+     * Direction: Master to Motor (0x20), Command: Write (0x03)
+     */
+    suspend fun unlock(): Result<Unit> = withContext(Dispatchers.IO) {
+        if (sessionPtr == 0L) {
+            return@withContext Result.failure(Exception("No active session"))
+        }
+        try {
+            Log.d("ScooterRepo", "Unlocking scooter motor")
+            val packet = buildPacket(
+                dest = 0x20.toByte(),    // Master to Motor
+                rw = 0x03.toByte(),      // Write
+                attr = 0x71.toByte(),    // Unlock address
+                payload = byteArrayOf(0x01, 0x00)  // Value 0x0001 (little-endian: LSB first)
+            )
+            sendCommand(packet, "Unlock Motor")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("ScooterRepo", "Unlock failed: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * Set scooter lock state
+     * @param locked true to lock, false to unlock
+     */
+    suspend fun setLock(locked: Boolean): Result<Unit> {
+        return if (locked) lock() else unlock()
+    }
+    
+    // ========== Tail Light Control ==========
+    
+    /**
+     * Turn on the tail light (Always On mode)
+     * 
+     * Protocol: Write 0x0002 to address 0x7D
+     * Direction: Master to Motor (0x20), Command: Write (0x03)
+     */
+    suspend fun lightOn(): Result<Unit> = withContext(Dispatchers.IO) {
+        if (sessionPtr == 0L) {
+            return@withContext Result.failure(Exception("No active session"))
+        }
+        try {
+            Log.d("ScooterRepo", "Turning tail light on")
+            val packet = buildPacket(
+                dest = 0x20.toByte(),    // Master to Motor
+                rw = 0x03.toByte(),      // Write
+                attr = 0x7D.toByte(),    // TailLight address
+                payload = byteArrayOf(0x02, 0x00)  // Value 0x0002 (little-endian: LSB first)
+            )
+            sendCommand(packet, "Tail Light On")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("ScooterRepo", "Light on failed: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * Turn off the tail light
+     * 
+     * Protocol: Write 0x0000 to address 0x7D
+     * Direction: Master to Motor (0x20), Command: Write (0x03)
+     */
+    suspend fun lightOff(): Result<Unit> = withContext(Dispatchers.IO) {
+        if (sessionPtr == 0L) {
+            return@withContext Result.failure(Exception("No active session"))
+        }
+        try {
+            Log.d("ScooterRepo", "Turning tail light off")
+            val packet = buildPacket(
+                dest = 0x20.toByte(),    // Master to Motor
+                rw = 0x03.toByte(),      // Write
+                attr = 0x7D.toByte(),    // TailLight address
+                payload = byteArrayOf(0x00, 0x00)  // Value 0x0000 = Off
+            )
+            sendCommand(packet, "Tail Light Off")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("ScooterRepo", "Light off failed: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * Set tail light state
+     * @param on true to turn on, false to turn off
+     */
+    suspend fun setLight(on: Boolean): Result<Unit> {
+        return if (on) lightOn() else lightOff()
+    }
+    
+    /**
+     * Read the current tail light state from the scooter
+     * 
+     * Protocol: Read address 0x7D with param 0x02
+     * Direction: Master to Motor (0x20), Command: Read (0x01)
+     * Response: 0x0000=off, 0x0001=on brake, 0x0002=always on
+     */
+    suspend fun readLightState(): Result<Boolean> = withContext(Dispatchers.IO) {
+        if (sessionPtr == 0L) {
+            return@withContext Result.failure(Exception("No active session"))
+        }
+        try {
+            Log.d("ScooterRepo", "Reading tail light state")
+            val packet = buildPacket(
+                dest = 0x20.toByte(),    // Master to Motor
+                rw = 0x01.toByte(),      // Read
+                attr = 0x7D.toByte(),    // TailLight address
+                payload = byteArrayOf(0x02)  // Param: read 2 bytes
+            )
+            sendCommand(packet, "Read Tail Light")
+            // Response will be parsed in parseTelemetryPacket
+            Result.success(_isLightOn.value)
+        } catch (e: Exception) {
+            Log.e("ScooterRepo", "Read light state failed: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * Read the initial states (light, lock) after connection
+     * Call this after the scooter is connected and ready
+     */
+    suspend fun readInitialStates() {
+        try {
+            Log.d("ScooterRepo", "Reading initial scooter states...")
+            readLightState()
+            // Add short delay between commands
+            kotlinx.coroutines.delay(100)
+            // Note: Lock state cannot be read directly from M365
+            // The scooter doesn't expose a "read lock state" command
+            // We'll assume unlocked by default (safer assumption)
+        } catch (e: Exception) {
+            Log.e("ScooterRepo", "Failed to read initial states: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Send a command packet to the scooter
+     * Encrypts the packet and sends it via UART
+     */
+    private suspend fun sendCommand(packet: ByteArray, commandName: String = "Command") {
+        val counter = 0L  // Always use counter=0 (scooter doesn't track)
+        val encrypted = native.encrypt(sessionPtr, packet, counter)
+        Log.d("ScooterRepo", "Command Encrypted (${encrypted.size} bytes): ${encrypted.toHex()}")
+        
+        // Log the command to CSV
+        logger.logCommand(commandName, packet)
+        logger.logUartTx(encrypted, "$commandName (encrypted)")
+        
+        writeUartEncrypted(encrypted)
+    }
+    
     // Beep command
     suspend fun beep() {
         if (sessionPtr == 0L) return
@@ -481,6 +704,22 @@ class ScooterRepository(private val context: Context) {
     // Changed to default waitForResponse=false (Fire and Forget) + Pacing Delay
     private suspend fun writeChar(service: UUID, char: UUID, data: ByteArray, waitForResponse: Boolean = false) {
         Log.d("ScooterRepo", "Tx: $char -> ${data.toHex()}")
+        
+        // Log to CSV
+        val serviceName = when (service) {
+            UART_SERVICE -> "UART"
+            AUTH_SERVICE -> "AUTH"
+            else -> service.toString().takeLast(8)
+        }
+        val charName = when (char) {
+            UART_TX -> "TX"
+            UART_RX -> "RX"
+            AUTH_UPNP -> "UPNP"
+            AUTH_AVDTP -> "AVDTP"
+            else -> char.toString().takeLast(8)
+        }
+        logger.logBle("TX", "WRITE", serviceName, charName, data, "")
+        
         val gatt = activeGatt
         if (gatt != null) {
             bleManager.write(gatt, service, char, data, waitForResponse)
@@ -591,6 +830,7 @@ class ScooterRepository(private val context: Context) {
                 }
                 Log.d("ScooterRepo", "Ignored: $hex != $expectedHex")
             }
+            @Suppress("UNREACHABLE_CODE")
             ByteArray(0)
         }
     }
@@ -681,10 +921,41 @@ class ScooterRepository(private val context: Context) {
             0x3A -> parseTripInfo(data)
             0x25 -> parseRemainingKm(data)
             0xB5 -> parseSpeedFromData(data)
+            0x7D -> parseTailLightState(data)
+            0x7C -> parseCruiseState(data)
             else -> Log.d("ScooterRepo", "Unknown attribute: 0x${attr.toString(16)}")
         }
     }
     
+    /**
+     * Parse 0x7D Tail Light state response
+     * Data format: u16 LE - 0x0000=off, 0x0001=on brake, 0x0002=always on
+     */
+    private fun parseTailLightState(data: ByteArray) {
+        if (data.size < 2) {
+            Log.w("ScooterRepo", "Tail light data too short: ${data.size} bytes")
+            return
+        }
+        val value = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        val isOn = value > 0  // 0x0001 or 0x0002 means light is on
+        Log.d("ScooterRepo", "Tail light state: 0x${value.toString(16)} -> isOn=$isOn")
+        _isLightOn.value = isOn
+    }
+    
+    /**
+     * Parse 0x7C Cruise state response
+     * Data format: u16 LE - 0x0000=off, 0x0001=on
+     */
+    private fun parseCruiseState(data: ByteArray) {
+        if (data.size < 2) {
+            Log.w("ScooterRepo", "Cruise data too short: ${data.size} bytes")
+            return
+        }
+        val value = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        Log.d("ScooterRepo", "Cruise state: 0x${value.toString(16)} -> isOn=${value > 0}")
+        // Could add cruise state flow if needed
+    }
+
     /**
      * Parse 0xB0 Motor Info response
      * Based on ninebot-ble/src/session/info.rs and protocol.md:

@@ -62,6 +62,16 @@
     <string name="logs_no_logs">Aucun journal trouvé.</string>
     <string name="logs_share_title">Partager le Journal</string>
     
+    <!-- Language Settings -->
+    <string name="language_title">Langue</string>
+    <string name="language_system_section">Système</string>
+    <string name="language_system_default">Suivre le Système</string>
+    <string name="language_system_not_supported">Langue système non prise en charge, l\'anglais sera utilisé</string>
+    <string name="language_available_section">Langues Disponibles</string>
+    <string name="language_restart_notice">L\'application va redémarrer pour appliquer la nouvelle langue.</string>
+    <string name="language_apply_restart">Appliquer et Redémarrer</string>
+    <string name="language_restarting">Redémarrage…</string>
+    
     <!-- Connection States -->
     <string name="state_logging_in">Connexion…</string>
     <string name="state_press_power_button">🔥 Appuyez sur le bouton d\'alimentation de la trottinette ! 🔥</string>

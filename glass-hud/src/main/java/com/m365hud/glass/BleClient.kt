@@ -222,6 +222,7 @@ class BleClient(private val context: Context) {
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic
         ) {
+            @Suppress("DEPRECATION")
             characteristic.value?.let { value ->
                 onCharacteristicChanged(gatt, characteristic, value)
             }

@@ -62,6 +62,16 @@
     <string name="logs_no_logs">ログが見つかりません。</string>
     <string name="logs_share_title">ログを共有</string>
     
+    <!-- Language Settings -->
+    <string name="language_title">言語</string>
+    <string name="language_system_section">システム</string>
+    <string name="language_system_default">システムに従う</string>
+    <string name="language_system_not_supported">システム言語はサポートされていません。英語を使用します</string>
+    <string name="language_available_section">利用可能な言語</string>
+    <string name="language_restart_notice">新しい言語を適用するためにアプリを再起動します。</string>
+    <string name="language_apply_restart">適用して再起動</string>
+    <string name="language_restarting">再起動中…</string>
+    
     <!-- Connection States -->
     <string name="state_logging_in">ログイン中…</string>
     <string name="state_press_power_button">🔥 スクーターの電源ボタンを押してください！🔥</string>

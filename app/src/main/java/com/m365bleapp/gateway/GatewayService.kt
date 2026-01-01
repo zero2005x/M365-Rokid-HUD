@@ -59,7 +59,7 @@ class GatewayService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        Log.d(TAG, "GatewayService onCreate")
+        Log.i(TAG, "GatewayService onCreate - starting...")
         
         createNotificationChannel()
         
@@ -115,12 +115,12 @@ class GatewayService : Service() {
         // Start telemetry observation
         startTelemetryObserver()
         
-        Log.d(TAG, "Gateway Service initialized successfully")
+        Log.i(TAG, "Gateway Service initialized successfully")
     }
     
     private fun startTelemetryObserver() {
-        // Get repository from application (you may need to adjust this based on your DI setup)
-        repository = ScooterRepository(applicationContext)
+        // Get shared repository instance (singleton pattern)
+        repository = ScooterRepository.getInstance(applicationContext)
         
         // Observe motor info and push to BLE
         scope.launch {

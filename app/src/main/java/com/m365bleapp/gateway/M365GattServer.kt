@@ -174,7 +174,7 @@ class M365GattServer(
         startAdvertising()
         
         isRunning = true
-        Log.d(TAG, "GATT Server started successfully")
+        Log.i(TAG, "GATT Server started successfully")
         return true
     }
     
@@ -201,7 +201,7 @@ class M365GattServer(
     
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-            Log.d(TAG, "BLE Advertising started successfully")
+            Log.i(TAG, "BLE Advertising started successfully")
         }
         
         override fun onStartFailure(errorCode: Int) {
@@ -253,8 +253,10 @@ class M365GattServer(
         currentTelemetry = data
         
         // Notify all subscribed devices
+        @Suppress("DEPRECATION")
         telemetryCharacteristic.value = currentTelemetry
         subscribedDevices.values.forEach { device ->
+            @Suppress("DEPRECATION")
             gattServer?.notifyCharacteristicChanged(device, telemetryCharacteristic, false)
         }
         
@@ -284,8 +286,10 @@ class M365GattServer(
     
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     private fun notifyTime() {
+        @Suppress("DEPRECATION")
         timeCharacteristic.value = currentTime
         subscribedDevices.values.forEach { device ->
+            @Suppress("DEPRECATION")
             gattServer?.notifyCharacteristicChanged(device, timeCharacteristic, false)
         }
     }

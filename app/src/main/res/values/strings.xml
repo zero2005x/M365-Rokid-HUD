@@ -40,6 +40,18 @@
     <string name="dashboard_view_details">View Details</string>
     <string name="dashboard_view_logs">View Logs</string>
     
+    <!-- Motor Control -->
+    <string name="control_motor">Motor Control</string>
+    <string name="control_lock">Lock</string>
+    <string name="control_unlock">Unlock</string>
+    <string name="control_locked">Locked</string>
+    <string name="control_unlocked">Unlocked</string>
+    
+    <!-- Tail Light Control -->
+    <string name="control_light">Tail Light</string>
+    <string name="control_light_on">ON</string>
+    <string name="control_light_off">OFF</string>
+    
     <!-- Gateway HUD -->
     <string name="gateway_hud">Rokid HUD Gateway</string>
     <string name="gateway_broadcasting">Broadcasting to Glasses</string>
@@ -69,10 +81,43 @@
     <string name="logs_no_logs">No logs found.</string>
     <string name="logs_share_title">Share Log</string>
     
+    <!-- Language Settings -->
+    <string name="language_title">Language</string>
+    <string name="language_system_section">System</string>
+    <string name="language_system_default">Follow System</string>
+    <string name="language_system_not_supported">System language not supported, will use English</string>
+    <string name="language_available_section">Available Languages</string>
+    <string name="language_restart_notice">The app will restart to apply the new language.</string>
+    <string name="language_apply_restart">Apply &amp; Restart</string>
+    <string name="language_restarting">Restarting…</string>
+    
+    <!-- Log Viewer -->
+    <string name="log_viewer_title">Log Viewer</string>
+    <string name="log_tab_all">All</string>
+    <string name="log_tab_telemetry">Telemetry</string>
+    <string name="log_tab_ble">BLE</string>
+    <string name="log_enable_logging">Enable Logging</string>
+    <string name="log_no_files">No log files found</string>
+    <string name="log_type_telemetry">Telemetry</string>
+    <string name="log_type_ble">BLE Communication</string>
+    <string name="log_type_legacy">Legacy</string>
+    <string name="log_share_title">Share Log File</string>
+    <string name="log_delete_confirm_title">Delete Log</string>
+    <string name="log_delete_confirm_message">Delete %1$s?</string>
+    <string name="log_delete_all">Delete All</string>
+    <string name="log_delete_all_title">Delete All Logs</string>
+    <string name="log_delete_all_message">Are you sure you want to delete all log files?</string>
+    <string name="delete">Delete</string>
+    <string name="refresh">Refresh</string>
+    <string name="view_logs">View Logs</string>
+    
     <!-- Connection States -->
     <string name="state_logging_in">Logging in…</string>
     <string name="state_press_power_button">🔥 Press the scooter power button! 🔥</string>
     <string name="state_unknown_error">Unknown error</string>
+    <string name="connection_lost">Connection to scooter lost. Please reconnect.</string>
+    <string name="connection_lost_title">Connection Lost</string>
+    <string name="reconnect">Reconnect</string>
     
     <!-- Errors -->
     <string name="error_gatt_failed">GATT Connection failed</string>

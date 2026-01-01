@@ -62,6 +62,16 @@
     <string name="logs_no_logs">로그가 없습니다.</string>
     <string name="logs_share_title">로그 공유</string>
     
+    <!-- Language Settings -->
+    <string name="language_title">언어</string>
+    <string name="language_system_section">시스템</string>
+    <string name="language_system_default">시스템 설정 따르기</string>
+    <string name="language_system_not_supported">시스템 언어가 지원되지 않습니다. 영어를 사용합니다</string>
+    <string name="language_available_section">사용 가능한 언어</string>
+    <string name="language_restart_notice">새 언어를 적용하기 위해 앱이 재시작됩니다.</string>
+    <string name="language_apply_restart">적용 및 재시작</string>
+    <string name="language_restarting">재시작 중…</string>
+    
     <!-- Connection States -->
     <string name="state_logging_in">로그인 중…</string>
     <string name="state_press_power_button">🔥 스쿠터 전원 버튼을 누르세요! 🔥</string>

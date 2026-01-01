@@ -62,6 +62,16 @@
     <string name="logs_no_logs">لم يتم العثور على سجلات.</string>
     <string name="logs_share_title">مشاركة السجل</string>
     
+    <!-- Language Settings -->
+    <string name="language_title">اللغة</string>
+    <string name="language_system_section">النظام</string>
+    <string name="language_system_default">اتباع النظام</string>
+    <string name="language_system_not_supported">لغة النظام غير مدعومة، سيتم استخدام الإنجليزية</string>
+    <string name="language_available_section">اللغات المتاحة</string>
+    <string name="language_restart_notice">سيتم إعادة تشغيل التطبيق لتطبيق اللغة الجديدة.</string>
+    <string name="language_apply_restart">تطبيق وإعادة التشغيل</string>
+    <string name="language_restarting">جارٍ إعادة التشغيل…</string>
+    
     <!-- Connection States -->
     <string name="state_logging_in">جارٍ تسجيل الدخول…</string>
     <string name="state_press_power_button">🔥 اضغط على زر الطاقة في السكوتر! 🔥</string>

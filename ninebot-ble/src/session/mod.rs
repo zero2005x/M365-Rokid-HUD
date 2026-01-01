@@ -5,6 +5,9 @@ mod travel;
 mod battery;
 mod payload;
 mod settings;
+mod lock;
+mod light;
+
 pub use mi_session::MiSession;
 pub use payload::Payload;
 pub use info::{GeneralInfo, MotorInfo};

@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -24,7 +25,14 @@ import java.util.*
  * - Left: Time + Phone Battery
  * - Center: Speed (large)
  * - Right: Scooter Battery + Connection Status
+ * 
+ * Note: Rokid glasses use a prism/mirror system to project the display.
+ * The content may need to be horizontally mirrored (scaleX = -1) depending on
+ * the specific Rokid model. Set MIRROR_FOR_ROKID = true if text appears reversed.
  */
+
+// Set this to true if the display appears mirrored/reversed on your Rokid glasses
+private const val MIRROR_FOR_ROKID = false
 @Composable
 fun HudScreen(
     telemetry: TelemetryData,
@@ -42,8 +50,12 @@ fun HudScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .graphicsLayer {
+                // Mirror horizontally for Rokid glasses prism display if needed
+                scaleX = if (MIRROR_FOR_ROKID) -1f else 1f
+            }
             .background(backgroundColor)
-            .padding(16.dp)
+            .padding(start = 16.dp, end = 16.dp, top = 285.dp, bottom = 16.dp)  // Extra top padding to push content down for Rokid glasses
     ) {
         when (connectionState) {
             is BleClient.ConnectionState.Disconnected,

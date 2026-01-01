@@ -40,6 +40,18 @@
     <string name="dashboard_view_details">查看詳細資訊</string>
     <string name="dashboard_view_logs">查看日誌</string>
     
+    <!-- Motor Control -->
+    <string name="control_motor">馬達控制</string>
+    <string name="control_lock">鎖定</string>
+    <string name="control_unlock">解鎖</string>
+    <string name="control_locked">已鎖定</string>
+    <string name="control_unlocked">已解鎖</string>
+    
+    <!-- Tail Light Control -->
+    <string name="control_light">尾燈</string>
+    <string name="control_light_on">開啟</string>
+    <string name="control_light_off">關閉</string>
+    
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">滑板車詳細資訊</string>
     <string name="info_speed_section">速度資訊</string>
@@ -62,10 +74,43 @@
     <string name="logs_no_logs">暫無日誌。</string>
     <string name="logs_share_title">分享日誌</string>
     
+    <!-- Language Settings -->
+    <string name="language_title">語言</string>
+    <string name="language_system_section">系統</string>
+    <string name="language_system_default">跟隨系統</string>
+    <string name="language_system_not_supported">系統語言不支援，將使用英文</string>
+    <string name="language_available_section">可用語言</string>
+    <string name="language_restart_notice">應用程式將重新啟動以套用新語言。</string>
+    <string name="language_apply_restart">套用並重新啟動</string>
+    <string name="language_restarting">正在重新啟動…</string>
+    
+    <!-- Log Viewer -->
+    <string name="log_viewer_title">日誌檢視器</string>
+    <string name="log_tab_all">全部</string>
+    <string name="log_tab_telemetry">遙測資料</string>
+    <string name="log_tab_ble">藍芽通訊</string>
+    <string name="log_enable_logging">啟用日誌記錄</string>
+    <string name="log_no_files">未找到日誌檔案</string>
+    <string name="log_type_telemetry">遙測資料</string>
+    <string name="log_type_ble">藍芽通訊</string>
+    <string name="log_type_legacy">舊版</string>
+    <string name="log_share_title">分享日誌檔案</string>
+    <string name="log_delete_confirm_title">刪除日誌</string>
+    <string name="log_delete_confirm_message">刪除 %1$s？</string>
+    <string name="log_delete_all">刪除全部</string>
+    <string name="log_delete_all_title">刪除所有日誌</string>
+    <string name="log_delete_all_message">確定要刪除所有日誌檔案嗎？</string>
+    <string name="delete">刪除</string>
+    <string name="refresh">重新整理</string>
+    <string name="view_logs">查看日誌</string>
+    
     <!-- Connection States -->
     <string name="state_logging_in">登入中…</string>
     <string name="state_press_power_button">🔥 請按下滑板車電源鍵！🔥</string>
     <string name="state_unknown_error">未知錯誤</string>
+    <string name="connection_lost">與滑板車的連線已中斷，請重新連線。</string>
+    <string name="connection_lost_title">連線中斷</string>
+    <string name="reconnect">重新連線</string>
     
     <!-- Errors -->
     <string name="error_gatt_failed">GATT連線失敗</string>

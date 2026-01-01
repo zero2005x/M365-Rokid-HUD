@@ -46,30 +46,47 @@ A modern Android application for connecting to and monitoring Xiaomi/Ninebot M36
 
 ```
 M365-Rokid-HUD/
-├── app/                          # Android Application
+├── app/                          # Main Android Application (Phone)
 │   └── src/main/
 │       ├── java/com/m365bleapp/
-│       │   ├── ble/              # BLE Manager
+│       │   ├── ble/              # BLE Manager (scanning, GATT)
 │       │   ├── ffi/              # Rust FFI bindings
+│       │   ├── gateway/          # GATT Server for glass-hud relay
 │       │   ├── repository/       # Data layer (ScooterRepository)
 │       │   ├── ui/               # Jetpack Compose screens
-│       │   └── utils/            # Utilities (logging, etc.)
+│       │   │   ├── ScanScreen.kt       # Device discovery
+│       │   │   ├── DashboardScreen.kt  # Real-time telemetry
+│       │   │   ├── ScooterInfoScreen.kt# Detailed info
+│       │   │   ├── LoggingScreen.kt    # Logging settings
+│       │   │   ├── LogViewerScreen.kt  # Log file viewer
+│       │   │   └── LanguageScreen.kt   # Language selection
+│       │   └── utils/            # Utilities (TelemetryLogger, etc.)
 │       ├── res/
 │       │   ├── values/           # English strings (default)
 │       │   ├── values-zh-rCN/    # Simplified Chinese
 │       │   ├── values-zh-rTW/    # Traditional Chinese
 │       │   └── values-*/         # Other languages
 │       └── jniLibs/              # Native .so libraries
+├── glass-hud/                    # Rokid AR Glass HUD Client
+│   └── src/main/
+│       └── java/com/m365hud/glass/
+│           ├── BleClient.kt      # BLE client (connects to app)
+│           ├── GattProfile.kt    # GATT service definitions
+│           ├── HudScreen.kt      # AR HUD display
+│           └── DataModels.kt     # Shared data structures
 ├── ninebot-ffi/                  # Rust FFI library for Android
 │   └── src/
 │       ├── lib.rs                # JNI exports
 │       └── mi_crypto.rs          # Cryptographic functions
-└── ninebot-ble/                  # Core Rust BLE library
-    └── src/
-        ├── connection.rs         # BLE connection handling
-        ├── protocol.rs           # M365 protocol implementation
-        ├── mi_crypto.rs          # ECDH, HKDF, AES-CCM encryption
-        └── ...
+├── ninebot-ble/                  # Core Rust BLE library
+│   └── src/
+│       ├── connection.rs         # BLE connection handling
+│       ├── protocol.rs           # M365 protocol implementation
+│       ├── mi_crypto.rs          # ECDH, HKDF, AES-CCM encryption
+│       └── ...
+└── doc/                          # Documentation
+    ├── BLE_PROTOCOL_GUIDE.md     # Detailed protocol documentation
+    └── README_*.md               # Localized READMEs
 ```
 
 ## 🔐 Protocol Overview
@@ -102,9 +119,19 @@ The app implements the Xiaomi M365 encrypted BLE protocol:
 ### Build Environment
 
 - Android Studio Iguana or later
-- Kotlin 1.9+
+- **Java 17** (JDK 17+)
+- Kotlin 1.9.22+
 - Rust toolchain (for building native libraries)
 - Android NDK
+
+### BLE Scanning Strategy
+
+The app identifies M365 scooters using:
+
+1. **Device Name**: Starts with `MIScooter` (advertised name priority)
+2. **Service UUID**: Contains Xiaomi service `0000fe95-0000-1000-8000-00805f9b34fb`
+
+Devices are sorted by: Registered → Scooter → Has Name → Signal Strength (RSSI)
 
 ## 🚀 Getting Started
 
@@ -156,11 +183,13 @@ Or directly install to connected device:
 
 ## 📁 Project Components
 
-| Module        | Description                                      |
-| ------------- | ------------------------------------------------ |
-| `app`         | Main Android application with Jetpack Compose UI |
-| `ninebot-ffi` | Rust library with JNI bindings for Android       |
-| `ninebot-ble` | Core Rust library for M365 BLE protocol          |
+| Module        | Description                                              |
+| ------------- | -------------------------------------------------------- |
+| `app`         | Main Android app (phone) with Jetpack Compose UI         |
+| `glass-hud`   | Rokid AR glass HUD client, displays telemetry from `app` |
+| `ninebot-ffi` | Rust library with JNI bindings for Android               |
+| `ninebot-ble` | Core Rust library for M365 BLE protocol                  |
+| `doc`         | Protocol documentation and localized READMEs             |
 
 ## 🤝 Contributing
 

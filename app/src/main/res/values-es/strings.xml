@@ -62,6 +62,16 @@
     <string name="logs_no_logs">No se encontraron registros.</string>
     <string name="logs_share_title">Compartir Registro</string>
     
+    <!-- Language Settings -->
+    <string name="language_title">Idioma</string>
+    <string name="language_system_section">Sistema</string>
+    <string name="language_system_default">Seguir Sistema</string>
+    <string name="language_system_not_supported">Idioma del sistema no soportado, se usará inglés</string>
+    <string name="language_available_section">Idiomas Disponibles</string>
+    <string name="language_restart_notice">La aplicación se reiniciará para aplicar el nuevo idioma.</string>
+    <string name="language_apply_restart">Aplicar y Reiniciar</string>
+    <string name="language_restarting">Reiniciando…</string>
+    
     <!-- Connection States -->
     <string name="state_logging_in">Iniciando sesión…</string>
     <string name="state_press_power_button">🔥 ¡Presiona el botón de encendido del patinete! 🔥</string>

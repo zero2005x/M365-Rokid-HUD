@@ -10,6 +10,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,16 +32,66 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retry
 import kotlinx.coroutines.launch
 
+/**
+ * Data class to hold scan result with registration status for sorting
+ */
+@androidx.compose.runtime.Stable
+private data class ScannedDevice(
+    val scanResult: ScanResult,
+    val isRegistered: Boolean,
+    val rssi: Int = scanResult.rssi,
+    // Prefer advertised device name from scan record, fallback to bonded device name
+    val name: String? = scanResult.scanRecord?.deviceName ?: scanResult.device.name,
+    val address: String = scanResult.device.address
+) {
+    companion object {
+        // Xiaomi M365 scooter service UUID
+        private val XIAOMI_SERVICE_UUID = android.os.ParcelUuid.fromString("0000fe95-0000-1000-8000-00805f9b34fb")
+        private const val XIAOMI_SCOOTER_NAME_PREFIX = "MIScooter"
+    }
+    
+    /**
+     * Check if this device is likely a Xiaomi M365 scooter
+     */
+    val isScooter: Boolean
+        get() {
+            // Check if name starts with MIScooter
+            if (name?.startsWith(XIAOMI_SCOOTER_NAME_PREFIX) == true) return true
+            // Check if device advertises Xiaomi service UUID
+            val serviceUuids = scanResult.scanRecord?.serviceUuids
+            return serviceUuids?.contains(XIAOMI_SERVICE_UUID) == true
+        }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScanScreen(
     repository: ScooterRepository,
-    onNavigateToDashboard: () -> Unit
+    onNavigateToDashboard: () -> Unit,
+    onNavigateToLanguage: () -> Unit = {},
+    onNavigateToLogViewer: () -> Unit = {}
 ) {
-    val scope = rememberCoroutineScope()
     // val bleManager = BleManager(repository.context) // Removed
     
-    val devices = remember { mutableStateListOf<ScanResult>() }
+    // Store scanned devices with their registration status
+    // Use SnapshotStateMap for better performance
+    val devicesMap = remember { mutableStateMapOf<String, ScannedDevice>() }
+    
+    // Sorted devices: registered first, then scooters, then named devices, then by RSSI (stronger signal = higher priority)
+    // Use derivedStateOf with stable key to avoid unnecessary recomputation
+    val sortedDevices by remember {
+        derivedStateOf {
+            devicesMap.values.sortedWith(
+                compareByDescending<ScannedDevice> { it.isRegistered }
+                    .thenByDescending { it.isScooter }
+                    .thenByDescending { 
+                        // Named devices first, unknown last
+                        !it.name.isNullOrBlank() && !it.name.startsWith("Unknown")
+                    }
+                    .thenByDescending { it.rssi }
+            )
+        }
+    }
     var showPermissionError by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     
@@ -120,11 +174,23 @@ fun ScanScreen(
                     scanError = e.message
                 }
                 .collect { res ->
-                    val existing = devices.indexOfFirst { it.device.address == res.device.address }
-                    if (existing >= 0) {
-                        devices[existing] = res
-                    } else {
-                        devices.add(res)
+                    val mac = res.device.address
+                    val isReg = repository.isRegistered(mac)
+                    // Get advertised name from scan record (more reliable)
+                    val advertisedName = res.scanRecord?.deviceName ?: res.device.name
+                    
+                    // Only update if device is new or RSSI changed significantly (>5 dBm)
+                    // This reduces unnecessary recompositions
+                    val existing = devicesMap[mac]
+                    if (existing == null || 
+                        kotlin.math.abs(existing.rssi - res.rssi) > 5 ||
+                        existing.name != advertisedName) {
+                        val scannedDevice = ScannedDevice(res, isReg)
+                        // Log scooter discovery
+                        if (scannedDevice.isScooter) {
+                            Log.i("ScanScreen", "Found scooter: $advertisedName ($mac)")
+                        }
+                        devicesMap[mac] = scannedDevice
                     }
                 }
         } catch (e: Exception) {
@@ -143,18 +209,18 @@ fun ScanScreen(
     }
 
     // UI
-    var selectedDevice by remember { mutableStateOf<ScanResult?>(null) }
+    var selectedDevice by remember { mutableStateOf<ScannedDevice?>(null) }
     
     if (selectedDevice != null) {
         ConnectDialog(
             repository = repository,
-            device = selectedDevice!!,
+            device = selectedDevice!!.scanResult,
             onDismiss = { selectedDevice = null },
             onConnect = { register ->
                 val deviceToConnect = selectedDevice
                 if (deviceToConnect != null) {
                     // Connect is now non-blocking and runs on Repository scope
-                    repository.connect(deviceToConnect.device.address, register)
+                    repository.connect(deviceToConnect.scanResult.device.address, register)
                 }
                 selectedDevice = null
             }
@@ -162,7 +228,25 @@ fun ScanScreen(
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text(stringResource(R.string.scan_title)) }) }
+        topBar = { 
+            TopAppBar(
+                title = { Text(stringResource(R.string.scan_title)) },
+                actions = {
+                    IconButton(onClick = onNavigateToLogViewer) {
+                        Icon(
+                            imageVector = Icons.Default.Description,
+                            contentDescription = stringResource(R.string.view_logs)
+                        )
+                    }
+                    IconButton(onClick = onNavigateToLanguage) {
+                        Icon(
+                            imageVector = Icons.Default.Language,
+                            contentDescription = stringResource(R.string.language_title)
+                        )
+                    }
+                }
+            )
+        }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             if (showPermissionError) {
@@ -176,7 +260,7 @@ fun ScanScreen(
                         .fillMaxWidth()
                         .clickable { 
                             scanError = null
-                            devices.clear()
+                            devicesMap.clear()
                             scanTrigger++ // Trigger scan restart
                         }
                         .padding(8.dp),
@@ -209,7 +293,7 @@ fun ScanScreen(
             }
             
             // Show scanning indicator when no devices found yet
-            if (devices.isEmpty() && scanError == null && permissionsGranted) {
+            if (devicesMap.isEmpty() && scanError == null && permissionsGranted) {
                 Box(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                     contentAlignment = Alignment.Center
@@ -222,14 +306,30 @@ fun ScanScreen(
                 }
             }
 
-            LazyColumn {
-                items(devices) { res ->
-                    val name = res.device.name ?: stringResource(R.string.unknown)
-                    val isReg = repository.isRegistered(res.device.address)
+            // Use rememberLazyListState for better scroll performance
+            val listState = rememberLazyListState()
+            
+            LazyColumn(state = listState) {
+                items(
+                    items = sortedDevices, 
+                    key = { it.address },
+                    contentType = { "device" }  // Help Compose reuse item compositions
+                ) { scannedDevice ->
+                    // Use cached properties from ScannedDevice for better performance
+                    val displayName = scannedDevice.name ?: stringResource(R.string.unknown)
+                    val isReg = scannedDevice.isRegistered
+                    val isScooter = scannedDevice.isScooter
+                    val address = scannedDevice.address
+                    val rssi = scannedDevice.rssi
+                    
                     ListItem(
                         headlineContent = { 
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(name)
+                                // Show scooter icon for identified M365 devices
+                                if (isScooter) {
+                                    Text("🛴 ", style = MaterialTheme.typography.bodyLarge)
+                                }
+                                Text(displayName)
                                 if (isReg) {
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Surface(
@@ -245,8 +345,8 @@ fun ScanScreen(
                                 }
                             }
                         },
-                        supportingContent = { Text("${res.device.address} (${stringResource(R.string.scan_rssi, res.rssi)})") },
-                        modifier = Modifier.clickable { selectedDevice = res }
+                        supportingContent = { Text("$address (${stringResource(R.string.scan_rssi, rssi)})") },
+                        modifier = Modifier.clickable { selectedDevice = scannedDevice }
                     )
                     HorizontalDivider()
                 }

@@ -521,13 +521,29 @@ let ciphertext = cipher.encrypt(&nonce, payload)?;
 
 ### Common Issues
 
-| Problem                | Cause                             | Solution                                      |
-| ---------------------- | --------------------------------- | --------------------------------------------- |
-| Registration timeout   | User didn't press power button    | Increase timeout to 30s, show clear prompt    |
-| GATT connection failed | BLE permissions not granted       | Request `BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN` |
-| Login failed           | Token corrupted or expired        | Delete token, re-register                     |
-| Decryption failed      | Wrong counter or keys             | Ensure counter=0, verify key derivation       |
-| No telemetry data      | UART RX notifications not enabled | Enable notifications after login              |
+| Problem                  | Cause                             | Solution                                             |
+| ------------------------ | --------------------------------- | ---------------------------------------------------- |
+| Scooter not found        | Airlock enabled                   | Unbind from Mi Home, disable Airlock via DownG       |
+| Scooter not found        | BLE not advertising               | Reset Bluetooth: Power + Brake + Throttle 5s         |
+| Scooter shows as Unknown | Not using advertised name         | Use `scanRecord.deviceName` instead of `device.name` |
+| Registration timeout     | User didn't press power button    | Increase timeout to 30s, show clear prompt           |
+| GATT connection failed   | BLE permissions not granted       | Request `BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN`        |
+| Login failed             | Token corrupted or expired        | Delete token, re-register                            |
+| Decryption failed        | Wrong counter or keys             | Ensure counter=0, verify key derivation              |
+| No telemetry data        | UART RX notifications not enabled | Enable notifications after login                     |
+
+### Airlock (Anti-Theft Feature)
+
+Xiaomi scooters have an "Airlock" feature that blocks third-party apps when:
+
+- Scooter is bound to Mi Home app
+- Airlock is enabled in firmware
+
+**How to disable Airlock:**
+
+1. Unbind scooter from Mi Home app, or
+2. Use DownG / M365 Tools app to disable Airlock, or
+3. Register with this app (will unpair from Mi Home)
 
 ### Debug Logging
 
@@ -571,4 +587,4 @@ Data larger than 18 bytes is transferred using the MiParcel protocol:
 
 ---
 
-_Document Version: 1.0 | Last Updated: December 2024_
+_Document Version: 1.1 | Last Updated: January 2026_

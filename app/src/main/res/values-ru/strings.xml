@@ -40,6 +40,25 @@
     <string name="dashboard_view_details">Подробности</string>
     <string name="dashboard_view_logs">Просмотр логов</string>
     
+    <!-- Motor Control -->
+    <string name="control_motor">Управление мотором</string>
+    <string name="control_lock">Заблокировать</string>
+    <string name="control_unlock">Разблокировать</string>
+    <string name="control_locked">Заблокирован</string>
+    <string name="control_unlocked">Разблокирован</string>
+    
+    <!-- Tail Light Control -->
+    <string name="control_light">Задний фонарь</string>
+    <string name="control_light_on">Вкл</string>
+    <string name="control_light_off">Выкл</string>
+    
+    <!-- Gateway HUD -->
+    <string name="gateway_hud">Шлюз Rokid HUD</string>
+    <string name="gateway_broadcasting">Трансляция на очки</string>
+    <string name="gateway_off">Выкл</string>
+    <string name="gateway_notification_title">Шлюз M365 HUD</string>
+    <string name="gateway_notification_text">Трансляция телеметрии на очки Rokid</string>
+
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Данные самоката</string>
     <string name="info_speed_section">Информация о скорости</string>
@@ -72,10 +91,33 @@
     <string name="language_apply_restart">Применить и перезапустить</string>
     <string name="language_restarting">Перезапуск…</string>
     
+    <!-- Log Viewer -->
+    <string name="log_viewer_title">Просмотр логов</string>
+    <string name="log_tab_all">Все</string>
+    <string name="log_tab_telemetry">Телеметрия</string>
+    <string name="log_tab_ble">BLE связь</string>
+    <string name="log_enable_logging">Включить логирование</string>
+    <string name="log_no_files">Файлы логов не найдены</string>
+    <string name="log_type_telemetry">Телеметрия</string>
+    <string name="log_type_ble">BLE связь</string>
+    <string name="log_type_legacy">Старый</string>
+    <string name="log_share_title">Поделиться файлом лога</string>
+    <string name="log_delete_confirm_title">Удалить лог</string>
+    <string name="log_delete_confirm_message">Удалить %1$s?</string>
+    <string name="log_delete_all">Удалить всё</string>
+    <string name="log_delete_all_title">Удалить все логи</string>
+    <string name="log_delete_all_message">Вы уверены, что хотите удалить все файлы логов?</string>
+    <string name="delete">Удалить</string>
+    <string name="refresh">Обновить</string>
+    <string name="view_logs">Просмотр логов</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">Вход…</string>
     <string name="state_press_power_button">🔥 Нажмите кнопку питания самоката! 🔥</string>
     <string name="state_unknown_error">Неизвестная ошибка</string>
+    <string name="connection_lost">Соединение с самокатом потеряно. Пожалуйста, переподключитесь.</string>
+    <string name="connection_lost_title">Соединение потеряно</string>
+    <string name="reconnect">Переподключиться</string>
     
     <!-- Errors -->
     <string name="error_gatt_failed">Ошибка подключения GATT</string>

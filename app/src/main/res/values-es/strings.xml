@@ -40,6 +40,25 @@
     <string name="dashboard_view_details">Ver Detalles</string>
     <string name="dashboard_view_logs">Ver Registros</string>
     
+    <!-- Motor Control -->
+    <string name="control_motor">Control del Motor</string>
+    <string name="control_lock">Bloquear</string>
+    <string name="control_unlock">Desbloquear</string>
+    <string name="control_locked">Bloqueado</string>
+    <string name="control_unlocked">Desbloqueado</string>
+    
+    <!-- Tail Light Control -->
+    <string name="control_light">Luz Trasera</string>
+    <string name="control_light_on">Encendida</string>
+    <string name="control_light_off">Apagada</string>
+    
+    <!-- Gateway HUD -->
+    <string name="gateway_hud">Pasarela Rokid HUD</string>
+    <string name="gateway_broadcasting">Transmitiendo a las Gafas</string>
+    <string name="gateway_off">Apagado</string>
+    <string name="gateway_notification_title">Pasarela M365 HUD</string>
+    <string name="gateway_notification_text">Transmitiendo telemetría a las Gafas Rokid</string>
+
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Detalles del Patinete</string>
     <string name="info_speed_section">Información de Velocidad</string>
@@ -72,10 +91,33 @@
     <string name="language_apply_restart">Aplicar y Reiniciar</string>
     <string name="language_restarting">Reiniciando…</string>
     
+    <!-- Log Viewer -->
+    <string name="log_viewer_title">Visor de Registros</string>
+    <string name="log_tab_all">Todos</string>
+    <string name="log_tab_telemetry">Telemetría</string>
+    <string name="log_tab_ble">Comunicación BLE</string>
+    <string name="log_enable_logging">Activar Registros</string>
+    <string name="log_no_files">No se encontraron archivos de registro</string>
+    <string name="log_type_telemetry">Telemetría</string>
+    <string name="log_type_ble">Comunicación BLE</string>
+    <string name="log_type_legacy">Antiguo</string>
+    <string name="log_share_title">Compartir Archivo de Registro</string>
+    <string name="log_delete_confirm_title">Eliminar Registro</string>
+    <string name="log_delete_confirm_message">¿Eliminar %1$s?</string>
+    <string name="log_delete_all">Eliminar Todo</string>
+    <string name="log_delete_all_title">Eliminar Todos los Registros</string>
+    <string name="log_delete_all_message">¿Seguro que deseas eliminar todos los archivos de registro?</string>
+    <string name="delete">Eliminar</string>
+    <string name="refresh">Actualizar</string>
+    <string name="view_logs">Ver Registros</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">Iniciando sesión…</string>
     <string name="state_press_power_button">🔥 ¡Presiona el botón de encendido del patinete! 🔥</string>
     <string name="state_unknown_error">Error desconocido</string>
+    <string name="connection_lost">Conexión con el patinete perdida. Por favor reconecta.</string>
+    <string name="connection_lost_title">Conexión Perdida</string>
+    <string name="reconnect">Reconectar</string>
     
     <!-- Errors -->
     <string name="error_gatt_failed">Conexión GATT fallida</string>

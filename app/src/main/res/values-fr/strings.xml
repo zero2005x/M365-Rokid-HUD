@@ -40,6 +40,25 @@
     <string name="dashboard_view_details">Voir les Détails</string>
     <string name="dashboard_view_logs">Voir les Journaux</string>
     
+    <!-- Motor Control -->
+    <string name="control_motor">Contrôle Moteur</string>
+    <string name="control_lock">Verrouiller</string>
+    <string name="control_unlock">Déverrouiller</string>
+    <string name="control_locked">Verrouillé</string>
+    <string name="control_unlocked">Déverrouillé</string>
+    
+    <!-- Tail Light Control -->
+    <string name="control_light">Feu Arrière</string>
+    <string name="control_light_on">Allumé</string>
+    <string name="control_light_off">Éteint</string>
+    
+    <!-- Gateway HUD -->
+    <string name="gateway_hud">Passerelle Rokid HUD</string>
+    <string name="gateway_broadcasting">Diffusion vers les Lunettes</string>
+    <string name="gateway_off">Désactivé</string>
+    <string name="gateway_notification_title">Passerelle M365 HUD</string>
+    <string name="gateway_notification_text">Diffusion de la télémétrie vers les Lunettes Rokid</string>
+
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Détails de la Trottinette</string>
     <string name="info_speed_section">Info Vitesse</string>
@@ -72,10 +91,33 @@
     <string name="language_apply_restart">Appliquer et Redémarrer</string>
     <string name="language_restarting">Redémarrage…</string>
     
+    <!-- Log Viewer -->
+    <string name="log_viewer_title">Visionneur de Journaux</string>
+    <string name="log_tab_all">Tous</string>
+    <string name="log_tab_telemetry">Télémétrie</string>
+    <string name="log_tab_ble">Communication BLE</string>
+    <string name="log_enable_logging">Activer les Journaux</string>
+    <string name="log_no_files">Aucun fichier journal trouvé</string>
+    <string name="log_type_telemetry">Télémétrie</string>
+    <string name="log_type_ble">Communication BLE</string>
+    <string name="log_type_legacy">Ancien</string>
+    <string name="log_share_title">Partager le Fichier Journal</string>
+    <string name="log_delete_confirm_title">Supprimer le Journal</string>
+    <string name="log_delete_confirm_message">Supprimer %1$s ?</string>
+    <string name="log_delete_all">Tout Supprimer</string>
+    <string name="log_delete_all_title">Supprimer Tous les Journaux</string>
+    <string name="log_delete_all_message">Voulez-vous vraiment supprimer tous les fichiers journaux ?</string>
+    <string name="delete">Supprimer</string>
+    <string name="refresh">Actualiser</string>
+    <string name="view_logs">Voir les Journaux</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">Connexion…</string>
     <string name="state_press_power_button">🔥 Appuyez sur le bouton d\'alimentation de la trottinette ! 🔥</string>
     <string name="state_unknown_error">Erreur inconnue</string>
+    <string name="connection_lost">Connexion à la trottinette perdue. Veuillez vous reconnecter.</string>
+    <string name="connection_lost_title">Connexion Perdue</string>
+    <string name="reconnect">Reconnecter</string>
     
     <!-- Errors -->
     <string name="error_gatt_failed">Échec de connexion GATT</string>

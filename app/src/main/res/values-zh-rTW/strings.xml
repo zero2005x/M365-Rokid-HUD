@@ -52,6 +52,13 @@
     <string name="control_light_on">開啟</string>
     <string name="control_light_off">關閉</string>
     
+    <!-- Gateway HUD -->
+    <string name="gateway_hud">Rokid HUD 閘道</string>
+    <string name="gateway_broadcasting">正在廣播到眼鏡</string>
+    <string name="gateway_off">關閉</string>
+    <string name="gateway_notification_title">M365 HUD 閘道</string>
+    <string name="gateway_notification_text">正在向 Rokid 眼鏡廣播遙測資料</string>
+    
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">滑板車詳細資訊</string>
     <string name="info_speed_section">速度資訊</string>

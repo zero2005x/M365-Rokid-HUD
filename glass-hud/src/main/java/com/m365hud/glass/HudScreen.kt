@@ -55,7 +55,7 @@ fun HudScreen(
                 scaleX = if (MIRROR_FOR_ROKID) -1f else 1f
             }
             .background(backgroundColor)
-            .padding(start = 16.dp, end = 16.dp, top = 285.dp, bottom = 16.dp)  // Extra top padding to push content down for Rokid glasses
+            .padding(start = 8.dp, end = 8.dp, top = 285.dp, bottom = 16.dp)  // Reduced horizontal padding for Rokid glasses
     ) {
         when (connectionState) {
             is BleClient.ConnectionState.Disconnected,
@@ -175,16 +175,16 @@ private fun ConnectedHudView(
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp),
+            .padding(horizontal = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Left: Time & Phone Battery
         Column(
             horizontalAlignment = Alignment.Start,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1.2f)
         ) {
-            // Current Time
+            // Current Time - use Row to keep HH:mm on single line
             Text(
                 text = if (timeData.hour > 0 || timeData.minute > 0) {
                     timeData.formatTime()
@@ -193,24 +193,35 @@ private fun ConnectedHudView(
                     SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                 },
                 color = secondaryColor,
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Light
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Light,
+                maxLines = 1,
+                softWrap = false
             )
             
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             
-            // Phone Battery
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Phone Battery - keep on single line
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.wrapContentWidth()
+            ) {
                 Text(
                     text = "📱",
-                    fontSize = 16.sp
+                    fontSize = 14.sp
                 )
-                Spacer(modifier = Modifier.width(4.dp))
-                BatteryIndicator(
-                    percentage = timeData.phoneBattery,
-                    warningColor = warningColor,
-                    normalColor = secondaryColor,
-                    size = 18
+                Spacer(modifier = Modifier.width(2.dp))
+                Text(
+                    text = "${timeData.phoneBattery}%",
+                    color = when {
+                        timeData.phoneBattery <= 15 -> Color.Red
+                        timeData.phoneBattery <= 30 -> warningColor
+                        else -> secondaryColor
+                    },
+                    fontSize = 14.sp,
+                    fontWeight = if (timeData.phoneBattery <= 15) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -220,20 +231,23 @@ private fun ConnectedHudView(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.weight(2f)
         ) {
-            // Speed value
+            // Speed value - reduced size to prevent overlap
             Text(
                 text = "%.1f".format(telemetry.speedKmh),
                 color = primaryColor,
-                fontSize = 72.sp,
+                fontSize = 48.sp,
                 fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                softWrap = false
             )
             
             // Unit
             Text(
                 text = "km/h",
                 color = secondaryColor.copy(alpha = 0.7f),
-                fontSize = 20.sp
+                fontSize = 16.sp,
+                maxLines = 1
             )
             
             // Scooter connection indicator
@@ -253,36 +267,47 @@ private fun ConnectedHudView(
         // Right: Scooter Battery
         Column(
             horizontalAlignment = Alignment.End,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1.2f)
         ) {
-            // Scooter Battery
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Scooter Battery - keep on single line
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.wrapContentWidth()
+            ) {
                 Text(
                     text = "🛴",
-                    fontSize = 20.sp
+                    fontSize = 14.sp
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                BatteryIndicator(
-                    percentage = telemetry.scooterBattery,
-                    warningColor = warningColor,
-                    normalColor = primaryColor,
-                    size = 32
+                Spacer(modifier = Modifier.width(2.dp))
+                Text(
+                    text = "${telemetry.scooterBattery}%",
+                    color = when {
+                        telemetry.scooterBattery <= 15 -> Color.Red
+                        telemetry.scooterBattery <= 30 -> warningColor
+                        else -> primaryColor
+                    },
+                    fontSize = 18.sp,
+                    fontWeight = if (telemetry.scooterBattery <= 15) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             
             // Trip info (if riding)
             if (telemetry.tripMeters > 0 || telemetry.tripSeconds > 0) {
                 Text(
                     text = telemetry.formatTripDistance(),
                     color = secondaryColor.copy(alpha = 0.8f),
-                    fontSize = 14.sp
+                    fontSize = 12.sp,
+                    maxLines = 1
                 )
                 Text(
                     text = telemetry.formatTripTime(),
                     color = secondaryColor.copy(alpha = 0.6f),
-                    fontSize = 12.sp
+                    fontSize = 10.sp,
+                    maxLines = 1
                 )
             }
         }

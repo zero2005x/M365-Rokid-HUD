@@ -187,13 +187,16 @@ class M365GattServer(
             .setTimeout(0) // Advertise indefinitely
             .build()
         
+        // Primary advertisement: Service UUID only (fits in 31 bytes)
+        // Note: Device name + 128-bit UUID exceeds 31 byte limit
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .setIncludeDeviceName(false)
             .addServiceUuid(ParcelUuid(M365HudGattProfile.SERVICE_UUID))
             .build()
         
+        // Scan response: Device name for identification
         val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
+            .setIncludeDeviceName(true)
             .build()
         
         advertiser?.startAdvertising(settings, data, scanResponse, advertiseCallback)

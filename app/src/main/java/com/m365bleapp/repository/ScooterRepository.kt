@@ -1103,13 +1103,33 @@ class ScooterRepository private constructor(private val context: Context) {
         ) {
             return
         }
-        activeGatt?.close()
+        
+        // Important: Must call disconnect() BEFORE close() to properly release
+        // the BLE connection and clear Android's connection cache.
+        // Just calling close() leaves the device in a cached state,
+        // preventing it from being discovered again on subsequent scans.
+        activeGatt?.let { gatt ->
+            try {
+                gatt.disconnect()
+                // Small delay to ensure disconnect completes before close
+                Thread.sleep(100)
+            } catch (e: Exception) {
+                Log.w("ScooterRepo", "Error during disconnect: ${e.message}")
+            }
+            try {
+                gatt.close()
+            } catch (e: Exception) {
+                Log.w("ScooterRepo", "Error during close: ${e.message}")
+            }
+        }
         activeGatt = null
         _connectionState.value = ConnectionState.Disconnected
         if (sessionPtr != 0L) {
              native.freeSession(sessionPtr)
              sessionPtr = 0
         }
+        
+        Log.i("ScooterRepo", "Disconnected and cleaned up BLE resources")
     }
     
     fun getLogs(): List<java.io.File> = logger.getLogFiles()

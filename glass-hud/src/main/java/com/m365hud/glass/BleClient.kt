@@ -65,6 +65,9 @@ class BleClient(private val context: Context) {
             return
         }
         
+        // Reset connection flag
+        isConnecting = false
+        
         _connectionState.value = ConnectionState.Scanning
         Log.i(TAG, "Starting scan for M365 HUD Gateway...")
         
@@ -112,8 +115,16 @@ class BleClient(private val context: Context) {
      * Disconnect from the Gateway
      */
     fun disconnect() {
-        gatt?.disconnect()
-        gatt?.close()
+        isConnecting = false
+        stopScan() // Ensure scan is stopped
+        
+        gatt?.let { g ->
+            g.disconnect()
+            // Wait briefly for disconnect to complete before closing
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                g.close()
+            }, 100)
+        }
         gatt = null
         targetDevice = null
         _connectionState.value = ConnectionState.Disconnected
@@ -130,18 +141,29 @@ class BleClient(private val context: Context) {
     
     // ========== Callbacks ==========
     
+    // Flag to prevent multiple connection attempts during scan
+    @Volatile
+    private var isConnecting = false
+    
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             Log.i(TAG, "Found device: ${result.device.address}, RSSI: ${result.rssi}")
             
             // Auto-connect to the first device with our service
-            if (_connectionState.value == ConnectionState.Scanning) {
-                connect(result.device)
+            // Use synchronized check to prevent race condition
+            synchronized(this@BleClient) {
+                if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
+                    isConnecting = true
+                    // Stop scan immediately before attempting connection
+                    stopScan()
+                    connect(result.device)
+                }
             }
         }
         
         override fun onScanFailed(errorCode: Int) {
             Log.e(TAG, "Scan failed with error: $errorCode")
+            isConnecting = false
             _connectionState.value = ConnectionState.Error("Scan failed: $errorCode")
         }
     }
@@ -157,6 +179,7 @@ class BleClient(private val context: Context) {
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.i(TAG, "Disconnected from GATT server")
+                    isConnecting = false
                     _connectionState.value = ConnectionState.Disconnected
                     this@BleClient.gatt?.close()
                     this@BleClient.gatt = null
@@ -237,7 +260,9 @@ class BleClient(private val context: Context) {
     
     /**
      * Enable notification for a characteristic
+     * Uses deprecated API for compatibility with older Android versions (Rokid glasses)
      */
+    @Suppress("DEPRECATION")
     private fun enableNotification(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic): Boolean {
         val success = gatt.setCharacteristicNotification(characteristic, true)
         if (!success) {
@@ -246,9 +271,11 @@ class BleClient(private val context: Context) {
         }
         
         // Write to CCCD to enable notifications
+        // Using deprecated API for compatibility with Android < 13 (Rokid glasses)
         val descriptor = characteristic.getDescriptor(GattProfile.CCCD_UUID)
         if (descriptor != null) {
-            gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            gatt.writeDescriptor(descriptor)
             Log.i(TAG, "Enabled notification for ${characteristic.uuid}")
         }
         

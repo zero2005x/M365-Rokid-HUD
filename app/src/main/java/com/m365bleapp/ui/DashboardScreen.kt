@@ -83,20 +83,26 @@ fun DashboardScreen(
     // Disconnection alert dialog state
     var showDisconnectAlert by remember { mutableStateOf(false) }
     var disconnectMessage by remember { mutableStateOf("") }
+    // Track user-initiated disconnect to avoid showing alert
+    var userInitiatedDisconnect by remember { mutableStateOf(false) }
     
     // Monitor connection state for disconnection
     LaunchedEffect(connState) {
         when (connState) {
             is ConnectionState.Disconnected -> {
-                disconnectMessage = context.getString(R.string.connection_lost)
-                showDisconnectAlert = true
+                // Only show alert for unexpected disconnections, not user-initiated ones
+                if (!userInitiatedDisconnect) {
+                    disconnectMessage = context.getString(R.string.connection_lost)
+                    showDisconnectAlert = true
+                }
             }
             is ConnectionState.Error -> {
                 disconnectMessage = (connState as ConnectionState.Error).message
                 showDisconnectAlert = true
             }
             else -> {
-                // Connected states - don't show alert
+                // Connected states - reset the flag
+                userInitiatedDisconnect = false
             }
         }
     }
@@ -424,7 +430,10 @@ fun DashboardScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Button(
-                onClick = onDisconnect,
+                onClick = {
+                    userInitiatedDisconnect = true
+                    onDisconnect()
+                },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
             ) {

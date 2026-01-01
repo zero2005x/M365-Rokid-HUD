@@ -17,6 +17,9 @@ A modern Android application for connecting to and monitoring Xiaomi/Ninebot M36
 - 🔐 **Secure Registration** - ECDH key exchange for first-time pairing
 - 🔑 **Token-based Login** - Fast reconnection with saved authentication
 - 📊 **Real-time Telemetry** - Monitor speed, battery, temperature, and more
+- 🕶️ **Rokid AR HUD** - Display telemetry on Rokid glasses via BLE Gateway
+- 🔒 **Motor Lock/Unlock** - Control scooter lock status remotely
+- 💡 **Tail Light Control** - Toggle tail light on/off
 - 🌍 **Multi-language Support** - 11 languages supported
 - 🎨 **Modern UI** - Built with Jetpack Compose and Material3 design
 
@@ -178,6 +181,14 @@ Or directly install to connected device:
 3. **First-time pairing**: Check "Register" and press scooter power button when prompted
 4. **Subsequent connections**: Just tap the device to connect
 5. **View telemetry** on the Dashboard or Details screen
+6. **Enable Rokid HUD Gateway** (optional): Toggle the Gateway switch on Dashboard to broadcast telemetry to Rokid glasses
+
+### Rokid AR Glasses Setup
+
+1. Install the `glass-hud` APK on your Rokid glasses
+2. On the phone app, connect to your scooter and enable "Rokid HUD Gateway"
+3. On the glasses, the HUD will automatically scan and connect to the phone Gateway
+4. The HUD displays: Speed, Scooter Battery, Phone Battery, and Current Time
 
 > ⚠️ **Warning**: Registration will unpair the scooter from other apps (e.g., Mi Home). Only register devices you own.
 

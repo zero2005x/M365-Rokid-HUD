@@ -192,7 +192,9 @@ class GatewayService : Service() {
             Log.e(TAG, "Security exception stopping GATT server", e)
         }
         
-        repository?.disconnect()
+        // Note: Do NOT call repository?.disconnect() here!
+        // Gateway service stopping should not affect the scooter connection.
+        // The scooter connection is managed separately by the main app.
         
         super.onDestroy()
     }

@@ -6,6 +6,10 @@ import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -93,6 +98,9 @@ fun ScanScreen(
         }
     }
     var showPermissionError by remember { mutableStateOf(false) }
+    
+    // Track if registered device was newly discovered for auto-scroll
+    var hasAutoScrolledToRegistered by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     
     // Permissions
@@ -309,6 +317,15 @@ fun ScanScreen(
             // Use rememberLazyListState for better scroll performance
             val listState = rememberLazyListState()
             
+            // Auto-scroll to top when registered device is discovered
+            LaunchedEffect(sortedDevices) {
+                val hasRegistered = sortedDevices.any { it.isRegistered }
+                if (hasRegistered && !hasAutoScrolledToRegistered) {
+                    hasAutoScrolledToRegistered = true
+                    listState.animateScrollToItem(0)
+                }
+            }
+            
             LazyColumn(state = listState) {
                 items(
                     items = sortedDevices, 
@@ -322,7 +339,24 @@ fun ScanScreen(
                     val address = scannedDevice.address
                     val rssi = scannedDevice.rssi
                     
+                    // Animate background and scale for registered devices
+                    val backgroundColor by animateColorAsState(
+                        targetValue = if (isReg) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                      else MaterialTheme.colorScheme.surface,
+                        animationSpec = tween(durationMillis = 500),
+                        label = "registeredBgColor"
+                    )
+                    val scaleValue by animateFloatAsState(
+                        targetValue = if (isReg) 1.02f else 1f,
+                        animationSpec = tween(durationMillis = 300),
+                        label = "registeredScale"
+                    )
+                    
                     ListItem(
+                        modifier = Modifier
+                            .scale(scaleValue)
+                            .background(backgroundColor)
+                            .clickable { selectedDevice = scannedDevice },
                         headlineContent = { 
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 // Show scooter icon for identified M365 devices
@@ -345,8 +379,7 @@ fun ScanScreen(
                                 }
                             }
                         },
-                        supportingContent = { Text("$address (${stringResource(R.string.scan_rssi, rssi)})") },
-                        modifier = Modifier.clickable { selectedDevice = scannedDevice }
+                        supportingContent = { Text("$address (${stringResource(R.string.scan_rssi, rssi)})") }
                     )
                     HorizontalDivider()
                 }

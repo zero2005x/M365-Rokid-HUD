@@ -74,9 +74,9 @@ class ScooterRepository private constructor(private val context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
-    private val incomingData = Channel<ByteArray>(Channel.UNLIMITED) // Deprecated
-    private val controlChannel = Channel<ByteArray>(Channel.UNLIMITED)
-    private val uartRxChannel = Channel<ByteArray>(Channel.UNLIMITED)
+    // Channel capacity limited to prevent memory leaks if consumer is blocked
+    private val controlChannel = Channel<ByteArray>(64)
+    private val uartRxChannel = Channel<ByteArray>(64)
     
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState = _connectionState.asStateFlow()
@@ -111,9 +111,22 @@ class ScooterRepository private constructor(private val context: Context) {
     private val AUTH_SERVICE = BleManager.AUTH_SERVICE
     private val AUTH_UPNP = BleManager.AUTH_UPNP
     private val AUTH_AVDTP = BleManager.AUTH_AVDTP
+    
+    // Security status (P3: Root detection warning)
+    private val _securityStatus = MutableStateFlow<com.m365bleapp.utils.SecurityChecker.SecurityStatus?>(null)
+    val securityStatus = _securityStatus.asStateFlow()
 
     fun init() {
         native.init()
+        
+        // P3: Check device security status on init (non-blocking warning)
+        scope.launch {
+            val status = com.m365bleapp.utils.SecurityChecker.checkSecurity()
+            _securityStatus.value = status
+            if (status.hasWarnings) {
+                Log.w("ScooterRepo", "Security check: ${status.getWarningMessage()}")
+            }
+        }
     }
 
     fun isRegistered(mac: String): Boolean {
@@ -132,8 +145,7 @@ class ScooterRepository private constructor(private val context: Context) {
             try {
                 val device = bleManager.getDevice(mac)
                 
-                // Clear old data
-                while(incomingData.tryReceive().isSuccess) {}
+                // Clear old data from channels
                 while(controlChannel.tryReceive().isSuccess) {}
                 while(uartRxChannel.tryReceive().isSuccess) {}
 

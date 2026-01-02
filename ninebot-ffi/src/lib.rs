@@ -31,48 +31,28 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_prepareHandshake(
     env: JNIEnv,
     _class: JClass,
 ) -> jbyteArray {
-    let (secret, public) = mi_crypto::gen_key_pair();
+    // Wrap entire function in catch_unwind for FFI safety
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (secret, public) = mi_crypto::gen_key_pair();
+        
+        let state = Box::new(KeyExchangeState {
+            secret: Some(secret),
+        });
+        let ptr = Box::into_raw(state) as i64;
+        
+        let pk_bytes = public.to_encoded_point(false).as_bytes().to_vec();
+        
+        let mut result = Vec::with_capacity(8 + pk_bytes.len());
+        result.extend_from_slice(&ptr.to_be_bytes());
+        result.extend_from_slice(&pk_bytes);
+        
+        result
+    }));
     
-    // Store secret in a heap box and return pointer? 
-    // Wait, the handshake flow is:
-    // 1. Android asks "Give me your public key" (and keeps the private key context).
-    // 2. Android receives Remote Public Key -> Calls "Process Handshake" with context.
-    
-    // So we need to return `(ptr, publicKeyBytes)`.
-    // But JNI returns 1 arg.
-    // Better: Return a serialized byte array containing address + pubkey?
-    // Or return an object.
-    // Or just store it in a static map with ID? (Statics are messy).
-    // Let's use `long` handle. But we need to return both handle and pubkey.
-    // Let's make `prepareHandshake` return the PUBLIC KEY bytes only? 
-    // And where is the secret?
-    // We should make `long createHandshakeContext()` and `byte[] getPublicKey(long ctx)`.
-    
-    // Simplified: `prepareHandshake` returns a composite structure or we split it.
-    // Let's just return a standard Java object? No, too much boilerplate.
-    
-    // Helper: We simply return the Public Key here (encoded).
-    // BUT we must persist the PRIVATE key.
-    // We will allocate the Context on heap and return its address as `jlong`.
-    // Wait, `processHandshake` needs the private key.
-    
-    // Function: `createContext() -> jlong`
-    
-    // Let's combine:
-    // Returns byte[] which is [8 bytes pointer][public key bytes...]
-    
-    let state = Box::new(KeyExchangeState {
-        secret: Some(secret),
-    });
-    let ptr = Box::into_raw(state) as i64;
-    
-    let pk_bytes = public.to_encoded_point(false).as_bytes().to_vec();
-    
-    let mut result = Vec::with_capacity(8 + pk_bytes.len());
-    result.extend_from_slice(&ptr.to_be_bytes());
-    result.extend_from_slice(&pk_bytes);
-    
-    env.byte_array_from_slice(&result).unwrap()
+    match result {
+        Ok(data) => env.byte_array_from_slice(&data).unwrap_or_else(|_| std::ptr::null_mut()),
+        Err(_) => env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut()),
+    }
 }
 
 #[no_mangle]
@@ -83,21 +63,35 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_processHandshake(
     remote_key: jbyteArray,
     remote_info: jbyteArray,
 ) -> jbyteArray {
+    // Validate pointer
+    if ctx_ptr == 0 {
+        return env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut());
+    }
+    
     // Restore context
     let mut state = unsafe { Box::from_raw(ctx_ptr as *mut KeyExchangeState) };
-    // Function consumes context (one-time use)
     
-    let secret = state.secret.take().expect("Secret already used");
+    // Safely take secret
+    let secret = match state.secret.take() {
+        Some(s) => s,
+        None => return env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut()),
+    };
     
-    let remote_key_vec = env.convert_byte_array(remote_key).unwrap();
-    let remote_info_vec = env.convert_byte_array(remote_info).unwrap();
+    let remote_key_vec = match env.convert_byte_array(remote_key) {
+        Ok(v) => v,
+        Err(_) => return env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut()),
+    };
+    let remote_info_vec = match env.convert_byte_array(remote_info) {
+        Ok(v) => v,
+        Err(_) => return env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut()),
+    };
     
-    // Call calc_did
+    // Call calc_did with catch_unwind
     let (did_ct, token) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
              mi_crypto::calc_did(&secret, &remote_key_vec, &remote_info_vec)
     })) {
         Ok(res) => res,
-        Err(_) => return env.byte_array_from_slice(&[]).unwrap(), // Error
+        Err(_) => return env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut()),
     };
 
     // Return format: [12 bytes Token][Rest DID Ciphertext]
@@ -105,7 +99,7 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_processHandshake(
     output.extend_from_slice(&token);
     output.extend_from_slice(&did_ct);
     
-    env.byte_array_from_slice(&output).unwrap()
+    env.byte_array_from_slice(&output).unwrap_or_else(|_| std::ptr::null_mut())
 }
 
 #[no_mangle]
@@ -117,32 +111,37 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_login(
      remote_key: jbyteArray,
      _remote_info: jbyteArray,
 ) -> jbyteArray { // Returns [8 bytes Ptr][Login Data...]
-    let token_vec = env.convert_byte_array(token).unwrap();
-    let mut rand_key_vec = env.convert_byte_array(rand_key).unwrap();
-    let mut remote_key_vec = env.convert_byte_array(remote_key).unwrap();
-    // remote_info unused for derivation now, but maybe for verification?
-    // For now, ignoring remote_info as per mi_crypto change.
+    // Wrap in catch_unwind for FFI safety
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let token_vec = env.convert_byte_array(token).map_err(|_| "token conversion failed")?;
+        let mut rand_key_vec = env.convert_byte_array(rand_key).map_err(|_| "rand_key conversion failed")?;
+        let mut remote_key_vec = env.convert_byte_array(remote_key).map_err(|_| "remote_key conversion failed")?;
+        
+        if token_vec.len() != 12 { return Err("token length invalid"); }
+        
+        let mut token_arr = [0u8; 12];
+        token_arr.copy_from_slice(&token_vec);
+        
+        let (info, _, keys) = mi_crypto::calc_login_did(
+            &mut rand_key_vec,
+            &mut remote_key_vec,
+            &token_arr
+        );
+        
+        let session = Box::new(SessionState { keys });
+        let ptr = Box::into_raw(session) as i64;
+        
+        let mut result = Vec::new();
+        result.extend_from_slice(&ptr.to_be_bytes());
+        result.extend_from_slice(&info);
+        
+        Ok::<Vec<u8>, &str>(result)
+    }));
     
-    if token_vec.len() != 12 { return env.byte_array_from_slice(&[]).unwrap(); }
-    
-    let mut token_arr = [0u8; 12];
-    token_arr.copy_from_slice(&token_vec);
-    
-    // calc_login_did modifies inputs!
-    let (info, _, keys) = mi_crypto::calc_login_did(
-        &mut rand_key_vec,
-        &mut remote_key_vec,
-        &token_arr
-    );
-    
-    let session = Box::new(SessionState { keys });
-    let ptr = Box::into_raw(session) as i64;
-    
-    let mut result = Vec::new();
-    result.extend_from_slice(&ptr.to_be_bytes());
-    result.extend_from_slice(&info);
-    
-    env.byte_array_from_slice(&result).unwrap()
+    match result {
+        Ok(Ok(data)) => env.byte_array_from_slice(&data).unwrap_or_else(|_| std::ptr::null_mut()),
+        _ => env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut()),
+    }
 }
 
 #[no_mangle]
@@ -154,14 +153,22 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_encrypt(
      counter: jlong,
 ) -> jbyteArray {
      if session_ptr == 0 {
-         return env.byte_array_from_slice(&[]).unwrap();
+         return env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut());
      }
-     let session = unsafe { &*(session_ptr as *mut SessionState) };
-     let payload_vec = env.convert_byte_array(payload).unwrap();
      
-     let encrypted = mi_crypto::encrypt_uart(&session.keys.app, &payload_vec, counter as u32, None);
+     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+         let session = unsafe { &*(session_ptr as *mut SessionState) };
+         let payload_vec = env.convert_byte_array(payload).map_err(|_| "payload conversion failed")?;
+         
+         let encrypted = mi_crypto::encrypt_uart(&session.keys.app, &payload_vec, counter as u32, None);
+         
+         Ok::<Vec<u8>, &str>(encrypted)
+     }));
      
-     env.byte_array_from_slice(&encrypted).unwrap()
+     match result {
+         Ok(Ok(data)) => env.byte_array_from_slice(&data).unwrap_or_else(|_| std::ptr::null_mut()),
+         _ => env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut()),
+     }
 }
 
 #[no_mangle]
@@ -172,14 +179,20 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_decrypt(
      encrypted: jbyteArray,
 ) -> jbyteArray {
      if session_ptr == 0 {
-         return env.byte_array_from_slice(&[]).unwrap();
+         return env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut());
      }
-     let session = unsafe { &*(session_ptr as *mut SessionState) };
-     let encrypted_vec = env.convert_byte_array(encrypted).unwrap();
      
-     match mi_crypto::decrypt_uart(&session.keys.dev, &encrypted_vec) {
-         Ok(data) => env.byte_array_from_slice(&data).unwrap(),
-         Err(_) => env.byte_array_from_slice(&[]).unwrap() // Error indicator
+     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+         let session = unsafe { &*(session_ptr as *mut SessionState) };
+         let encrypted_vec = env.convert_byte_array(encrypted).map_err(|_| "encrypted conversion failed")?;
+         
+         mi_crypto::decrypt_uart(&session.keys.dev, &encrypted_vec)
+             .map_err(|_| "decryption failed")
+     }));
+     
+     match result {
+         Ok(Ok(data)) => env.byte_array_from_slice(&data).unwrap_or_else(|_| std::ptr::null_mut()),
+         _ => env.byte_array_from_slice(&[]).unwrap_or_else(|_| std::ptr::null_mut()),
      }
 }
 

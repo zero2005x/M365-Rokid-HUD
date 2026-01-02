@@ -72,10 +72,22 @@ class BleManager(private val context: Context) {
             }
         }
         
+        // Android 13+ (API 33) new callback with value parameter
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            onNotifyCallback?.invoke(characteristic.uuid, value)
+        }
+        
+        // Android 12 and below (deprecated in API 33)
         @Deprecated("Deprecated in API 33")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             @Suppress("DEPRECATION")
-            onNotifyCallback?.invoke(characteristic.uuid, characteristic.value)
+            characteristic.value?.let { value ->
+                onNotifyCallback?.invoke(characteristic.uuid, value)
+            }
         }
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {

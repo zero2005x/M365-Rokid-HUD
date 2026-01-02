@@ -1,8 +1,6 @@
 package com.m365bleapp.ui
 
 import android.app.Activity
-import android.content.Intent
-import android.os.Process
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
@@ -57,16 +55,12 @@ fun NavHostContainer(repository: ScooterRepository) {
             LanguageScreen(
                 onBack = { navController.popBackStack() },
                 onLanguageChanged = {
-                    // Restart the app completely to apply language change
+                    // Safely restart the activity to apply language change
+                    // First disconnect BLE to properly release resources
+                    repository.disconnect()
+                    
                     val activity = context as? Activity
-                    activity?.let {
-                        val intent = Intent(it, MainActivity::class.java)
-                        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
-                        it.startActivity(intent)
-                        it.finish()
-                        // Kill process to ensure complete resource reload
-                        Process.killProcess(Process.myPid())
-                    }
+                    activity?.recreate()
                 }
             )
         }

@@ -52,41 +52,53 @@ M365-Rokid-HUD/
 ├── app/                          # Main Android Application (Phone)
 │   └── src/main/
 │       ├── java/com/m365bleapp/
+│       │   ├── MainActivity.kt   # App entry point
 │       │   ├── ble/              # BLE Manager (scanning, GATT)
 │       │   ├── ffi/              # Rust FFI bindings
 │       │   ├── gateway/          # GATT Server for glass-hud relay
 │       │   ├── repository/       # Data layer (ScooterRepository)
 │       │   ├── ui/               # Jetpack Compose screens
+│       │   │   ├── NavGraph.kt         # Navigation graph
 │       │   │   ├── ScanScreen.kt       # Device discovery
 │       │   │   ├── DashboardScreen.kt  # Real-time telemetry
 │       │   │   ├── ScooterInfoScreen.kt# Detailed info
 │       │   │   ├── LoggingScreen.kt    # Logging settings
 │       │   │   ├── LogViewerScreen.kt  # Log file viewer
-│       │   │   └── LanguageScreen.kt   # Language selection
+│       │   │   ├── LanguageScreen.kt   # Language selection
+│       │   │   └── theme/              # Material3 theme
 │       │   └── utils/            # Utilities (TelemetryLogger, etc.)
 │       ├── res/
 │       │   ├── values/           # English strings (default)
 │       │   ├── values-zh-rCN/    # Simplified Chinese
 │       │   ├── values-zh-rTW/    # Traditional Chinese
-│       │   └── values-*/         # Other languages
+│       │   └── values-*/         # Other languages (11 total)
 │       └── jniLibs/              # Native .so libraries
 ├── glass-hud/                    # Rokid AR Glass HUD Client
 │   └── src/main/
 │       └── java/com/m365hud/glass/
-│           ├── BleClient.kt      # BLE client (connects to app)
+│           ├── MainActivity.kt   # Glass app entry point
+│           ├── BleClient.kt      # BLE client (connects to phone)
 │           ├── GattProfile.kt    # GATT service definitions
 │           ├── HudScreen.kt      # AR HUD display
-│           └── DataModels.kt     # Shared data structures
+│           ├── DataModels.kt     # Shared data structures
+│           └── ui/               # Compose UI components
 ├── ninebot-ffi/                  # Rust FFI library for Android
 │   └── src/
 │       ├── lib.rs                # JNI exports
 │       └── mi_crypto.rs          # Cryptographic functions
 ├── ninebot-ble/                  # Core Rust BLE library
 │   └── src/
+│       ├── lib.rs                # Library entry point
 │       ├── connection.rs         # BLE connection handling
+│       ├── clone_connection.rs   # Connection cloning utilities
 │       ├── protocol.rs           # M365 protocol implementation
 │       ├── mi_crypto.rs          # ECDH, HKDF, AES-CCM encryption
-│       └── ...
+│       ├── login.rs              # Login flow implementation
+│       ├── register.rs           # Registration flow
+│       ├── scanner.rs            # BLE device scanning
+│       ├── consts.rs             # Protocol constants
+│       ├── android_api.rs        # Android-specific API
+│       └── session/              # Session management
 └── doc/                          # Documentation
     ├── BLE_PROTOCOL_GUIDE.md     # Detailed protocol documentation
     └── README_*.md               # Localized READMEs

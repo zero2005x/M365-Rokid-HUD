@@ -318,15 +318,21 @@ class ScooterRepository private constructor(private val context: Context) {
     }
 
     private suspend fun performLogin(token: ByteArray) {
+        Log.d("ScooterRepo", "=== performLogin START ===")
+        Log.d("ScooterRepo", "Token (${token.size} bytes): ${token.toHex()}")
+        
         // 1. Send Key
         // Write UPNP: CMD_LOGIN (24 00 00 00)
-        // 1. Send Key
-        // Write UPNP: CMD_LOGIN (24 00 00 00)
+        Log.d("ScooterRepo", "Sending CMD_LOGIN to UPNP...")
         writeChar(AUTH_SERVICE, AUTH_UPNP, byteArrayOf(0x24, 0x00, 0x00, 0x00))
+        
         // Write AVDTP: CMD_SEND_KEY (00 00 00 0B 01 00)
+        Log.d("ScooterRepo", "Sending CMD_SEND_KEY to AVDTP...")
         writeChar(AUTH_SERVICE, AUTH_AVDTP, byteArrayOf(0x00, 0x00, 0x00, 0x0B, 0x01, 0x00))
         
-        waitForCmd("00000101") // RCV_RDY
+        Log.d("ScooterRepo", "Waiting for RCV_RDY (00000101)... timeout=10s")
+        waitForCmd("00000101", 10000) // RCV_RDY - increased timeout
+        Log.d("ScooterRepo", "Got RCV_RDY!")
         delay(40)
         
         val randKey = ByteArray(16).apply { java.util.Random().nextBytes(this) }
@@ -374,6 +380,14 @@ class ScooterRepository private constructor(private val context: Context) {
         val counter = 0L  // Always use counter=0
         var tick = 0
         var consecutiveFailures = 0
+        
+        // LATENCY OPTIMIZATION: Track last update times to prioritize speed updates
+        // Speed (0xB0) is queried more frequently for real-time HUD display
+        var lastTripQueryTick = 0
+        var lastRangeQueryTick = 0
+        val TRIP_QUERY_INTERVAL = 5   // Query trip info every 5 ticks (~750ms)
+        val RANGE_QUERY_INTERVAL = 10 // Query remaining km every 10 ticks (~1500ms)
+        
         while (currentCoroutineContext().isActive && activeGatt != null) {
             try {
                 if (sessionPtr == 0L) {
@@ -385,12 +399,23 @@ class ScooterRepository private constructor(private val context: Context) {
                 // 0xB0: Motor Info - battery%, speed, avg speed, total km, temp (param=0x20, read 32 bytes)
                 // 0x3A: Trip Info - seconds this trip, meters this trip (param=0x04)
                 // 0x25: Remaining km (param=0x02)
-                // Cycle through these commands like Mi Home does
+                // 
+                // LATENCY OPTIMIZATION: Prioritize speed updates!
+                // - Query Motor Info (speed) most frequently for real-time HUD
+                // - Query Trip Info less frequently (doesn't change as fast)
+                // - Query Remaining KM even less frequently (changes slowly)
                 
-                val (attribute, payload) = when (tick % 3) {
-                    0 -> 0xB0 to byteArrayOf(0x20) // Motor info: 32 bytes
-                    1 -> 0x3A to byteArrayOf(0x04) // Trip info: 4 bytes  
-                    else -> 0x25 to byteArrayOf(0x02) // Remaining km: 2 bytes
+                val (attribute, payload) = when {
+                    // Always query motor info (speed) by default - highest priority
+                    tick - lastTripQueryTick >= TRIP_QUERY_INTERVAL -> {
+                        lastTripQueryTick = tick
+                        0x3A to byteArrayOf(0x04) // Trip info: 4 bytes
+                    }
+                    tick - lastRangeQueryTick >= RANGE_QUERY_INTERVAL -> {
+                        lastRangeQueryTick = tick
+                        0x25 to byteArrayOf(0x02) // Remaining km: 2 bytes
+                    }
+                    else -> 0xB0 to byteArrayOf(0x20) // Motor info (speed): 32 bytes - DEFAULT
                 }
                 
                 val packet = buildPacket(
@@ -436,7 +461,9 @@ class ScooterRepository private constructor(private val context: Context) {
                 Log.e("ScooterRepo", "Loop error: ${e.message}", e)
                 consecutiveFailures++
             }
-            delay(500) // Poll interval
+            // LATENCY OPTIMIZATION: Reduced from 500ms to 150ms for faster speed updates
+            // Speed is queried most frequently for real-time HUD display on Rokid glasses
+            delay(150)
         }
     }
 

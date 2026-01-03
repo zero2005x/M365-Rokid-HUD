@@ -123,4 +123,17 @@
     <string name="error_gatt_failed">GATT Connection failed</string>
     <string name="error_token_missing">Token missing after registration!</string>
     <string name="error_no_token">No token for this device. Please Scan &amp; Register.</string>
+    
+    <!-- Bluetooth Status -->
+    <string name="bluetooth_ready">Bluetooth is ready</string>
+    <string name="bluetooth_not_supported">Bluetooth is not supported on this device</string>
+    <string name="bluetooth_disabled">Bluetooth is disabled</string>
+    <string name="bluetooth_disabled_title">Bluetooth Disabled</string>
+    <string name="bluetooth_disabled_message">Please enable Bluetooth to use this app.</string>
+    <string name="bluetooth_permission_required">Bluetooth permissions are required</string>
+    <string name="bluetooth_permission_title">Permission Required</string>
+    <string name="bluetooth_permission_message">Bluetooth permissions are required to scan and connect to your scooter.</string>
+    <string name="bluetooth_enable">Enable Bluetooth</string>
+    <string name="bluetooth_settings">Open Settings</string>
+    <string name="bluetooth_gateway_disabled_message">Please enable Bluetooth to broadcast to Rokid Glasses.</string>
 </resources>

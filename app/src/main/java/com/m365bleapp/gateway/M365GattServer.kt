@@ -26,11 +26,18 @@ class M365GattServer(
 ) {
     companion object {
         private const val TAG = "M365GattServer"
+        
+        // LATENCY MONITORING: Track update frequency for debugging
+        private const val LATENCY_LOG_INTERVAL_MS = 5000L // Log stats every 5 seconds
     }
     
     private var gattServer: BluetoothGattServer? = null
     private var advertiser: BluetoothLeAdvertiser? = null
     private val subscribedDevices = ConcurrentHashMap<String, BluetoothDevice>()
+    
+    // Track if service has been added to GATT server
+    @Volatile private var serviceAdded = false
+    private val serviceAddedLock = Object()
     
     private lateinit var telemetryCharacteristic: BluetoothGattCharacteristic
     private lateinit var statusCharacteristic: BluetoothGattCharacteristic
@@ -42,7 +49,25 @@ class M365GattServer(
     
     private var isRunning = false
     
+    // LATENCY MONITORING: Track last update time and frequency for debugging delays
+    @Volatile private var lastTelemetryUpdateMs: Long = 0
+    @Volatile private var telemetryUpdateCount: Int = 0
+    @Volatile private var lastLogTimeMs: Long = 0
+    @Volatile private var lastSpeedValue: Double = 0.0
+    
     private val gattCallback = object : BluetoothGattServerCallback() {
+        override fun onServiceAdded(status: Int, service: BluetoothGattService) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "Service added successfully: ${service.uuid}")
+                synchronized(serviceAddedLock) {
+                    serviceAdded = true
+                    serviceAddedLock.notifyAll()
+                }
+            } else {
+                Log.e(TAG, "Failed to add service: ${service.uuid}, status=$status")
+            }
+        }
+        
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             Log.d(TAG, "Connection state changed: ${device.address} -> $newState")
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -168,13 +193,42 @@ class M365GattServer(
         service.addCharacteristic(statusCharacteristic)
         service.addCharacteristic(timeCharacteristic)
         
-        gattServer?.addService(service)
+        // Reset service added flag before adding
+        serviceAdded = false
+        
+        val addResult = gattServer?.addService(service)
+        Log.d(TAG, "addService called, result: $addResult")
+        
+        // Wait for service to be added (with timeout)
+        if (addResult == true) {
+            synchronized(serviceAddedLock) {
+                if (!serviceAdded) {
+                    try {
+                        // Wait up to 5 seconds for service to be added
+                        serviceAddedLock.wait(5000)
+                    } catch (e: InterruptedException) {
+                        Log.e(TAG, "Interrupted while waiting for service to be added")
+                    }
+                }
+            }
+            
+            if (!serviceAdded) {
+                Log.e(TAG, "Timeout waiting for service to be added")
+            } else {
+                Log.i(TAG, "Service successfully registered with GATT server")
+            }
+        } else {
+            Log.e(TAG, "addService returned false or gattServer is null")
+        }
         
         // Start Advertising
         startAdvertising()
         
         isRunning = true
-        Log.i(TAG, "GATT Server started successfully")
+        
+        // Log device name for debugging (helps identify which device is advertising)
+        val deviceName = adapter.name ?: "Unknown"
+        Log.i(TAG, "GATT Server started successfully - Device: $deviceName")
         return true
     }
     
@@ -187,18 +241,21 @@ class M365GattServer(
             .setTimeout(0) // Advertise indefinitely
             .build()
         
-        // Primary advertisement: Service UUID only (fits in 31 bytes)
-        // Note: Device name + 128-bit UUID exceeds 31 byte limit
+        // Primary advertisement: Service UUID (required for scan filter to work)
+        // Note: 128-bit UUID takes 18 bytes, leaving room for flags (3 bytes)
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
+            .setIncludeDeviceName(false)  // Device name in scan response to save space
+            .setIncludeTxPowerLevel(false)
             .addServiceUuid(ParcelUuid(M365HudGattProfile.SERVICE_UUID))
             .build()
         
         // Scan response: Device name for identification
         val scanResponse = AdvertiseData.Builder()
             .setIncludeDeviceName(true)
+            .setIncludeTxPowerLevel(true)
             .build()
         
+        Log.i(TAG, "Starting BLE advertising with Service UUID: ${M365HudGattProfile.SERVICE_UUID}")
         advertiser?.startAdvertising(settings, data, scanResponse, advertiseCallback)
     }
     
@@ -222,6 +279,7 @@ class M365GattServer(
     
     /**
      * Update telemetry data and notify all subscribed devices
+     * LATENCY OPTIMIZED: Immediately sends notifications to glasses for real-time display
      */
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun updateTelemetry(
@@ -235,6 +293,26 @@ class M365GattServer(
         tripMeters: Int,
         tripSeconds: Int
     ) {
+        val now = System.currentTimeMillis()
+        
+        // LATENCY MONITORING: Log update frequency stats periodically
+        telemetryUpdateCount++
+        if (now - lastLogTimeMs >= LATENCY_LOG_INTERVAL_MS) {
+            val intervalSec = (now - lastLogTimeMs) / 1000.0
+            val updatesPerSec = telemetryUpdateCount / intervalSec
+            Log.d(TAG, "LATENCY STATS: ${telemetryUpdateCount} updates in ${intervalSec}s = ${String.format("%.1f", updatesPerSec)} updates/sec, subscribers: ${subscribedDevices.size}")
+            telemetryUpdateCount = 0
+            lastLogTimeMs = now
+        }
+        
+        // LATENCY MONITORING: Log significant speed changes for debugging
+        if (kotlin.math.abs(speedKmh - lastSpeedValue) >= 0.5) {
+            val delta = now - lastTelemetryUpdateMs
+            Log.d(TAG, "Speed changed: ${String.format("%.1f", lastSpeedValue)} -> ${String.format("%.1f", speedKmh)} km/h (delta: ${delta}ms)")
+            lastSpeedValue = speedKmh
+        }
+        lastTelemetryUpdateMs = now
+        
         val buffer = ByteBuffer.allocate(M365HudGattProfile.TELEMETRY_DATA_SIZE)
             .order(ByteOrder.LITTLE_ENDIAN)
         
@@ -255,7 +333,9 @@ class M365GattServer(
         
         currentTelemetry = data
         
-        // Notify all subscribed devices
+        // LATENCY OPTIMIZATION: Immediately notify all subscribed devices
+        // The notifyCharacteristicChanged with confirm=false (3rd param) uses 
+        // notifications (unacknowledged) which is faster than indications (acknowledged)
         @Suppress("DEPRECATION")
         telemetryCharacteristic.value = currentTelemetry
         subscribedDevices.values.forEach { device ->

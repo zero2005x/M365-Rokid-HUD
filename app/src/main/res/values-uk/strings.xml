@@ -123,4 +123,17 @@
     <string name="error_gatt_failed">Помилка підключення GATT</string>
     <string name="error_token_missing">Токен втрачено після реєстрації!</string>
     <string name="error_no_token">Немає токена для цього пристрою. Будь ласка, відскануйте та зареєструйте.</string>
+    
+    <!-- Bluetooth Status -->
+    <string name="bluetooth_ready">Bluetooth готовий</string>
+    <string name="bluetooth_not_supported">Bluetooth не підтримується на цьому пристрої</string>
+    <string name="bluetooth_disabled">Bluetooth вимкнено</string>
+    <string name="bluetooth_disabled_title">Bluetooth вимкнено</string>
+    <string name="bluetooth_disabled_message">Будь ласка, увімкніть Bluetooth для використання додатку.</string>
+    <string name="bluetooth_permission_required">Потрібні дозволи Bluetooth</string>
+    <string name="bluetooth_permission_title">Потрібен дозвіл</string>
+    <string name="bluetooth_permission_message">Для сканування та підключення до самоката потрібні дозволи Bluetooth.</string>
+    <string name="bluetooth_enable">Увімкнути Bluetooth</string>
+    <string name="bluetooth_settings">Відкрити налаштування</string>
+    <string name="bluetooth_gateway_disabled_message">Будь ласка, увімкніть Bluetooth для трансляції на окуляри Rokid.</string>
 </resources>

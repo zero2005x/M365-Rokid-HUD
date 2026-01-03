@@ -123,4 +123,17 @@
     <string name="error_gatt_failed">Échec de connexion GATT</string>
     <string name="error_token_missing">Token manquant après l\'enregistrement !</string>
     <string name="error_no_token">Aucun token pour cet appareil. Veuillez scanner et enregistrer.</string>
+    
+    <!-- Bluetooth Status -->
+    <string name="bluetooth_ready">Bluetooth est prêt</string>
+    <string name="bluetooth_not_supported">Bluetooth n\'est pas pris en charge sur cet appareil</string>
+    <string name="bluetooth_disabled">Bluetooth est désactivé</string>
+    <string name="bluetooth_disabled_title">Bluetooth Désactivé</string>
+    <string name="bluetooth_disabled_message">Veuillez activer Bluetooth pour utiliser cette application.</string>
+    <string name="bluetooth_permission_required">Autorisations Bluetooth requises</string>
+    <string name="bluetooth_permission_title">Autorisation Requise</string>
+    <string name="bluetooth_permission_message">Les autorisations Bluetooth sont requises pour scanner et connecter votre trottinette.</string>
+    <string name="bluetooth_enable">Activer Bluetooth</string>
+    <string name="bluetooth_settings">Ouvrir Paramètres</string>
+    <string name="bluetooth_gateway_disabled_message">Veuillez activer Bluetooth pour diffuser vers les Lunettes Rokid.</string>
 </resources>

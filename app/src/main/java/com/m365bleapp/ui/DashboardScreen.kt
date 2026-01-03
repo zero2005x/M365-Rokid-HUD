@@ -24,6 +24,7 @@ import com.m365bleapp.R
 import com.m365bleapp.gateway.GatewayService
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
+import com.m365bleapp.utils.BluetoothHelper
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -48,6 +49,24 @@ fun DashboardScreen(
     // Gateway state
     var gatewayEnabled by remember { mutableStateOf(false) }
     var pendingGatewayEnable by remember { mutableStateOf(false) }
+    
+    // Bluetooth state dialogs
+    var showBluetoothDisabledDialog by remember { mutableStateOf(false) }
+    
+    // Launcher for enabling Bluetooth
+    val enableBluetoothLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // After returning from Bluetooth settings, check if it's enabled now
+        if (BluetoothHelper.isBluetoothEnabled(context) && pendingGatewayEnable) {
+            // Check permissions again and start gateway
+            if (BluetoothHelper.hasAdvertisePermissions(context)) {
+                gatewayEnabled = true
+                GatewayService.start(context)
+            }
+        }
+        pendingGatewayEnable = false
+    }
     
     // Permission launcher for BLE Advertise
     val advertisePermissionLauncher = rememberLauncherForActivityResult(
@@ -138,6 +157,42 @@ fun DashboardScreen(
                     }
                 ) {
                     Text(stringResource(R.string.reconnect))
+                }
+            }
+        )
+    }
+    
+    // Bluetooth Disabled Dialog (for Gateway)
+    if (showBluetoothDisabledDialog) {
+        AlertDialog(
+            onDismissRequest = { 
+                showBluetoothDisabledDialog = false
+                pendingGatewayEnable = false
+            },
+            title = { 
+                Text(stringResource(R.string.bluetooth_disabled_title))
+            },
+            text = { 
+                Text(stringResource(R.string.bluetooth_gateway_disabled_message))
+            },
+            confirmButton = {
+                Button(
+                    onClick = { 
+                        showBluetoothDisabledDialog = false
+                        enableBluetoothLauncher.launch(BluetoothHelper.createEnableBluetoothIntent())
+                    }
+                ) {
+                    Text(stringResource(R.string.bluetooth_enable))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { 
+                        showBluetoothDisabledDialog = false
+                        pendingGatewayEnable = false
+                    }
+                ) {
+                    Text(stringResource(R.string.cancel))
                 }
             }
         )
@@ -377,7 +432,14 @@ fun DashboardScreen(
                         checked = gatewayEnabled,
                         onCheckedChange = { enabled ->
                             if (enabled) {
-                                // Check BLE permissions for Android 12+
+                                // Step 1: Check if Bluetooth is enabled first
+                                if (!BluetoothHelper.isBluetoothEnabled(context)) {
+                                    pendingGatewayEnable = true
+                                    showBluetoothDisabledDialog = true
+                                    return@Switch
+                                }
+                                
+                                // Step 2: Check BLE permissions for Android 12+
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                                     val hasConnect = ContextCompat.checkSelfPermission(
                                         context, Manifest.permission.BLUETOOTH_CONNECT
@@ -397,6 +459,8 @@ fun DashboardScreen(
                                         return@Switch
                                     }
                                 }
+                                
+                                // All checks passed, start Gateway
                                 gatewayEnabled = true
                                 GatewayService.start(context)
                             } else {

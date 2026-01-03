@@ -229,7 +229,7 @@ class GatewayService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("M365 HUD Gateway")
             .setContentText(content)
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setSmallIcon(R.drawable.ic_notification_gateway)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)

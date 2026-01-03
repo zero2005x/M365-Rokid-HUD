@@ -123,4 +123,17 @@
     <string name="error_gatt_failed">فشل اتصال GATT</string>
     <string name="error_token_missing">الرمز مفقود بعد التسجيل!</string>
     <string name="error_no_token">لا يوجد رمز لهذا الجهاز. يرجى المسح والتسجيل.</string>
+    
+    <!-- Bluetooth Status -->
+    <string name="bluetooth_ready">البلوتوث جاهز</string>
+    <string name="bluetooth_not_supported">البلوتوث غير مدعوم على هذا الجهاز</string>
+    <string name="bluetooth_disabled">البلوتوث معطل</string>
+    <string name="bluetooth_disabled_title">البلوتوث مطفأ</string>
+    <string name="bluetooth_disabled_message">يرجى تفعيل البلوتوث لاستخدام هذا التطبيق.</string>
+    <string name="bluetooth_permission_required">مطلوب أذونات البلوتوث</string>
+    <string name="bluetooth_permission_title">الإذن مطلوب</string>
+    <string name="bluetooth_permission_message">أذونات البلوتوث مطلوبة لمسح السكوتر والاتصال به.</string>
+    <string name="bluetooth_enable">تفعيل البلوتوث</string>
+    <string name="bluetooth_settings">فتح الإعدادات</string>
+    <string name="bluetooth_gateway_disabled_message">يرجى تفعيل البلوتوث للبث إلى نظارات Rokid.</string>
 </resources>

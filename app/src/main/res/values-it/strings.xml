@@ -123,4 +123,17 @@
     <string name="error_gatt_failed">Connessione GATT fallita</string>
     <string name="error_token_missing">Token mancante dopo la registrazione!</string>
     <string name="error_no_token">Nessun token per questo dispositivo. Scansiona e registra.</string>
+    
+    <!-- Bluetooth Status -->
+    <string name="bluetooth_ready">Bluetooth è pronto</string>
+    <string name="bluetooth_not_supported">Bluetooth non è supportato su questo dispositivo</string>
+    <string name="bluetooth_disabled">Bluetooth è disabilitato</string>
+    <string name="bluetooth_disabled_title">Bluetooth Disattivato</string>
+    <string name="bluetooth_disabled_message">Abilita il Bluetooth per usare questa app.</string>
+    <string name="bluetooth_permission_required">Sono richieste le autorizzazioni Bluetooth</string>
+    <string name="bluetooth_permission_title">Autorizzazione Richiesta</string>
+    <string name="bluetooth_permission_message">Le autorizzazioni Bluetooth sono necessarie per scansionare e connettere il monopattino.</string>
+    <string name="bluetooth_enable">Abilita Bluetooth</string>
+    <string name="bluetooth_settings">Apri Impostazioni</string>
+    <string name="bluetooth_gateway_disabled_message">Abilita il Bluetooth per trasmettere agli Occhiali Rokid.</string>
 </resources>

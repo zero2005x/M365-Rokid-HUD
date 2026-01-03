@@ -3,13 +3,62 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    
+    <!-- Background circle -->
     <path
-        android:fillColor="#00AA66"
+        android:fillColor="#1A237E"
         android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0"/>
+    
+    <!-- Inner ring -->
+    <path
+        android:fillColor="#3949AB"
+        android:pathData="M54,54m-35,0a35,35 0,1 1,70 0a35,35 0,1 1,-70 0"/>
+    
+    <!-- AR Glasses frame - left lens -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M24,48 L46,48 L50,54 L46,60 L24,60 L20,54 Z"/>
+    
+    <!-- Bridge -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,30l0,24l18,10"
-        android:strokeWidth="4"
-        android:strokeColor="#FFFFFF"
-        android:fillType="nonZero"/>
+        android:pathData="M46,51 L58,51 L58,57 L46,57 Z"/>
+    
+    <!-- Right lens -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M58,48 L80,48 L84,54 L80,60 L58,60 L54,54 Z"/>
+    
+    <!-- HUD Speed display on left lens -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,51 L42,51"
+        android:strokeWidth="3"
+        android:strokeColor="#FFFFFF"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,56 L40,56"
+        android:strokeWidth="2"
+        android:strokeColor="#FFFFFF"/>
+    
+    <!-- HUD Battery indicator on right lens -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M62,52 L76,52 L76,56 L62,56 Z"/>
+    <path
+        android:fillColor="#00C853"
+        android:pathData="M63,53 L72,53 L72,55 L63,55 Z"/>
+    
+    <!-- Connection indicator dots -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M50,66 a2,2 0 1,1 4,0 a2,2 0 1,1 -4,0"/>
+    <path
+        android:fillColor="#00E5FF"
+        android:fillAlpha="0.7"
+        android:pathData="M58,66 a2,2 0 1,1 4,0 a2,2 0 1,1 -4,0"/>
+    <path
+        android:fillColor="#00E5FF"
+        android:fillAlpha="0.4"
+        android:pathData="M66,66 a2,2 0 1,1 4,0 a2,2 0 1,1 -4,0"/>
 </vector>

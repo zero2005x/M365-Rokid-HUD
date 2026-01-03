@@ -123,4 +123,17 @@
     <string name="error_gatt_failed">Conexión GATT fallida</string>
     <string name="error_token_missing">¡Token perdido después del registro!</string>
     <string name="error_no_token">No hay token para este dispositivo. Por favor escanea y registra.</string>
+    
+    <!-- Bluetooth Status -->
+    <string name="bluetooth_ready">Bluetooth está listo</string>
+    <string name="bluetooth_not_supported">Bluetooth no es compatible con este dispositivo</string>
+    <string name="bluetooth_disabled">Bluetooth está desactivado</string>
+    <string name="bluetooth_disabled_title">Bluetooth Desactivado</string>
+    <string name="bluetooth_disabled_message">Por favor activa Bluetooth para usar esta aplicación.</string>
+    <string name="bluetooth_permission_required">Se requieren permisos de Bluetooth</string>
+    <string name="bluetooth_permission_title">Permiso Requerido</string>
+    <string name="bluetooth_permission_message">Se requieren permisos de Bluetooth para escanear y conectar tu patinete.</string>
+    <string name="bluetooth_enable">Activar Bluetooth</string>
+    <string name="bluetooth_settings">Abrir Configuración</string>
+    <string name="bluetooth_gateway_disabled_message">Por favor activa Bluetooth para transmitir a las Gafas Rokid.</string>
 </resources>

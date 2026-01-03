@@ -123,4 +123,17 @@
     <string name="error_gatt_failed">GATT连接失败</string>
     <string name="error_token_missing">注册后令牌丢失！</string>
     <string name="error_no_token">此设备没有令牌。请扫描并注册。</string>
+    
+    <!-- Bluetooth Status -->
+    <string name="bluetooth_ready">蓝牙已就绪</string>
+    <string name="bluetooth_not_supported">此设备不支持蓝牙</string>
+    <string name="bluetooth_disabled">蓝牙已停用</string>
+    <string name="bluetooth_disabled_title">蓝牙已关闭</string>
+    <string name="bluetooth_disabled_message">请开启蓝牙以使用此应用程序。</string>
+    <string name="bluetooth_permission_required">需要蓝牙权限</string>
+    <string name="bluetooth_permission_title">需要权限</string>
+    <string name="bluetooth_permission_message">需要蓝牙权限才能扫描和连接滑板车。</string>
+    <string name="bluetooth_enable">开启蓝牙</string>
+    <string name="bluetooth_settings">打开设置</string>
+    <string name="bluetooth_gateway_disabled_message">请开启蓝牙以广播到 Rokid 眼镜。</string>
 </resources>

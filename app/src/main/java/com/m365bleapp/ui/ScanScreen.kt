@@ -30,6 +30,7 @@ import com.m365bleapp.R
 import com.m365bleapp.ble.BleManager
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
+import com.m365bleapp.utils.BluetoothHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
@@ -135,6 +136,22 @@ fun ScanScreen(
     
     // Scan trigger - incremented to restart scan
     var scanTrigger by remember { mutableStateOf(0) }
+    
+    // Bluetooth enabled state
+    var isBluetoothEnabled by remember { mutableStateOf(BluetoothHelper.isBluetoothEnabled(context)) }
+    var showBluetoothDisabledDialog by remember { mutableStateOf(false) }
+    
+    // Launcher for enabling Bluetooth
+    val enableBluetoothLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // After returning from Bluetooth settings, check if it's enabled now
+        isBluetoothEnabled = BluetoothHelper.isBluetoothEnabled(context)
+        if (isBluetoothEnabled && permissionsGranted) {
+            // Restart scan
+            scanTrigger++
+        }
+    }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -150,13 +167,30 @@ fun ScanScreen(
     LaunchedEffect(Unit) {
         if (!permissionsGranted) {
              launcher.launch(permissions.toTypedArray())
+        } else {
+            // Check if Bluetooth is enabled after permissions granted
+            isBluetoothEnabled = BluetoothHelper.isBluetoothEnabled(context)
+            if (!isBluetoothEnabled) {
+                showBluetoothDisabledDialog = true
+            }
+        }
+    }
+    
+    // Also check Bluetooth state when permissions become granted
+    LaunchedEffect(permissionsGranted) {
+        if (permissionsGranted) {
+            isBluetoothEnabled = BluetoothHelper.isBluetoothEnabled(context)
+            if (!isBluetoothEnabled) {
+                showBluetoothDisabledDialog = true
+            }
         }
     }
     
     // Ensure scan runs ONLY when permissions are granted and screen is active
     // Add delay for MIUI devices when permissions are just granted
-    LaunchedEffect(permissionsGranted, scanTrigger) {
+    LaunchedEffect(permissionsGranted, isBluetoothEnabled, scanTrigger) {
         if (!permissionsGranted) return@LaunchedEffect
+        if (!isBluetoothEnabled) return@LaunchedEffect
         
         // MIUI and some Chinese ROMs need extra time after permission grant
         // to fully process the permission before BLE scan works
@@ -234,6 +268,38 @@ fun ScanScreen(
             }
         )
     }
+    
+    // Bluetooth Disabled Dialog
+    if (showBluetoothDisabledDialog) {
+        AlertDialog(
+            onDismissRequest = { showBluetoothDisabledDialog = false },
+            title = { 
+                Text(stringResource(R.string.bluetooth_disabled_title))
+            },
+            text = { 
+                Text(stringResource(R.string.bluetooth_disabled_message))
+            },
+            confirmButton = {
+                Button(
+                    onClick = { 
+                        showBluetoothDisabledDialog = false
+                        enableBluetoothLauncher.launch(BluetoothHelper.createEnableBluetoothIntent())
+                    }
+                ) {
+                    Text(stringResource(R.string.bluetooth_enable))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { 
+                        showBluetoothDisabledDialog = false
+                    }
+                ) {
+                    Text(stringResource(R.string.bluetooth_settings))
+                }
+            }
+        )
+    }
 
     Scaffold(
         topBar = { 
@@ -259,6 +325,41 @@ fun ScanScreen(
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             if (showPermissionError) {
                 Text(stringResource(R.string.scan_bluetooth_permission_required), color = MaterialTheme.colorScheme.error)
+            }
+            
+            // Show Bluetooth disabled banner with enable button
+            if (!isBluetoothEnabled && permissionsGranted) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { 
+                            enableBluetoothLauncher.launch(BluetoothHelper.createEnableBluetoothIntent())
+                        }
+                        .padding(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = stringResource(R.string.bluetooth_disabled),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = { 
+                                enableBluetoothLauncher.launch(BluetoothHelper.createEnableBluetoothIntent())
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Text(stringResource(R.string.bluetooth_enable))
+                        }
+                    }
+                }
             }
             
             // Show scan error with retry option

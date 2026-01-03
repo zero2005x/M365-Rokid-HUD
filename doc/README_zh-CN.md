@@ -52,41 +52,53 @@ M365-Rokid-HUD/
 ├── app/                          # 主要 Android 应用程序（手机端）
 │   └── src/main/
 │       ├── java/com/m365bleapp/
+│       │   ├── MainActivity.kt   # 应用程序入口点
 │       │   ├── ble/              # BLE 管理器（扫描、GATT）
 │       │   ├── ffi/              # Rust FFI 绑定
 │       │   ├── gateway/          # GATT 服务器，转发数据至眼镜端
 │       │   ├── repository/       # 数据层（ScooterRepository）
 │       │   ├── ui/               # Jetpack Compose 界面
+│       │   │   ├── NavGraph.kt         # 导航图
 │       │   │   ├── ScanScreen.kt       # 设备扫描
 │       │   │   ├── DashboardScreen.kt  # 实时遥测仪表盘
 │       │   │   ├── ScooterInfoScreen.kt# 详细信息
 │       │   │   ├── LoggingScreen.kt    # 日志设置
 │       │   │   ├── LogViewerScreen.kt  # 日志文件查看器
-│       │   │   └── LanguageScreen.kt   # 语言选择
+│       │   │   ├── LanguageScreen.kt   # 语言选择
+│       │   │   └── theme/              # Material3 主题
 │       │   └── utils/            # 工具类（TelemetryLogger 等）
 │       ├── res/
 │       │   ├── values/           # 英文字符串（默认）
 │       │   ├── values-zh-rCN/    # 简体中文
 │       │   ├── values-zh-rTW/    # 繁体中文
-│       │   └── values-*/         # 其他语言
+│       │   └── values-*/         # 其他语言（共 11 种）
 │       └── jniLibs/              # 原生 .so 库
 ├── glass-hud/                    # Rokid AR 眼镜 HUD 客户端
 │   └── src/main/
 │       └── java/com/m365hud/glass/
-│           ├── BleClient.kt      # BLE 客户端（连接手机 App）
+│           ├── MainActivity.kt   # 眼镜应用程序入口点
+│           ├── BleClient.kt      # BLE 客户端（连接手机）
 │           ├── GattProfile.kt    # GATT 服务定义
 │           ├── HudScreen.kt      # AR HUD 显示界面
-│           └── DataModels.kt     # 共用数据结构
+│           ├── DataModels.kt     # 共用数据结构
+│           └── ui/               # Compose UI 组件
 ├── ninebot-ffi/                  # Android 用 Rust FFI 库
 │   └── src/
 │       ├── lib.rs                # JNI 导出
 │       └── mi_crypto.rs          # 加密函数
 ├── ninebot-ble/                  # 核心 Rust BLE 库
 │   └── src/
+│       ├── lib.rs                # 库入口点
 │       ├── connection.rs         # BLE 连接处理
+│       ├── clone_connection.rs   # 连接克隆工具
 │       ├── protocol.rs           # M365 协议实现
 │       ├── mi_crypto.rs          # ECDH、HKDF、AES-CCM 加密
-│       └── ...
+│       ├── login.rs              # 登录流程实现
+│       ├── register.rs           # 注册流程
+│       ├── scanner.rs            # BLE 设备扫描
+│       ├── consts.rs             # 协议常量
+│       ├── android_api.rs        # Android 专用 API
+│       └── session/              # 会话管理
 └── doc/                          # 文档
     ├── BLE_PROTOCOL_GUIDE.md     # 详细协议文档
     └── README_*.md               # 多语言 README

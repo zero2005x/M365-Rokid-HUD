@@ -52,41 +52,53 @@ M365-Rokid-HUD/
 ├── app/                          # 主要 Android 應用程式（手機端）
 │   └── src/main/
 │       ├── java/com/m365bleapp/
+│       │   ├── MainActivity.kt   # 應用程式進入點
 │       │   ├── ble/              # BLE 管理器（掃描、GATT）
 │       │   ├── ffi/              # Rust FFI 綁定
 │       │   ├── gateway/          # GATT 伺服器，轉發資料至眼鏡端
 │       │   ├── repository/       # 資料層（ScooterRepository）
 │       │   ├── ui/               # Jetpack Compose 畫面
+│       │   │   ├── NavGraph.kt         # 導覽圖
 │       │   │   ├── ScanScreen.kt       # 裝置掃描
 │       │   │   ├── DashboardScreen.kt  # 即時遙測儀表板
 │       │   │   ├── ScooterInfoScreen.kt# 詳細資訊
 │       │   │   ├── LoggingScreen.kt    # 日誌設定
 │       │   │   ├── LogViewerScreen.kt  # 日誌檔案檢視器
-│       │   │   └── LanguageScreen.kt   # 語言選擇
+│       │   │   ├── LanguageScreen.kt   # 語言選擇
+│       │   │   └── theme/              # Material3 主題
 │       │   └── utils/            # 工具類（TelemetryLogger 等）
 │       ├── res/
 │       │   ├── values/           # 英文字串（預設）
 │       │   ├── values-zh-rCN/    # 簡體中文
 │       │   ├── values-zh-rTW/    # 繁體中文
-│       │   └── values-*/         # 其他語言
+│       │   └── values-*/         # 其他語言（共 11 種）
 │       └── jniLibs/              # 原生 .so 函式庫
 ├── glass-hud/                    # Rokid AR 眼鏡 HUD 客戶端
 │   └── src/main/
 │       └── java/com/m365hud/glass/
-│           ├── BleClient.kt      # BLE 客戶端（連接手機 App）
+│           ├── MainActivity.kt   # 眼鏡應用程式進入點
+│           ├── BleClient.kt      # BLE 客戶端（連接手機）
 │           ├── GattProfile.kt    # GATT 服務定義
 │           ├── HudScreen.kt      # AR HUD 顯示畫面
-│           └── DataModels.kt     # 共用資料結構
+│           ├── DataModels.kt     # 共用資料結構
+│           └── ui/               # Compose UI 元件
 ├── ninebot-ffi/                  # Android 用 Rust FFI 函式庫
 │   └── src/
 │       ├── lib.rs                # JNI 匯出
 │       └── mi_crypto.rs          # 加密函式
 ├── ninebot-ble/                  # 核心 Rust BLE 函式庫
 │   └── src/
+│       ├── lib.rs                # 函式庫進入點
 │       ├── connection.rs         # BLE 連接處理
+│       ├── clone_connection.rs   # 連接複製工具
 │       ├── protocol.rs           # M365 協議實作
 │       ├── mi_crypto.rs          # ECDH、HKDF、AES-CCM 加密
-│       └── ...
+│       ├── login.rs              # 登入流程實作
+│       ├── register.rs           # 註冊流程
+│       ├── scanner.rs            # BLE 裝置掃描
+│       ├── consts.rs             # 協議常數
+│       ├── android_api.rs        # Android 專用 API
+│       └── session/              # 會話管理
 └── doc/                          # 文件
     ├── BLE_PROTOCOL_GUIDE.md     # 詳細協議文件
     └── README_*.md               # 多語言 README

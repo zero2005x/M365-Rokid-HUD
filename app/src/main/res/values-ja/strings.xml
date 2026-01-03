@@ -123,4 +123,17 @@
     <string name="error_gatt_failed">GATT接続失敗</string>
     <string name="error_token_missing">登録後にトークンが消失しました！</string>
     <string name="error_no_token">このデバイスのトークンがありません。スキャンして登録してください。</string>
+    
+    <!-- Bluetooth Status -->
+    <string name="bluetooth_ready">Bluetoothは準備完了です</string>
+    <string name="bluetooth_not_supported">このデバイスはBluetoothをサポートしていません</string>
+    <string name="bluetooth_disabled">Bluetoothが無効です</string>
+    <string name="bluetooth_disabled_title">Bluetoothがオフです</string>
+    <string name="bluetooth_disabled_message">このアプリを使用するにはBluetoothを有効にしてください。</string>
+    <string name="bluetooth_permission_required">Bluetooth権限が必要です</string>
+    <string name="bluetooth_permission_title">権限が必要です</string>
+    <string name="bluetooth_permission_message">スクーターをスキャンして接続するにはBluetooth権限が必要です。</string>
+    <string name="bluetooth_enable">Bluetoothを有効にする</string>
+    <string name="bluetooth_settings">設定を開く</string>
+    <string name="bluetooth_gateway_disabled_message">Rokidグラスに配信するにはBluetoothを有効にしてください。</string>
 </resources>

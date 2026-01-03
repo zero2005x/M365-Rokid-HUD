@@ -123,4 +123,17 @@
     <string name="error_gatt_failed">GATT 연결 실패</string>
     <string name="error_token_missing">등록 후 토큰이 손실되었습니다!</string>
     <string name="error_no_token">이 기기의 토큰이 없습니다. 스캔하고 등록하세요.</string>
+    
+    <!-- Bluetooth Status -->
+    <string name="bluetooth_ready">블루투스가 준비되었습니다</string>
+    <string name="bluetooth_not_supported">이 기기는 블루투스를 지원하지 않습니다</string>
+    <string name="bluetooth_disabled">블루투스가 비활성화되었습니다</string>
+    <string name="bluetooth_disabled_title">블루투스 꺼짐</string>
+    <string name="bluetooth_disabled_message">이 앱을 사용하려면 블루투스를 켜주세요.</string>
+    <string name="bluetooth_permission_required">블루투스 권한이 필요합니다</string>
+    <string name="bluetooth_permission_title">권한 필요</string>
+    <string name="bluetooth_permission_message">스쿠터를 스캔하고 연결하려면 블루투스 권한이 필요합니다.</string>
+    <string name="bluetooth_enable">블루투스 켜기</string>
+    <string name="bluetooth_settings">설정 열기</string>
+    <string name="bluetooth_gateway_disabled_message">Rokid 안경으로 송신하려면 블루투스를 켜주세요.</string>
 </resources>

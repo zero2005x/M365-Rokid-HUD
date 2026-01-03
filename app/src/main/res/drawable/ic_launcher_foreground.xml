@@ -1,0 +1,89 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Background circle with gradient effect -->
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0"/>
+    
+    <!-- Inner glow ring -->
+    <path
+        android:fillColor="#3949AB"
+        android:pathData="M54,54m-35,0a35,35 0,1 1,70 0a35,35 0,1 1,-70 0"/>
+    
+    <!-- Scooter silhouette - wheel base -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,68 a8,8 0 1,1 16,0 a8,8 0 1,1 -16,0"/>
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M38,68 a4,4 0 1,1 8,0 a4,4 0 1,1 -8,0"/>
+    
+    <!-- Scooter rear wheel -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M62,68 a8,8 0 1,1 16,0 a8,8 0 1,1 -16,0"/>
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M66,68 a4,4 0 1,1 8,0 a4,4 0 1,1 -8,0"/>
+    
+    <!-- Scooter deck/platform -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,65 L72,65 L72,62 L38,62 Z"/>
+    
+    <!-- Scooter handlebar stem -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,62 L40,42 L44,42 L44,62 Z"/>
+    
+    <!-- Scooter handlebar -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,42 L54,42 L54,46 L30,46 Z"/>
+    
+    <!-- AR Glasses overlay - left lens -->
+    <path
+        android:fillColor="#00E5FF"
+        android:fillAlpha="0.9"
+        android:pathData="M50,38 L68,38 L72,48 L68,58 L50,58 L46,48 Z"/>
+    
+    <!-- AR Glasses - bridge -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M68,46 L76,46 L76,50 L68,50 Z"/>
+    
+    <!-- AR Glasses - right lens frame hint -->
+    <path
+        android:fillColor="#00E5FF"
+        android:fillAlpha="0.6"
+        android:pathData="M76,44 L82,44 L84,48 L82,52 L76,52 Z"/>
+    
+    <!-- Speed indicator lines on glasses -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M52,44 L64,44"
+        android:strokeWidth="2"
+        android:strokeColor="#FFFFFF"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,50 L66,50"
+        android:strokeWidth="1.5"
+        android:strokeColor="#FFFFFF"/>
+    
+    <!-- Bluetooth signal waves -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M26,52 C22,48 22,40 26,36"/>
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="2"
+        android:pathData="M26,52 C22,48 22,40 26,36"/>
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="1.5"
+        android:pathData="M22,54 C16,48 16,38 22,32"/>
+</vector>

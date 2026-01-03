@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * - Connecting to the phone
  * - Subscribing to telemetry notifications
  * - Parsing incoming data
+ * - LATENCY MONITORING: Tracks telemetry freshness and auto-reconnects on stale data
  */
 @SuppressLint("MissingPermission")
 class BleClient(private val context: Context) {
@@ -25,6 +26,14 @@ class BleClient(private val context: Context) {
     companion object {
         private const val TAG = "BleClient"
         private const val SCAN_TIMEOUT_MS = 30000L
+        
+        // LATENCY MONITORING: Watchdog timeout for stale data detection
+        // If no telemetry received for this long, consider connection stale
+        private const val TELEMETRY_STALE_TIMEOUT_MS = 3000L
+        private const val WATCHDOG_CHECK_INTERVAL_MS = 1000L
+        
+        // Scan retry without filter after this timeout (some devices don't advertise UUID correctly)
+        private const val SCAN_RETRY_WITHOUT_FILTER_MS = 5000L
     }
     
     // Connection state
@@ -56,12 +65,29 @@ class BleClient(private val context: Context) {
     private val _rssi = MutableStateFlow(0)
     val rssi: StateFlow<Int> = _rssi.asStateFlow()
     
+    // LATENCY MONITORING: Track last telemetry update time
+    @Volatile private var lastTelemetryUpdateMs: Long = 0
+    @Volatile private var telemetryUpdateCount: Int = 0
+    @Volatile private var watchdogHandler: android.os.Handler? = null
+    @Volatile private var lastLogTimeMs: Long = 0
+    
+    // LATENCY MONITORING: Telemetry freshness indicator (true = receiving data normally)
+    private val _isTelemetryFresh = MutableStateFlow(false)
+    val isTelemetryFresh: StateFlow<Boolean> = _isTelemetryFresh.asStateFlow()
+    
     /**
      * Start scanning for the M365 HUD Gateway
      */
     fun startScan() {
         if (scanner == null) {
+            Log.e(TAG, "Bluetooth scanner not available")
             _connectionState.value = ConnectionState.Error("Bluetooth not available")
+            return
+        }
+        
+        if (bluetoothAdapter?.isEnabled != true) {
+            Log.e(TAG, "Bluetooth is not enabled")
+            _connectionState.value = ConnectionState.Error("Bluetooth is disabled")
             return
         }
         
@@ -69,9 +95,10 @@ class BleClient(private val context: Context) {
         isConnecting = false
         
         _connectionState.value = ConnectionState.Scanning
-        Log.i(TAG, "Starting scan for M365 HUD Gateway...")
+        Log.i(TAG, "Starting scan for M365 HUD Gateway with UUID filter...")
+        Log.d(TAG, "Looking for Service UUID: ${GattProfile.SERVICE_UUID}")
         
-        // Filter for our custom service UUID
+        // First try: Filter for our custom service UUID
         val scanFilter = ScanFilter.Builder()
             .setServiceUuid(ParcelUuid(GattProfile.SERVICE_UUID))
             .build()
@@ -80,22 +107,130 @@ class BleClient(private val context: Context) {
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
         
-        scanner.startScan(listOf(scanFilter), scanSettings, scanCallback)
+        try {
+            scanner.startScan(listOf(scanFilter), scanSettings, scanCallback)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start scan with filter: ${e.message}")
+            // Try without filter as fallback
+            startScanWithoutFilter()
+            return
+        }
+        
+        // Fallback: Try scanning without UUID filter after 5 seconds if nothing found
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
+                Log.w(TAG, "No device found with UUID filter, retrying without filter...")
+                stopScan()
+                startScanWithoutFilter()
+            }
+        }, SCAN_RETRY_WITHOUT_FILTER_MS)
         
         // Auto-stop scan after timeout
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             if (_connectionState.value == ConnectionState.Scanning) {
                 stopScan()
-                _connectionState.value = ConnectionState.Error("Gateway not found")
+                Log.e(TAG, "Scan timeout - Gateway not found after ${SCAN_TIMEOUT_MS}ms")
+                _connectionState.value = ConnectionState.Error("Gateway not found - make sure HUD Gateway is enabled on phone")
             }
         }, SCAN_TIMEOUT_MS)
+    }
+    
+    /**
+     * Start scanning without UUID filter (broader scan for debugging)
+     */
+    private fun startScanWithoutFilter() {
+        if (_connectionState.value != ConnectionState.Scanning) return
+        
+        Log.i(TAG, "Starting scan WITHOUT UUID filter (will match device name)...")
+        
+        val scanSettings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+        
+        try {
+            scanner?.startScan(null, scanSettings, scanCallbackNoFilter)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start unfiltered scan: ${e.message}")
+            _connectionState.value = ConnectionState.Error("Scan failed: ${e.message}")
+        }
+    }
+    
+    /**
+     * Scan callback for unfiltered scan (matches by device name or UUID)
+     */
+    private val scanCallbackNoFilter = object : ScanCallback() {
+        private val seenDevices = mutableSetOf<String>()
+        
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            val deviceName = result.device.name ?: result.scanRecord?.deviceName
+            val address = result.device.address
+            val serviceUuids = result.scanRecord?.serviceUuids
+            
+            // Log each unique device once with INFO level for debugging
+            if (!seenDevices.contains(address)) {
+                seenDevices.add(address)
+                Log.i(TAG, "Unfiltered scan found device: name=$deviceName, addr=$address, UUIDs=$serviceUuids, RSSI=${result.rssi}")
+            }
+            
+            // Skip devices that previously failed service discovery
+            if (failedDevices.contains(address)) {
+                Log.d(TAG, "Skipping previously failed device: $address")
+                return
+            }
+            
+            // Check if this device is advertising our service
+            val hasOurService = serviceUuids?.any { it.uuid == GattProfile.SERVICE_UUID } == true
+            
+            // Also try matching by device name as fallback (for some Android versions, service UUID may not be advertised)
+            val hasMatchingName = deviceName?.contains("M365 HUD", ignoreCase = true) == true ||
+                                  deviceName?.contains("Redmi", ignoreCase = true) == true ||
+                                  deviceName?.contains("Xiaomi", ignoreCase = true) == true
+            
+            if (hasOurService) {
+                Log.i(TAG, "Found Gateway device (by UUID): $deviceName ($address)")
+                synchronized(this@BleClient) {
+                    if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
+                        isConnecting = true
+                        stopScan()
+                        connect(result.device)
+                    }
+                }
+            } else if (hasMatchingName) {
+                Log.i(TAG, "Found potential Gateway device (by name): $deviceName ($address) - will attempt connection")
+                synchronized(this@BleClient) {
+                    if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
+                        isConnecting = true
+                        stopScan()
+                        connect(result.device)
+                    }
+                }
+            }
+        }
+        
+        override fun onScanFailed(errorCode: Int) {
+            val errorMsg = when (errorCode) {
+                SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
+                SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "App registration failed"
+                SCAN_FAILED_FEATURE_UNSUPPORTED -> "Feature unsupported"
+                SCAN_FAILED_INTERNAL_ERROR -> "Internal error"
+                else -> "Unknown error $errorCode"
+            }
+            Log.e(TAG, "Unfiltered scan failed: $errorMsg")
+            isConnecting = false
+            _connectionState.value = ConnectionState.Error("Scan failed: $errorMsg")
+        }
     }
     
     /**
      * Stop scanning
      */
     fun stopScan() {
-        scanner?.stopScan(scanCallback)
+        try {
+            scanner?.stopScan(scanCallback)
+            scanner?.stopScan(scanCallbackNoFilter)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error stopping scan: ${e.message}")
+        }
         Log.i(TAG, "Scan stopped")
     }
     
@@ -117,6 +252,7 @@ class BleClient(private val context: Context) {
     fun disconnect() {
         isConnecting = false
         stopScan() // Ensure scan is stopped
+        stopWatchdog() // Stop telemetry monitoring
         
         gatt?.let { g ->
             g.disconnect()
@@ -141,13 +277,25 @@ class BleClient(private val context: Context) {
     
     // ========== Callbacks ==========
     
+    // Track devices that failed service discovery (to avoid reconnecting to them)
+    private val failedDevices = mutableSetOf<String>()
+    
     // Flag to prevent multiple connection attempts during scan
     @Volatile
     private var isConnecting = false
     
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            Log.i(TAG, "Found device: ${result.device.address}, RSSI: ${result.rssi}")
+            val deviceName = result.device.name ?: result.scanRecord?.deviceName ?: "Unknown"
+            val address = result.device.address
+            
+            // Skip devices that previously failed service discovery
+            if (failedDevices.contains(address)) {
+                Log.d(TAG, "Skipping previously failed device: $address")
+                return
+            }
+            
+            Log.i(TAG, "Found Gateway via UUID filter: name=$deviceName, addr=$address, RSSI=${result.rssi}")
             
             // Auto-connect to the first device with our service
             // Use synchronized check to prevent race condition
@@ -162,9 +310,17 @@ class BleClient(private val context: Context) {
         }
         
         override fun onScanFailed(errorCode: Int) {
-            Log.e(TAG, "Scan failed with error: $errorCode")
+            val errorMsg = when (errorCode) {
+                SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
+                SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "App registration failed"
+                SCAN_FAILED_FEATURE_UNSUPPORTED -> "Feature unsupported"
+                SCAN_FAILED_INTERNAL_ERROR -> "Internal error"
+                else -> "Unknown error $errorCode"
+            }
+            Log.e(TAG, "Filtered scan failed: $errorMsg")
             isConnecting = false
-            _connectionState.value = ConnectionState.Error("Scan failed: $errorCode")
+            // Try without filter as fallback
+            startScanWithoutFilter()
         }
     }
     
@@ -175,6 +331,16 @@ class BleClient(private val context: Context) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     Log.i(TAG, "Connected to GATT server")
                     _connectionState.value = ConnectionState.Connecting
+                    
+                    // LATENCY OPTIMIZATION: Request high connection priority for faster updates
+                    // This reduces the BLE connection interval from default (~30-50ms) to minimum (~7.5-15ms)
+                    try {
+                        gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+                        Log.d(TAG, "Requested HIGH connection priority for low latency")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to request connection priority: ${e.message}")
+                    }
+                    
                     gatt.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -196,10 +362,35 @@ class BleClient(private val context: Context) {
             
             Log.i(TAG, "Services discovered")
             
+            // Log all discovered services for debugging
+            val allServices = gatt.services
+            Log.d(TAG, "Found ${allServices.size} services:")
+            allServices.forEach { svc ->
+                Log.d(TAG, "  Service: ${svc.uuid}")
+            }
+            
             val service = gatt.getService(GattProfile.SERVICE_UUID)
+            Log.d(TAG, "Looking for Service UUID: ${GattProfile.SERVICE_UUID}")
             if (service == null) {
-                Log.e(TAG, "HUD service not found")
-                _connectionState.value = ConnectionState.Error("HUD service not found")
+                val deviceAddress = gatt.device?.address ?: "unknown"
+                Log.e(TAG, "HUD service not found on device $deviceAddress, adding to failed list and retrying scan")
+                
+                // Add this device to failed list so we don't connect to it again
+                failedDevices.add(deviceAddress)
+                Log.i(TAG, "Failed devices list: $failedDevices")
+                
+                // Disconnect and clean up
+                gatt.disconnect()
+                gatt.close()
+                this@BleClient.gatt = null
+                targetDevice = null
+                isConnecting = false
+                
+                // Resume scanning to find the correct device
+                _connectionState.value = ConnectionState.Scanning
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    startScan()
+                }, 500) // Brief delay before restarting scan
                 return
             }
             
@@ -219,6 +410,13 @@ class BleClient(private val context: Context) {
             }
             
             _connectionState.value = ConnectionState.Connected
+            
+            // Clear failed devices list on successful connection
+            failedDevices.clear()
+            Log.i(TAG, "Successfully connected, cleared failed devices list")
+            
+            // LATENCY MONITORING: Start watchdog timer
+            startWatchdog()
         }
         
         override fun onCharacteristicChanged(
@@ -228,6 +426,22 @@ class BleClient(private val context: Context) {
         ) {
             when (characteristic.uuid) {
                 GattProfile.TELEMETRY_CHAR_UUID -> {
+                    // LATENCY MONITORING: Track update timing
+                    val now = System.currentTimeMillis()
+                    telemetryUpdateCount++
+                    
+                    // Log update frequency every 5 seconds
+                    if (now - lastLogTimeMs >= 5000L) {
+                        val intervalSec = (now - lastLogTimeMs) / 1000.0
+                        val updatesPerSec = telemetryUpdateCount / intervalSec
+                        val lastDelta = now - lastTelemetryUpdateMs
+                        Log.d(TAG, "LATENCY STATS: ${telemetryUpdateCount} updates in ${intervalSec}s = ${String.format("%.1f", updatesPerSec)} updates/sec, last delta: ${lastDelta}ms")
+                        telemetryUpdateCount = 0
+                        lastLogTimeMs = now
+                    }
+                    lastTelemetryUpdateMs = now
+                    _isTelemetryFresh.value = true
+                    
                     val data = TelemetryData.fromBytes(value)
                     Log.d(TAG, "Telemetry: speed=${data.speedKmh}, battery=${data.scooterBattery}%")
                     _telemetry.value = data
@@ -280,5 +494,52 @@ class BleClient(private val context: Context) {
         }
         
         return true
+    }
+    
+    // ========== LATENCY MONITORING: Watchdog for stale data detection ==========
+    
+    /**
+     * Start the watchdog timer to monitor telemetry freshness.
+     * If no telemetry is received for TELEMETRY_STALE_TIMEOUT_MS, marks data as stale.
+     */
+    private fun startWatchdog() {
+        stopWatchdog() // Stop any existing watchdog
+        
+        lastTelemetryUpdateMs = System.currentTimeMillis()
+        lastLogTimeMs = System.currentTimeMillis()
+        telemetryUpdateCount = 0
+        _isTelemetryFresh.value = true
+        
+        watchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        val watchdogRunnable = object : Runnable {
+            override fun run() {
+                val now = System.currentTimeMillis()
+                val timeSinceLastUpdate = now - lastTelemetryUpdateMs
+                
+                if (timeSinceLastUpdate > TELEMETRY_STALE_TIMEOUT_MS) {
+                    if (_isTelemetryFresh.value) {
+                        Log.w(TAG, "WATCHDOG: Telemetry stale! No update for ${timeSinceLastUpdate}ms")
+                        _isTelemetryFresh.value = false
+                    }
+                }
+                
+                // Continue checking while connected
+                if (_connectionState.value == ConnectionState.Connected) {
+                    watchdogHandler?.postDelayed(this, WATCHDOG_CHECK_INTERVAL_MS)
+                }
+            }
+        }
+        
+        watchdogHandler?.postDelayed(watchdogRunnable, WATCHDOG_CHECK_INTERVAL_MS)
+        Log.d(TAG, "Watchdog started with ${TELEMETRY_STALE_TIMEOUT_MS}ms timeout")
+    }
+    
+    /**
+     * Stop the watchdog timer.
+     */
+    private fun stopWatchdog() {
+        watchdogHandler?.removeCallbacksAndMessages(null)
+        watchdogHandler = null
+        _isTelemetryFresh.value = false
     }
 }

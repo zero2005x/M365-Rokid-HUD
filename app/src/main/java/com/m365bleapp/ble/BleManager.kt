@@ -47,7 +47,10 @@ class BleManager(private val context: Context) {
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+             Log.d("BleManager", "onConnectionStateChange: status=$status, newState=$newState (${if(newState == BluetoothProfile.STATE_CONNECTED) "CONNECTED" else if(newState == BluetoothProfile.STATE_DISCONNECTED) "DISCONNECTED" else "OTHER"})")
+             
              if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.e("BleManager", "GATT error status: $status - closing connection")
                 gatt.close()
                 val cont = connectContinuation
                 connectContinuation = null
@@ -55,20 +58,40 @@ class BleManager(private val context: Context) {
                 return
              }
              if (newState == BluetoothProfile.STATE_CONNECTED) {
+                Log.i("BleManager", "Connected to ${gatt.device?.address}, refreshing GATT cache and discovering services...")
+                
+                // Try to refresh GATT cache to avoid stale data issues (GATT error 133)
+                try {
+                    val refreshMethod = gatt.javaClass.getMethod("refresh")
+                    val result = refreshMethod.invoke(gatt) as Boolean
+                    Log.d("BleManager", "GATT cache refresh result: $result")
+                } catch (e: Exception) {
+                    Log.w("BleManager", "Failed to refresh GATT cache: ${e.message}")
+                }
+                
                 gatt.discoverServices()
              } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                Log.w("BleManager", "Disconnected from ${gatt.device?.address}")
                 gatt.close()
              }
         }
         @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            Log.d("BleManager", "onServicesDiscovered: status=$status (${if(status == BluetoothGatt.GATT_SUCCESS) "SUCCESS" else "FAILED"})")
+            
             val cont = connectContinuation
             connectContinuation = null
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                 if (cont?.isActive == true) cont.resume(gatt)
+                val services = gatt.services
+                Log.i("BleManager", "Discovered ${services.size} services:")
+                services.forEach { service ->
+                    Log.d("BleManager", "  Service: ${service.uuid}")
+                }
+                if (cont?.isActive == true) cont.resume(gatt)
             } else {
-                 gatt.close()
-                 if (cont?.isActive == true) cont.resume(null)
+                Log.e("BleManager", "Service discovery failed with status $status")
+                gatt.close()
+                if (cont?.isActive == true) cont.resume(null)
             }
         }
         
@@ -141,7 +164,10 @@ class BleManager(private val context: Context) {
         }
         connectContinuation = cont
         onNotifyCallback = onNotify
-        device.connectGatt(context, false, gattCallback)
+        // Use TRANSPORT_LE to force BLE connection and avoid BR/EDR interference
+        // autoConnect=false for faster initial connection
+        Log.d("BleManager", "Connecting to ${device.address} with TRANSPORT_LE...")
+        device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
     @SuppressLint("MissingPermission")

@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.*
 import android.content.Context
+import android.os.BatteryManager
 import android.os.ParcelUuid
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,9 +33,26 @@ class BleClient(private val context: Context) {
         private const val TELEMETRY_STALE_TIMEOUT_MS = 3000L
         private const val WATCHDOG_CHECK_INTERVAL_MS = 1000L
         
+        // CONNECTION HEALTH: Auto-reconnect after this many stale checks
+        // 5 checks * 1000ms interval = 5 seconds of no data before reconnect attempt
+        private const val STALE_CHECKS_BEFORE_RECONNECT = 5
+        
         // Scan retry without filter after this timeout (some devices don't advertise UUID correctly)
         private const val SCAN_RETRY_WITHOUT_FILTER_MS = 5000L
+        
+        // GLASSES BATTERY: Send interval for glasses battery to phone
+        private const val BATTERY_SEND_INTERVAL_MS = 30000L  // Send every 30 seconds
     }
+    
+    // CONNECTION HEALTH: Count consecutive stale checks
+    @Volatile private var consecutiveStaleChecks = 0
+    
+    // CONNECTION HEALTH: Auto-reconnect enabled flag
+    @Volatile private var autoReconnectEnabled = true
+    
+    // GLASSES BATTERY: Handler for periodic battery sending
+    @Volatile private var batterySendHandler: android.os.Handler? = null
+    @Volatile private var glassesBatteryCharacteristic: BluetoothGattCharacteristic? = null
     
     // Connection state
     sealed class ConnectionState {
@@ -91,8 +109,10 @@ class BleClient(private val context: Context) {
             return
         }
         
-        // Reset connection flag
+        // Reset connection flag and clear failed devices list to allow retry
         isConnecting = false
+        failedDevices.clear()
+        Log.i(TAG, "Cleared failed devices list for fresh scan")
         
         _connectionState.value = ConnectionState.Scanning
         Log.i(TAG, "Starting scan for M365 HUD Gateway with UUID filter...")
@@ -253,6 +273,7 @@ class BleClient(private val context: Context) {
         isConnecting = false
         stopScan() // Ensure scan is stopped
         stopWatchdog() // Stop telemetry monitoring
+        stopBatterySending() // Stop battery sending
         
         gatt?.let { g ->
             g.disconnect()
@@ -263,6 +284,7 @@ class BleClient(private val context: Context) {
         }
         gatt = null
         targetDevice = null
+        glassesBatteryCharacteristic = null
         _connectionState.value = ConnectionState.Disconnected
         _telemetry.value = TelemetryData()
         _timeData.value = TimeData()
@@ -341,7 +363,20 @@ class BleClient(private val context: Context) {
                         Log.w(TAG, "Failed to request connection priority: ${e.message}")
                     }
                     
-                    gatt.discoverServices()
+                    // Refresh GATT cache to avoid stale service data
+                    // This is critical when the phone's GATT server has been restarted
+                    try {
+                        val refreshMethod = gatt.javaClass.getMethod("refresh")
+                        val refreshResult = refreshMethod.invoke(gatt) as Boolean
+                        Log.i(TAG, "GATT cache refresh result: $refreshResult")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to refresh GATT cache: ${e.message}")
+                    }
+                    
+                    // Small delay after refresh before discovering services
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        gatt.discoverServices()
+                    }, 200)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.i(TAG, "Disconnected from GATT server")
@@ -398,6 +433,14 @@ class BleClient(private val context: Context) {
             val telemetryChar = service.getCharacteristic(GattProfile.TELEMETRY_CHAR_UUID)
             val timeChar = service.getCharacteristic(GattProfile.TIME_CHAR_UUID)
             
+            // Get glasses battery characteristic for writing our battery level
+            glassesBatteryCharacteristic = service.getCharacteristic(GattProfile.GLASSES_BATTERY_CHAR_UUID)
+            if (glassesBatteryCharacteristic != null) {
+                Log.i(TAG, "Found glasses battery characteristic for sending battery level")
+            } else {
+                Log.w(TAG, "Glasses battery characteristic not found on phone Gateway")
+            }
+            
             if (telemetryChar != null) {
                 enableNotification(gatt, telemetryChar)
             }
@@ -417,6 +460,9 @@ class BleClient(private val context: Context) {
             
             // LATENCY MONITORING: Start watchdog timer
             startWatchdog()
+            
+            // GLASSES BATTERY: Start sending battery level to phone
+            startBatterySending()
         }
         
         override fun onCharacteristicChanged(
@@ -496,11 +542,12 @@ class BleClient(private val context: Context) {
         return true
     }
     
-    // ========== LATENCY MONITORING: Watchdog for stale data detection ==========
+    // ========== CONNECTION HEALTH: Watchdog for stale data detection and auto-reconnect ==========
     
     /**
      * Start the watchdog timer to monitor telemetry freshness.
      * If no telemetry is received for TELEMETRY_STALE_TIMEOUT_MS, marks data as stale.
+     * After STALE_CHECKS_BEFORE_RECONNECT consecutive stale checks, attempts auto-reconnect.
      */
     private fun startWatchdog() {
         stopWatchdog() // Stop any existing watchdog
@@ -508,6 +555,7 @@ class BleClient(private val context: Context) {
         lastTelemetryUpdateMs = System.currentTimeMillis()
         lastLogTimeMs = System.currentTimeMillis()
         telemetryUpdateCount = 0
+        consecutiveStaleChecks = 0
         _isTelemetryFresh.value = true
         
         watchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -517,10 +565,26 @@ class BleClient(private val context: Context) {
                 val timeSinceLastUpdate = now - lastTelemetryUpdateMs
                 
                 if (timeSinceLastUpdate > TELEMETRY_STALE_TIMEOUT_MS) {
+                    consecutiveStaleChecks++
+                    
                     if (_isTelemetryFresh.value) {
-                        Log.w(TAG, "WATCHDOG: Telemetry stale! No update for ${timeSinceLastUpdate}ms")
+                        Log.w(TAG, "CONNECTION HEALTH: Telemetry stale! No update for ${timeSinceLastUpdate}ms (check $consecutiveStaleChecks/$STALE_CHECKS_BEFORE_RECONNECT)")
                         _isTelemetryFresh.value = false
                     }
+                    
+                    // Auto-reconnect if too many stale checks
+                    if (consecutiveStaleChecks >= STALE_CHECKS_BEFORE_RECONNECT && autoReconnectEnabled) {
+                        Log.e(TAG, "CONNECTION HEALTH: Connection appears lost after $consecutiveStaleChecks stale checks. Initiating auto-reconnect...")
+                        initiateAutoReconnect()
+                        return // Stop this watchdog, new one will start after reconnect
+                    }
+                } else {
+                    // Reset stale counter on fresh data
+                    if (consecutiveStaleChecks > 0) {
+                        Log.i(TAG, "CONNECTION HEALTH: Connection recovered, resetting stale counter")
+                        consecutiveStaleChecks = 0
+                    }
+                    _isTelemetryFresh.value = true
                 }
                 
                 // Continue checking while connected
@@ -531,7 +595,33 @@ class BleClient(private val context: Context) {
         }
         
         watchdogHandler?.postDelayed(watchdogRunnable, WATCHDOG_CHECK_INTERVAL_MS)
-        Log.d(TAG, "Watchdog started with ${TELEMETRY_STALE_TIMEOUT_MS}ms timeout")
+        Log.d(TAG, "CONNECTION HEALTH: Watchdog started (stale timeout: ${TELEMETRY_STALE_TIMEOUT_MS}ms, reconnect after: ${STALE_CHECKS_BEFORE_RECONNECT} checks)")
+    }
+    
+    /**
+     * Initiate auto-reconnect when connection is detected as lost.
+     */
+    private fun initiateAutoReconnect() {
+        Log.i(TAG, "CONNECTION HEALTH: Initiating auto-reconnect...")
+        
+        // Disconnect current connection
+        disconnect()
+        
+        // Wait a moment before reconnecting
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (_connectionState.value == ConnectionState.Disconnected) {
+                Log.i(TAG, "CONNECTION HEALTH: Starting new scan for auto-reconnect")
+                startScan()
+            }
+        }, 1000) // 1 second delay before reconnect
+    }
+    
+    /**
+     * Enable or disable auto-reconnect feature.
+     */
+    fun setAutoReconnectEnabled(enabled: Boolean) {
+        autoReconnectEnabled = enabled
+        Log.i(TAG, "CONNECTION HEALTH: Auto-reconnect ${if (enabled) "enabled" else "disabled"}")
     }
     
     /**
@@ -540,6 +630,83 @@ class BleClient(private val context: Context) {
     private fun stopWatchdog() {
         watchdogHandler?.removeCallbacksAndMessages(null)
         watchdogHandler = null
+        consecutiveStaleChecks = 0
         _isTelemetryFresh.value = false
+    }
+    
+    // ========== GLASSES BATTERY: Periodic battery level sending to phone ==========
+    
+    /**
+     * Get the glasses battery level using BatteryManager.
+     */
+    private fun getGlassesBatteryLevel(): Int {
+        val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    }
+    
+    /**
+     * Start periodically sending glasses battery level to phone.
+     * This runs every BATTERY_SEND_INTERVAL_MS (30 seconds).
+     */
+    private fun startBatterySending() {
+        stopBatterySending() // Stop any existing handler
+        
+        val batteryChar = glassesBatteryCharacteristic
+        if (batteryChar == null) {
+            Log.w(TAG, "GLASSES BATTERY: Cannot start - characteristic not available")
+            return
+        }
+        
+        batterySendHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        val batterySendRunnable = object : Runnable {
+            override fun run() {
+                sendGlassesBattery()
+                
+                // Continue sending while connected
+                if (_connectionState.value == ConnectionState.Connected) {
+                    batterySendHandler?.postDelayed(this, BATTERY_SEND_INTERVAL_MS)
+                }
+            }
+        }
+        
+        // Send immediately, then start periodic sending
+        batterySendHandler?.post(batterySendRunnable)
+        Log.i(TAG, "GLASSES BATTERY: Started sending battery level every ${BATTERY_SEND_INTERVAL_MS}ms")
+    }
+    
+    /**
+     * Send current glasses battery level to phone via GATT characteristic write.
+     */
+    @Suppress("DEPRECATION")
+    private fun sendGlassesBattery() {
+        val gattConnection = gatt
+        val batteryChar = glassesBatteryCharacteristic
+        
+        if (gattConnection == null || batteryChar == null) {
+            Log.w(TAG, "GLASSES BATTERY: Cannot send - not connected or characteristic not available")
+            return
+        }
+        
+        val batteryLevel = getGlassesBatteryLevel()
+        val data = byteArrayOf(batteryLevel.toByte())
+        
+        // Use deprecated API for compatibility with older Android versions
+        batteryChar.value = data
+        batteryChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        
+        val success = gattConnection.writeCharacteristic(batteryChar)
+        if (success) {
+            Log.d(TAG, "GLASSES BATTERY: Sent battery level $batteryLevel% to phone")
+        } else {
+            Log.e(TAG, "GLASSES BATTERY: Failed to send battery level")
+        }
+    }
+    
+    /**
+     * Stop the battery sending timer.
+     */
+    private fun stopBatterySending() {
+        batterySendHandler?.removeCallbacksAndMessages(null)
+        batterySendHandler = null
     }
 }

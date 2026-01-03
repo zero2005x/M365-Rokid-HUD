@@ -57,7 +57,9 @@
     <string name="gateway_broadcasting">グラスへ配信中</string>
     <string name="gateway_off">オフ</string>
     <string name="gateway_notification_title">M365 HUD ゲートウェイ</string>
-    <string name="gateway_notification_text">Rokidグラスにテレメトリを配信中</string>
+    <string name="gateway_notification_text">Rokid グラスにテレメトリを配信中</string>
+    <string name="glasses_connected">グラス接続済み ✓</string>
+    <string name="glasses_connect_hint">オンにしてグラスを先に接続させる</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">スクーター詳細</string>

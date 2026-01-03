@@ -1,5 +1,7 @@
 package com.m365hud.glass
 
+import android.content.Context
+import android.os.BatteryManager
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -11,10 +13,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -33,6 +37,15 @@ import java.util.*
 
 // Set this to true if the display appears mirrored/reversed on your Rokid glasses
 private const val MIRROR_FOR_ROKID = false
+
+/**
+ * Get the glasses battery level
+ */
+private fun getGlassesBatteryLevel(context: Context): Int {
+    val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+    return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+}
+
 @Composable
 fun HudScreen(
     telemetry: TelemetryData,
@@ -40,6 +53,16 @@ fun HudScreen(
     connectionState: BleClient.ConnectionState,
     onRetryClick: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    
+    // Glasses battery level - refresh every 30 seconds
+    var glassesBattery by remember { mutableIntStateOf(getGlassesBatteryLevel(context)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            glassesBattery = getGlassesBatteryLevel(context)
+            delay(30_000L) // Refresh every 30 seconds
+        }
+    }
     // Colors optimized for glasses display (bright on dark)
     val backgroundColor = Color(0xFF000000)
     val primaryColor = Color(0xFF00FF88)  // Bright green for speed
@@ -78,6 +101,7 @@ fun HudScreen(
                 ConnectedHudView(
                     telemetry = telemetry,
                     timeData = timeData,
+                    glassesBattery = glassesBattery,
                     primaryColor = primaryColor,
                     secondaryColor = secondaryColor,
                     warningColor = warningColor
@@ -97,31 +121,32 @@ private fun DisconnectedView(
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.SpaceEvenly  // Changed to SpaceEvenly for better distribution
     ) {
         Text(
             text = "⚡ M365 HUD",
             color = textColor,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold
+            fontSize = 20.sp,  // Reduced from 28.sp for glasses display
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
         )
-        
-        Spacer(modifier = Modifier.height(16.dp))
         
         if (connectionState is BleClient.ConnectionState.Error) {
             Text(
                 text = connectionState.message,
                 color = errorColor,
-                fontSize = 16.sp
+                fontSize = 12.sp,  // Reduced from 16.sp
+                maxLines = 2,
+                textAlign = TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(16.dp))
         }
         
         Button(
             onClick = onRetryClick,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00AA66))
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00AA66)),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)  // Smaller button
         ) {
-            Text("Scan for Gateway", fontSize = 18.sp)
+            Text("Scan", fontSize = 14.sp)  // Shortened text and reduced font
         }
     }
 }
@@ -146,20 +171,19 @@ private fun ConnectingView(
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.SpaceEvenly  // Changed for better distribution
     ) {
         Text(
             text = if (isScanning) "🔍 Scanning..." else "🔗 Connecting...",
             color = textColor.copy(alpha = alpha),
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
+            fontSize = 18.sp,  // Reduced from 24.sp for glasses display
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
         )
-        
-        Spacer(modifier = Modifier.height(16.dp))
         
         CircularProgressIndicator(
             color = Color(0xFF00FF88),
-            modifier = Modifier.size(48.dp)
+            modifier = Modifier.size(32.dp)  // Reduced from 48.dp
         )
     }
 }
@@ -168,6 +192,7 @@ private fun ConnectingView(
 private fun ConnectedHudView(
     telemetry: TelemetryData,
     timeData: TimeData,
+    glassesBattery: Int,
     primaryColor: Color,
     secondaryColor: Color,
     warningColor: Color
@@ -179,7 +204,7 @@ private fun ConnectedHudView(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left: Time & Phone Battery
+        // Left: Time & Phone Battery & Glasses Battery
         Column(
             horizontalAlignment = Alignment.Start,
             modifier = Modifier.weight(1.2f)
@@ -220,6 +245,32 @@ private fun ConnectedHudView(
                     },
                     fontSize = 14.sp,
                     fontWeight = if (timeData.phoneBattery <= 15) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(2.dp))
+            
+            // Glasses Battery - keep on single line
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.wrapContentWidth()
+            ) {
+                Text(
+                    text = "👓",
+                    fontSize = 14.sp
+                )
+                Spacer(modifier = Modifier.width(2.dp))
+                Text(
+                    text = "${glassesBattery}%",
+                    color = when {
+                        glassesBattery <= 15 -> Color.Red
+                        glassesBattery <= 30 -> warningColor
+                        else -> secondaryColor
+                    },
+                    fontSize = 14.sp,
+                    fontWeight = if (glassesBattery <= 15) FontWeight.Bold else FontWeight.Normal,
                     maxLines = 1,
                     softWrap = false
                 )

@@ -17,6 +17,9 @@ object GattProfile {
     // Time Characteristic (Notify + Read)
     val TIME_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
     
+    // Glasses Battery Characteristic (Write only - we write our battery level to phone)
+    val GLASSES_BATTERY_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
+    
     // Client Characteristic Configuration Descriptor
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     

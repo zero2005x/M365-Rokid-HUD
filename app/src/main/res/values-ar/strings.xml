@@ -58,6 +58,8 @@
     <string name="gateway_off">مطفأ</string>
     <string name="gateway_notification_title">بوابة M365 HUD</string>
     <string name="gateway_notification_text">بث القياسات إلى نظارات Rokid</string>
+    <string name="glasses_connected">النظارات متصلة ✓</string>
+    <string name="glasses_connect_hint">شغّل للسماح بالاتصال بالنظارات أولاً</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">تفاصيل السكوتر</string>

@@ -58,6 +58,8 @@
     <string name="gateway_off">Off</string>
     <string name="gateway_notification_title">M365 HUD Gateway</string>
     <string name="gateway_notification_text">Broadcasting telemetry to Rokid Glasses</string>
+    <string name="glasses_connected">Glasses Connected ✓</string>
+    <string name="glasses_connect_hint">Turn on to let glasses connect first</string>
     
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Scooter Details</string>

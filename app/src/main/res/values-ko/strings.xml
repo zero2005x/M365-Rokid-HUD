@@ -57,7 +57,9 @@
     <string name="gateway_broadcasting">안경으로 송신 중</string>
     <string name="gateway_off">꺼짐</string>
     <string name="gateway_notification_title">M365 HUD 게이트웨이</string>
-    <string name="gateway_notification_text">Rokid 안경으로 텔레메트리 송신 중</string>
+    <string name="gateway_notification_text">Rokid 안경으로 원격 측정 중</string>
+    <string name="glasses_connected">안경 연결됨 ✓</string>
+    <string name="glasses_connect_hint">안경을 먼저 연결하려면 켜세요</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">스쿠터 상세 정보</string>

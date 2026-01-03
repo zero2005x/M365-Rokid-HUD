@@ -2,6 +2,7 @@ package com.m365bleapp.ui
 
 import android.Manifest
 import android.bluetooth.le.ScanResult
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,9 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.m365bleapp.R
 import com.m365bleapp.ble.BleManager
+import com.m365bleapp.gateway.GatewayService
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
 import com.m365bleapp.utils.BluetoothHelper
@@ -417,6 +421,110 @@ fun ScanScreen(
 
             // Use rememberLazyListState for better scroll performance
             val listState = rememberLazyListState()
+            
+            // ========== Glasses Connection Section ==========
+            // Gateway state for glasses connection
+            var gatewayEnabled by remember { mutableStateOf(GatewayService.isRunning()) }
+            var glassesConnected by remember { mutableStateOf(false) }
+            
+            // Refresh glasses connection status periodically
+            LaunchedEffect(gatewayEnabled) {
+                while (gatewayEnabled) {
+                    glassesConnected = GatewayService.isGlassesConnected()
+                    delay(2000L)
+                }
+                glassesConnected = false
+            }
+            
+            // Permission launcher for BLE Advertise (for Gateway)
+            val advertisePermissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestMultiplePermissions()
+            ) { permissions ->
+                val allGranted = permissions.values.all { it }
+                if (allGranted) {
+                    gatewayEnabled = true
+                    GatewayService.start(context)
+                }
+            }
+            
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = when {
+                        glassesConnected -> MaterialTheme.colorScheme.primaryContainer
+                        gatewayEnabled -> MaterialTheme.colorScheme.secondaryContainer
+                        else -> MaterialTheme.colorScheme.surfaceVariant
+                    }
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "👓 " + stringResource(R.string.gateway_hud),
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = when {
+                                glassesConnected -> stringResource(R.string.glasses_connected)
+                                gatewayEnabled -> stringResource(R.string.gateway_broadcasting)
+                                else -> stringResource(R.string.glasses_connect_hint)
+                            },
+                            fontSize = MaterialTheme.typography.bodySmall.fontSize,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = gatewayEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                // Check if Bluetooth is enabled first
+                                if (!BluetoothHelper.isBluetoothEnabled(context)) {
+                                    showBluetoothDisabledDialog = true
+                                    return@Switch
+                                }
+                                
+                                // Check BLE permissions for Android 12+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                    val hasConnect = ContextCompat.checkSelfPermission(
+                                        context, Manifest.permission.BLUETOOTH_CONNECT
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    val hasAdvertise = ContextCompat.checkSelfPermission(
+                                        context, Manifest.permission.BLUETOOTH_ADVERTISE
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    
+                                    if (!hasConnect || !hasAdvertise) {
+                                        advertisePermissionLauncher.launch(
+                                            arrayOf(
+                                                Manifest.permission.BLUETOOTH_CONNECT,
+                                                Manifest.permission.BLUETOOTH_ADVERTISE
+                                            )
+                                        )
+                                        return@Switch
+                                    }
+                                }
+                                
+                                // Start Gateway
+                                gatewayEnabled = true
+                                GatewayService.start(context)
+                            } else {
+                                gatewayEnabled = false
+                                GatewayService.stop(context)
+                            }
+                        }
+                    )
+                }
+            }
+            
+            // Divider before device list
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             
             // Auto-scroll to top when registered device is discovered
             LaunchedEffect(sortedDevices) {

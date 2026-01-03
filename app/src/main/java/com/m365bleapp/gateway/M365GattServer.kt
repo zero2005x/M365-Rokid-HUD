@@ -42,10 +42,12 @@ class M365GattServer(
     private lateinit var telemetryCharacteristic: BluetoothGattCharacteristic
     private lateinit var statusCharacteristic: BluetoothGattCharacteristic
     private lateinit var timeCharacteristic: BluetoothGattCharacteristic
+    private lateinit var glassesBatteryCharacteristic: BluetoothGattCharacteristic
     
     // Current data
     @Volatile private var currentTelemetry: ByteArray = ByteArray(M365HudGattProfile.TELEMETRY_DATA_SIZE)
     @Volatile private var currentTime: ByteArray = ByteArray(M365HudGattProfile.TIME_DATA_SIZE)
+    @Volatile private var glassesBatteryLevel: Int = -1  // -1 means not received yet
     
     private var isRunning = false
     
@@ -128,6 +130,44 @@ class M365GattServer(
                     updateTimeData()
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, currentTime)
                 }
+                M365HudGattProfile.GLASSES_BATTERY_CHAR_UUID -> {
+                    // Return current glasses battery level (or -1 if not received yet)
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0,
+                        byteArrayOf(glassesBatteryLevel.toByte()))
+                }
+            }
+        }
+        
+        override fun onCharacteristicWriteRequest(
+            device: BluetoothDevice,
+            requestId: Int,
+            characteristic: BluetoothGattCharacteristic,
+            preparedWrite: Boolean,
+            responseNeeded: Boolean,
+            offset: Int,
+            value: ByteArray
+        ) {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) 
+                != PackageManager.PERMISSION_GRANTED) {
+                return
+            }
+            
+            when (characteristic.uuid) {
+                M365HudGattProfile.GLASSES_BATTERY_CHAR_UUID -> {
+                    if (value.isNotEmpty()) {
+                        glassesBatteryLevel = (value[0].toInt() and 0xFF).coerceIn(0, 100)
+                        Log.d(TAG, "Received glasses battery: $glassesBatteryLevel% from ${device.address}")
+                    }
+                    
+                    if (responseNeeded) {
+                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    }
+                }
+                else -> {
+                    if (responseNeeded) {
+                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_WRITE_NOT_PERMITTED, 0, null)
+                    }
+                }
             }
         }
     }
@@ -189,9 +229,17 @@ class M365GattServer(
             ))
         }
         
+        // Glasses Battery Characteristic (Write only - glasses write their battery level)
+        glassesBatteryCharacteristic = BluetoothGattCharacteristic(
+            M365HudGattProfile.GLASSES_BATTERY_CHAR_UUID,
+            BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+            BluetoothGattCharacteristic.PERMISSION_WRITE
+        )
+        
         service.addCharacteristic(telemetryCharacteristic)
         service.addCharacteristic(statusCharacteristic)
         service.addCharacteristic(timeCharacteristic)
+        service.addCharacteristic(glassesBatteryCharacteristic)
         
         // Reset service added flag before adding
         serviceAdded = false
@@ -407,4 +455,10 @@ class M365GattServer(
     fun isDeviceConnected(): Boolean = subscribedDevices.isNotEmpty()
     
     fun getConnectedDeviceCount(): Int = subscribedDevices.size
+    
+    /**
+     * Get the glasses battery level received from connected glasses.
+     * @return Battery percentage (0-100), or -1 if no glasses connected or not yet received
+     */
+    fun getGlassesBatteryLevel(): Int = glassesBatteryLevel
 }

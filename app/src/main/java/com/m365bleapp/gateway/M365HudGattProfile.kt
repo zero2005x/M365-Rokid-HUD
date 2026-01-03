@@ -24,6 +24,10 @@ object M365HudGattProfile {
     // Contains: current time for HUD display
     val TIME_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
     
+    // Glasses Battery Characteristic (Write only)
+    // Glasses write their battery level to this characteristic
+    val GLASSES_BATTERY_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
+    
     // Client Characteristic Configuration Descriptor (Standard UUID)
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     

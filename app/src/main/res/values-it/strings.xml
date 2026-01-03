@@ -57,7 +57,9 @@
     <string name="gateway_broadcasting">Trasmissione agli Occhiali</string>
     <string name="gateway_off">Spento</string>
     <string name="gateway_notification_title">Gateway M365 HUD</string>
-    <string name="gateway_notification_text">Trasmissione telemetria agli Occhiali Rokid</string>
+    <string name="gateway_notification_text">Trasmissione telemetria agli occhiali Rokid</string>
+    <string name="glasses_connected">Occhiali connessi ✓</string>
+    <string name="glasses_connect_hint">Attiva per consentire agli occhiali di connettersi prima</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Dettagli Monopattino</string>

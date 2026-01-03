@@ -25,6 +25,9 @@ import kotlin.coroutines.resume
 class BleManager(private val context: Context) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val adapter = bluetoothManager.adapter
+    
+    // Disconnection callback for notifying upper layer (ScooterRepository)
+    private var onDisconnectCallback: (() -> Unit)? = null
 
     // UUIDs
     companion object {
@@ -73,6 +76,8 @@ class BleManager(private val context: Context) {
              } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.w("BleManager", "Disconnected from ${gatt.device?.address}")
                 gatt.close()
+                // Notify upper layer about disconnection
+                onDisconnectCallback?.invoke()
              }
         }
         @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
@@ -153,6 +158,18 @@ class BleManager(private val context: Context) {
 
     fun getDevice(mac: String): BluetoothDevice {
         return adapter.getRemoteDevice(mac)
+    }
+    
+    /**
+     * Set callback to be notified when BLE connection is lost.
+     * This is important for detecting scooter power-off or out-of-range situations.
+     */
+    fun setOnDisconnectCallback(callback: () -> Unit) {
+        onDisconnectCallback = callback
+    }
+    
+    fun clearOnDisconnectCallback() {
+        onDisconnectCallback = null
     }
     
     @SuppressLint("MissingPermission")

@@ -130,7 +130,7 @@ class ScooterRepository private constructor(private val context: Context) {
     }
 
     fun isRegistered(mac: String): Boolean {
-        return sharedPreferences.contains(mac + "_token")
+        return sharedPreferences.contains(mac.uppercase() + "_token")
     }
 
     fun scan(): Flow<android.bluetooth.le.ScanResult> {
@@ -140,14 +140,22 @@ class ScooterRepository private constructor(private val context: Context) {
     }
 
     fun connect(mac: String, register: Boolean = false) {
+        // Normalize MAC address to uppercase to ensure consistent token lookup
+        val normalizedMac = mac.uppercase()
         scope.launch(Dispatchers.IO) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
             _connectionState.value = ConnectionState.Connecting
             try {
-                val device = bleManager.getDevice(mac)
+                val device = bleManager.getDevice(normalizedMac)
                 
                 // Clear old data from channels
                 while(controlChannel.tryReceive().isSuccess) {}
                 while(uartRxChannel.tryReceive().isSuccess) {}
+                
+                // Set up disconnection callback to detect scooter power-off
+                bleManager.setOnDisconnectCallback {
+                    Log.w("ScooterRepo", "BLE disconnection detected - scooter may have powered off")
+                    handleUnexpectedDisconnection()
+                }
 
                 val gatt = bleManager.connect(device) { uuid, data ->
                     Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
@@ -204,7 +212,7 @@ class ScooterRepository private constructor(private val context: Context) {
                     _connectionState.value = ConnectionState.Handshaking(getString(R.string.state_logging_in))
                     
                     // Retrieve the token we just saved
-                    val tokenStr = sharedPreferences.getString(mac + "_token", null)
+                    val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
                         ?: throw Exception(getString(R.string.error_token_missing))
                     
                     // Give scooter a moment to persist the new token and reset auth state
@@ -212,7 +220,7 @@ class ScooterRepository private constructor(private val context: Context) {
                     
                     performLogin(tokenStr.hexToBytes())
                 } else {
-                    val tokenStr = sharedPreferences.getString(mac + "_token", null)
+                    val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
                     Log.d("ScooterRepo", "Token retrieved: ${tokenStr != null}")
                     if (tokenStr == null) throw Exception(getString(R.string.error_no_token))
                     performLogin(tokenStr.hexToBytes())
@@ -310,8 +318,8 @@ class ScooterRepository private constructor(private val context: Context) {
         writeChar(AUTH_SERVICE, AUTH_UPNP, byteArrayOf(0x13, 0x00, 0x00, 0x00)) // CMD_AUTH
         waitForCmd("11000000") // RCV_AUTH_OK
         
-        // Save token
-        val mac = activeGatt?.device?.address ?: ""
+        // Save token with normalized MAC address (uppercase)
+        val mac = activeGatt?.device?.address?.uppercase() ?: ""
         sharedPreferences.edit()
             .putString(mac + "_token", token.toHex())
             .apply()
@@ -450,9 +458,10 @@ class ScooterRepository private constructor(private val context: Context) {
                     consecutiveFailures++
                 }
                 
-                // If too many failures, reconnect might be needed
+                // If too many failures, connection is likely lost (scooter powered off?)
                 if (consecutiveFailures >= 10) {
-                    Log.e("ScooterRepo", "Too many failures, stopping telemetry loop")
+                    Log.e("ScooterRepo", "CONNECTION HEALTH: Too many consecutive failures ($consecutiveFailures), connection may be lost")
+                    _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
                     break
                 }
                 
@@ -460,6 +469,14 @@ class ScooterRepository private constructor(private val context: Context) {
             } catch(e: Exception) {
                 Log.e("ScooterRepo", "Loop error: ${e.message}", e)
                 consecutiveFailures++
+                
+                // Check if the error indicates a disconnection
+                if (e.message?.contains("disconnect", ignoreCase = true) == true ||
+                    e.message?.contains("closed", ignoreCase = true) == true) {
+                    Log.e("ScooterRepo", "CONNECTION HEALTH: Connection error detected in telemetry loop")
+                    _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+                    break
+                }
             }
             // LATENCY OPTIMIZATION: Reduced from 500ms to 150ms for faster speed updates
             // Speed is queried most frequently for real-time HUD display on Rokid glasses
@@ -1131,9 +1148,41 @@ class ScooterRepository private constructor(private val context: Context) {
          }
     }
 
+    /**
+     * Handle unexpected BLE disconnection (e.g., scooter powered off, out of range).
+     * This is called from BleManager's disconnect callback.
+     */
+    private fun handleUnexpectedDisconnection() {
+        scope.launch(Dispatchers.Main) {
+            Log.e("ScooterRepo", "CONNECTION HEALTH: Unexpected disconnection detected!")
+            
+            // Only handle if we were in Ready state (connected and authenticated)
+            if (_connectionState.value == ConnectionState.Ready || 
+                _connectionState.value is ConnectionState.Handshaking) {
+                
+                // Clean up resources
+                activeGatt = null
+                if (sessionPtr != 0L) {
+                    native.freeSession(sessionPtr)
+                    sessionPtr = 0
+                }
+                
+                // Update state to trigger UI notification
+                _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+                
+                // Clear motor info to show "--" on UI
+                _motorInfo.value = null
+                
+                Log.i("ScooterRepo", "Cleaned up after unexpected disconnection")
+            }
+        }
+    }
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun disconnect() {
+        // Clear the disconnect callback first to avoid recursive calls
+        bleManager.clearOnDisconnectCallback()
+        
         logger.stopSession()
         if (ActivityCompat.checkSelfPermission(
                 context,

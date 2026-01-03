@@ -58,6 +58,8 @@
     <string name="gateway_off">關閉</string>
     <string name="gateway_notification_title">M365 HUD 閘道</string>
     <string name="gateway_notification_text">正在向 Rokid 眼鏡廣播遙測資料</string>
+    <string name="glasses_connected">眼鏡已連接 ✓</string>
+    <string name="glasses_connect_hint">先開啟讓眼鏡連接</string>
     
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">滑板車詳細資訊</string>

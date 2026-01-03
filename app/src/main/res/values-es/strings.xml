@@ -58,6 +58,8 @@
     <string name="gateway_off">Apagado</string>
     <string name="gateway_notification_title">Pasarela M365 HUD</string>
     <string name="gateway_notification_text">Transmitiendo telemetría a las Gafas Rokid</string>
+    <string name="glasses_connected">Gafas conectadas ✓</string>
+    <string name="glasses_connect_hint">Activa para que las gafas se conecten primero</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Detalles del Patinete</string>

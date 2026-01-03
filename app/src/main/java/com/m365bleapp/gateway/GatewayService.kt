@@ -37,6 +37,17 @@ class GatewayService : Service() {
         
         fun isRunning(): Boolean = instance?.isServiceRunning == true
         
+        /**
+         * Get the glasses battery level received from connected glasses.
+         * @return Battery percentage (0-100), or -1 if not available
+         */
+        fun getGlassesBatteryLevel(): Int = instance?.gattServer?.getGlassesBatteryLevel() ?: -1
+        
+        /**
+         * Check if glasses are connected to the Gateway.
+         */
+        fun isGlassesConnected(): Boolean = instance?.gattServer?.isDeviceConnected() == true
+        
         fun start(context: Context) {
             val intent = Intent(context, GatewayService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

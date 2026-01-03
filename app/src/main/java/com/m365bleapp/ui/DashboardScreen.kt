@@ -7,14 +7,20 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.core.content.ContextCompat
+import androidx.compose.material.icons.filled.CastConnected
+import androidx.compose.material.icons.filled.FlashlightOff
+import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.core.content.ContextCompat
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -46,9 +52,25 @@ fun DashboardScreen(
     // Snackbar state for feedback (defined early for permission launcher)
     val snackbarHostState = remember { SnackbarHostState() }
     
-    // Gateway state
-    var gatewayEnabled by remember { mutableStateOf(false) }
+    // Gateway state - initialize from actual service state
+    var gatewayEnabled by remember { mutableStateOf(GatewayService.isRunning()) }
     var pendingGatewayEnable by remember { mutableStateOf(false) }
+    
+    // Glasses battery state - refreshed periodically
+    var glassesBattery by remember { mutableIntStateOf(-1) }
+    var glassesConnected by remember { mutableStateOf(GatewayService.isGlassesConnected()) }
+    
+    // Refresh gateway status and glasses info periodically
+    LaunchedEffect(Unit) {
+        while (true) {
+            gatewayEnabled = GatewayService.isRunning()
+            glassesConnected = GatewayService.isGlassesConnected()
+            if (gatewayEnabled && glassesConnected) {
+                glassesBattery = GatewayService.getGlassesBatteryLevel()
+            }
+            kotlinx.coroutines.delay(3000L)
+        }
+    }
     
     // Bluetooth state dialogs
     var showBluetoothDisabledDialog by remember { mutableStateOf(false) }
@@ -91,10 +113,10 @@ fun DashboardScreen(
     
     // Light state - synced from repository
     val lightStateFromRepo by repository.isLightOn.collectAsState()
-    var isLightOn by remember { mutableStateOf(false) }
+    var isLightOn by remember { mutableStateOf(repository.isLightOn.value) }
     var isLightLoading by remember { mutableStateOf(false) }
     
-    // Sync light state from repository
+    // Sync light state from repository whenever it changes
     LaunchedEffect(lightStateFromRepo) {
         isLightOn = lightStateFromRepo
     }
@@ -202,8 +224,13 @@ fun DashboardScreen(
         topBar = { TopAppBar(title = { Text(stringResource(R.string.dashboard_title)) }) },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
+        val scrollState = rememberScrollState()
         Column(
-            modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp),
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Header: Status
@@ -228,14 +255,64 @@ fun DashboardScreen(
             
             Spacer(modifier = Modifier.height(24.dp))
             
-            // Battery
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                LinearProgressIndicator(
-                    progress = { (motorInfo?.battery ?: 0) / 100f },
-                    modifier = Modifier.weight(1f).height(16.dp),
-                )
-                Spacer(modifier = Modifier.width(16.dp))
-                Text("${motorInfo?.battery ?: 0}${stringResource(R.string.unit_percent)}", fontSize = 24.sp)
+            // Battery Section - Scooter and Glasses
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    // Scooter Battery
+                    val scooterBattery = motorInfo?.battery ?: 0
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("🛴 ", fontSize = 20.sp)
+                        LinearProgressIndicator(
+                            progress = { scooterBattery / 100f },
+                            modifier = Modifier.weight(1f).height(16.dp),
+                            color = when {
+                                scooterBattery <= 15 -> MaterialTheme.colorScheme.error
+                                scooterBattery <= 30 -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = "$scooterBattery${stringResource(R.string.unit_percent)}", 
+                            fontSize = 24.sp,
+                            color = when {
+                                scooterBattery <= 15 -> MaterialTheme.colorScheme.error
+                                scooterBattery <= 30 -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    }
+                    
+                    // Glasses Battery (only show when gateway enabled and glasses connected)
+                    if (gatewayEnabled && glassesConnected && glassesBattery >= 0) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("👓 ", fontSize = 20.sp)
+                            LinearProgressIndicator(
+                                progress = { glassesBattery / 100f },
+                                modifier = Modifier.weight(1f).height(16.dp),
+                                color = when {
+                                    glassesBattery <= 15 -> MaterialTheme.colorScheme.error
+                                    glassesBattery <= 30 -> MaterialTheme.colorScheme.tertiary
+                                    else -> MaterialTheme.colorScheme.primary
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                text = "$glassesBattery${stringResource(R.string.unit_percent)}", 
+                                fontSize = 24.sp,
+                                color = when {
+                                    glassesBattery <= 15 -> MaterialTheme.colorScheme.error
+                                    glassesBattery <= 30 -> MaterialTheme.colorScheme.tertiary
+                                    else -> MaterialTheme.colorScheme.onSurface
+                                }
+                            )
+                        }
+                    }
+                }
             }
             
             Spacer(modifier = Modifier.height(24.dp))
@@ -354,19 +431,27 @@ fun DashboardScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = stringResource(R.string.control_light),
-                            fontWeight = FontWeight.Medium
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = if (isLightOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
+                            contentDescription = null,
+                            tint = if (isLightOn) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Text(
-                            text = if (isLightOn) 
-                                stringResource(R.string.control_light_on)
-                            else 
-                                stringResource(R.string.control_light_off),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = stringResource(R.string.control_light),
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = if (isLightOn) 
+                                    stringResource(R.string.control_light_on)
+                                else 
+                                    stringResource(R.string.control_light_off),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     
                     if (isLightLoading) {
@@ -401,10 +486,11 @@ fun DashboardScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = if (gatewayEnabled) 
-                        MaterialTheme.colorScheme.primaryContainer 
-                    else 
-                        MaterialTheme.colorScheme.surfaceVariant
+                    containerColor = when {
+                        glassesConnected -> MaterialTheme.colorScheme.primaryContainer
+                        gatewayEnabled -> MaterialTheme.colorScheme.secondaryContainer
+                        else -> MaterialTheme.colorScheme.surfaceVariant
+                    }
                 )
             ) {
                 Row(
@@ -414,19 +500,32 @@ fun DashboardScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = stringResource(R.string.gateway_hud),
-                            fontWeight = FontWeight.Medium
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CastConnected,
+                            contentDescription = null,
+                            tint = when {
+                                glassesConnected -> MaterialTheme.colorScheme.primary
+                                gatewayEnabled -> MaterialTheme.colorScheme.secondary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
                         )
-                        Text(
-                            text = if (gatewayEnabled) 
-                                stringResource(R.string.gateway_broadcasting)
-                            else 
-                                stringResource(R.string.gateway_off),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "👓 " + stringResource(R.string.gateway_hud),
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = when {
+                                    glassesConnected -> stringResource(R.string.glasses_connected)
+                                    gatewayEnabled -> stringResource(R.string.gateway_broadcasting)
+                                    else -> stringResource(R.string.gateway_off)
+                                },
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     Switch(
                         checked = gatewayEnabled,
@@ -472,37 +571,49 @@ fun DashboardScreen(
                 }
             }
             
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(24.dp))
             
-            Button(
-                onClick = onScooterInfo,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            // Secondary action buttons in a row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(stringResource(R.string.dashboard_view_details))
+                OutlinedButton(
+                    onClick = onScooterInfo,
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) {
+                    Text(stringResource(R.string.dashboard_view_details))
+                }
+                
+                OutlinedButton(
+                    onClick = onLogs,
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) {
+                    Text(stringResource(R.string.dashboard_view_logs))
+                }
             }
             
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Button(
-                onClick = onLogs,
-                modifier = Modifier.fillMaxWidth().height(48.dp)
-            ) {
-                Text(stringResource(R.string.dashboard_view_logs))
-            }
-            
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            Button(
+            // Disconnect button - prominent but with warning color
+            OutlinedButton(
                 onClick = {
                     userInitiatedDisconnect = true
                     onDisconnect()
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                ),
+                border = androidx.compose.foundation.BorderStroke(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.error
+                )
             ) {
                 Text(stringResource(R.string.disconnect))
             }
+            
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }

@@ -57,7 +57,9 @@
     <string name="gateway_broadcasting">Diffusion vers les Lunettes</string>
     <string name="gateway_off">Désactivé</string>
     <string name="gateway_notification_title">Passerelle M365 HUD</string>
-    <string name="gateway_notification_text">Diffusion de la télémétrie vers les Lunettes Rokid</string>
+    <string name="gateway_notification_text">Diffusion de la télémétrie vers les lunettes Rokid</string>
+    <string name="glasses_connected">Lunettes connectées ✓</string>
+    <string name="glasses_connect_hint">Activez pour permettre aux lunettes de se connecter d\'abord</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Détails de la Trottinette</string>

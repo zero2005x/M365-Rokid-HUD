@@ -200,7 +200,7 @@ cargo ndk -t arm64-v8a -t armeabi-v7a -o ../app/src/main/jniLibs build --release
 1. 在 Rokid 眼镜上安装 `glass-hud` APK
 2. 在手机 App 上连接滑板车，并启用「Rokid HUD 网关」
 3. 眼镜上的 HUD 将自动扫描并连接到手机网关
-4. HUD 显示内容：速度、滑板车电量、手机电量、当前时间
+4. HUD 显示内容：速度、滑板车电量、手机电量、眼镜电量、当前时间
 
 > ⚠️ **警告**：注册将使滑板车与其他应用程序（如米家）解除配对。请只注册您拥有的设备。
 

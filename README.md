@@ -200,7 +200,7 @@ Or directly install to connected device:
 1. Install the `glass-hud` APK on your Rokid glasses
 2. On the phone app, connect to your scooter and enable "Rokid HUD Gateway"
 3. On the glasses, the HUD will automatically scan and connect to the phone Gateway
-4. The HUD displays: Speed, Scooter Battery, Phone Battery, and Current Time
+4. The HUD displays: Speed, Scooter Battery, Phone Battery, Glasses Battery, and Current Time
 
 > ⚠️ **Warning**: Registration will unpair the scooter from other apps (e.g., Mi Home). Only register devices you own.
 

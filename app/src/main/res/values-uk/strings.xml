@@ -58,6 +58,8 @@
     <string name="gateway_off">Вимк</string>
     <string name="gateway_notification_title">Шлюз M365 HUD</string>
     <string name="gateway_notification_text">Трансляція телеметрії на окуляри Rokid</string>
+    <string name="glasses_connected">Окуляри підключені ✓</string>
+    <string name="glasses_connect_hint">Увімкніть, щоб окуляри підключилися першими</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Деталі самоката</string>

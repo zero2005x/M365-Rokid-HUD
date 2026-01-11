@@ -1,0 +1,34 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect width="512" height="512" rx="120" fill="url(#paint0_linear)"/>
+    
+    <path d="M130 180C102.386 180 80 202.386 80 230V280C80 307.614 102.386 330 130 330H200C227.614 330 250 307.614 250 280V260C250 254.477 254.477 250 260 250C265.523 250 270 254.477 270 260V280C270 307.614 292.386 330 320 330H390C417.614 330 440 307.614 440 280V230C440 202.386 417.614 180 390 180H320C292.386 180 270 202.386 270 230V235C270 237.761 267.761 240 265 240C262.239 240 260 237.761 260 235V230C260 202.386 237.614 180 210 180H130Z" fill="white"/>
+    
+    <g clip-path="url(#clip0)">
+        <rect x="100" y="200" width="130" height="110" rx="20" fill="#1A2B4D"/>
+        <path d="M125 270C125 245.147 145.147 225 170 225C194.853 225 215 245.147 215 270" stroke="#00E5FF" stroke-width="8" stroke-linecap="round"/>
+        
+        <text x="170" y="265" font-family="Arial, sans-serif" font-weight="bold" font-size="36" fill="white" text-anchor="middle">25</text>
+        <text x="170" y="285" font-family="Arial, sans-serif" font-size="14" fill="#00E5FF" text-anchor="middle">KM/H</text>
+        
+        <path d="M155 303H185L182 295H158L155 303ZM162 295V287H168V295" stroke="#00E5FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="158" cy="303" r="3" fill="#00E5FF"/>
+        <circle cx="182" cy="303" r="3" fill="#00E5FF"/>
+    </g>
+
+    <g clip-path="url(#clip1)">
+         <rect x="290" y="200" width="130" height="110" rx="20" fill="#1A2B4D"/>
+        <path d="M315 270C315 245.147 335.147 225 360 225C384.853 225 405 245.147 405 270" stroke="#00E5FF" stroke-width="8" stroke-linecap="round" opacity="0.5"/>
+        <path d="M360 250L370 260L360 270M360 250L350 260L360 270M360 250V290M360 290L370 280L360 270M360 290L350 280L360 270" stroke="#00E5FF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <defs>
+        <linearGradient id="paint0_linear" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#1E88E5"/> <stop offset="1" stop-color="#00B8D4"/> </linearGradient>
+        <clipPath id="clip0">
+            <rect x="100" y="200" width="130" height="110" rx="20" fill="white"/>
+        </clipPath>
+        <clipPath id="clip1">
+            <rect x="290" y="200" width="130" height="110" rx="20" fill="white"/>
+        </clipPath>
+    </defs>
+</svg>

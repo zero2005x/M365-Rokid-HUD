@@ -1,89 +1,88 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
+    android:viewportWidth="512"
+    android:viewportHeight="512">
     
-    <!-- Background circle with gradient effect -->
+    <!-- AR Glasses Frame - White -->
     <path
-        android:fillColor="#1A237E"
-        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0"/>
+        android:pathData="M130,180C102.386,180 80,202.386 80,230V280C80,307.614 102.386,330 130,330H200C227.614,330 250,307.614 250,280V260C250,254.477 254.477,250 260,250C265.523,250 270,254.477 270,260V280C270,307.614 292.386,330 320,330H390C417.614,330 440,307.614 440,280V230C440,202.386 417.614,180 390,180H320C292.386,180 270,202.386 270,230V235C270,237.761 267.761,240 265,240C262.239,240 260,237.761 260,235V230C260,202.386 237.614,180 210,180H130Z"
+        android:fillColor="#FFFFFF"/>
     
-    <!-- Inner glow ring -->
+    <!-- Left Lens Background -->
     <path
-        android:fillColor="#3949AB"
-        android:pathData="M54,54m-35,0a35,35 0,1 1,70 0a35,35 0,1 1,-70 0"/>
+        android:pathData="M100,220C100,209 109,200 120,200H210C221,200 230,209 230,220V290C230,301 221,310 210,310H120C109,310 100,301 100,290V220Z"
+        android:fillColor="#1A2B4D"/>
     
-    <!-- Scooter silhouette - wheel base -->
+    <!-- Left Speedometer Arc -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M34,68 a8,8 0 1,1 16,0 a8,8 0 1,1 -16,0"/>
-    <path
-        android:fillColor="#1A237E"
-        android:pathData="M38,68 a4,4 0 1,1 8,0 a4,4 0 1,1 -8,0"/>
+        android:pathData="M125,270C125,245.147 145.147,225 170,225C194.853,225 215,245.147 215,270"
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"/>
     
-    <!-- Scooter rear wheel -->
+    <!-- Speed Text "25" -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M62,68 a8,8 0 1,1 16,0 a8,8 0 1,1 -16,0"/>
+        android:pathData="M152,268L160,248L168,268M155,260H165"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"/>
     <path
-        android:fillColor="#1A237E"
-        android:pathData="M66,68 a4,4 0 1,1 8,0 a4,4 0 1,1 -8,0"/>
+        android:pathData="M175,248L188,248L188,256L175,256L175,268L188,268"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
     
-    <!-- Scooter deck/platform -->
+    <!-- Right Lens Background -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M38,65 L72,65 L72,62 L38,62 Z"/>
+        android:pathData="M290,220C290,209 299,200 310,200H400C411,200 420,209 420,220V290C420,301 411,310 400,310H310C299,310 290,301 290,290V220Z"
+        android:fillColor="#1A2B4D"/>
     
-    <!-- Scooter handlebar stem -->
+    <!-- Right Lens - Bluetooth Icon -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M40,62 L40,42 L44,42 L44,62 Z"/>
+        android:pathData="M345,235L365,255L345,275L345,235L365,255L355,265L355,245L365,255"
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
     
-    <!-- Scooter handlebar -->
+    <!-- Signal waves -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M30,42 L54,42 L54,46 L30,46 Z"/>
-    
-    <!-- AR Glasses overlay - left lens -->
+        android:pathData="M375,240C385,250 385,265 375,275"
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"/>
     <path
-        android:fillColor="#00E5FF"
-        android:fillAlpha="0.9"
-        android:pathData="M50,38 L68,38 L72,48 L68,58 L50,58 L46,48 Z"/>
-    
-    <!-- AR Glasses - bridge -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M68,46 L76,46 L76,50 L68,50 Z"/>
-    
-    <!-- AR Glasses - right lens frame hint -->
-    <path
-        android:fillColor="#00E5FF"
+        android:pathData="M385,230C400,245 400,270 385,285"
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
         android:fillAlpha="0.6"
-        android:pathData="M76,44 L82,44 L84,48 L82,52 L76,52 Z"/>
+        android:fillColor="#00000000"/>
     
-    <!-- Speed indicator lines on glasses -->
+    <!-- Scooter Icon at Bottom -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M52,44 L64,44"
-        android:strokeWidth="2"
-        android:strokeColor="#FFFFFF"/>
+        android:pathData="M220,400H292L282,370H230L220,400Z"
+        android:fillColor="#FFFFFF"/>
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,50 L66,50"
-        android:strokeWidth="1.5"
-        android:strokeColor="#FFFFFF"/>
+        android:pathData="M250,370V340L262,340L262,370"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"/>
     
-    <!-- Bluetooth signal waves -->
+    <!-- Scooter wheels -->
     <path
-        android:fillColor="#00E5FF"
-        android:pathData="M26,52 C22,48 22,40 26,36"/>
+        android:pathData="M227,400m-14,0a14,14 0,1 1,28 0a14,14 0,1 1,-28 0"
+        android:fillColor="#00E5FF"/>
     <path
-        android:strokeColor="#00E5FF"
-        android:strokeWidth="2"
-        android:pathData="M26,52 C22,48 22,40 26,36"/>
-    <path
-        android:strokeColor="#00E5FF"
-        android:strokeWidth="1.5"
-        android:pathData="M22,54 C16,48 16,38 22,32"/>
+        android:pathData="M285,400m-14,0a14,14 0,1 1,28 0a14,14 0,1 1,-28 0"
+        android:fillColor="#00E5FF"/>
+        
 </vector>

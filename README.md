@@ -1,11 +1,18 @@
-# M365 BLE App
+# M365 Rokid HUD
 
-![Android](https://img.shields.io/badge/Android-29+-green?logo=android)
-![Kotlin](https://img.shields.io/badge/Kotlin-1.9-purple?logo=kotlin)
-![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Material3-blue)
-![Rust](https://img.shields.io/badge/Rust-FFI-orange?logo=rust)
+<p align="center">
+  <img src="doc/feature_banner_1024x500.svg" alt="M365 Rokid HUD - Smart AR Dashboard for Your Scooter" width="100%">
+</p>
 
-A modern Android application for connecting to and monitoring Xiaomi/Ninebot M365 electric scooters via Bluetooth Low Energy (BLE).
+<p align="center">
+  <img src="https://img.shields.io/badge/Android-29+-green?logo=android" alt="Android">
+  <img src="https://img.shields.io/badge/Kotlin-1.9-purple?logo=kotlin" alt="Kotlin">
+  <img src="https://img.shields.io/badge/Jetpack%20Compose-Material3-blue" alt="Jetpack Compose">
+  <img src="https://img.shields.io/badge/Rust-FFI-orange?logo=rust" alt="Rust">
+  <img src="https://img.shields.io/badge/Rokid-AR%20Glasses-00E5FF" alt="Rokid AR">
+</p>
+
+A modern Android application for connecting to and monitoring Xiaomi/Ninebot M365 electric scooters via Bluetooth Low Energy (BLE), featuring native support for **Rokid AR glasses** as a Heads-Up Display (HUD).
 
 > 📖 **[繁體中文](doc/README_zh-TW.md)** | **[简体中文](doc/README_zh-CN.md)**
 

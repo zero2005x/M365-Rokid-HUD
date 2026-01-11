@@ -7,8 +7,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -67,6 +70,10 @@ class GatewayService : Service() {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var isServiceRunning = false
     
+    // === DOZE MODE HANDLING ===
+    // WakeLock to prevent CPU sleep during telemetry polling
+    private var wakeLock: PowerManager.WakeLock? = null
+    
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -85,8 +92,76 @@ class GatewayService : Service() {
             startForeground(NOTIFICATION_ID, buildNotification("Initializing..."))
         }
         
+        // === DOZE MODE: Acquire WakeLock to prevent CPU sleep ===
+        acquireWakeLock()
+        
         // Initialize components
         initializeGateway()
+    }
+    
+    /**
+     * Acquire a partial wake lock to prevent CPU sleep during telemetry polling.
+     * This ensures the service can continue to receive and forward telemetry data
+     * even when the device screen is off.
+     */
+    private fun acquireWakeLock() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "M365Gateway::TelemetryLock"
+            ).apply {
+                // Acquire with timeout of 1 hour, will be re-acquired if needed
+                acquire(60 * 60 * 1000L) // 1 hour
+            }
+            Log.i(TAG, "DOZE: WakeLock acquired for telemetry polling")
+        } catch (e: Exception) {
+            Log.e(TAG, "DOZE: Failed to acquire WakeLock: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Release the wake lock when service is destroyed.
+     */
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.let { wl ->
+                if (wl.isHeld) {
+                    wl.release()
+                    Log.i(TAG, "DOZE: WakeLock released")
+                }
+            }
+            wakeLock = null
+        } catch (e: Exception) {
+            Log.e(TAG, "DOZE: Failed to release WakeLock: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Check if the app is ignoring battery optimizations (Doze exempt).
+     * @return true if exempt, false otherwise
+     */
+    fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            return pm.isIgnoringBatteryOptimizations(packageName)
+        }
+        return true // Pre-M devices don't have Doze
+    }
+    
+    /**
+     * Create an intent to request battery optimization exemption.
+     * The caller should start this intent from an Activity.
+     */
+    fun createBatteryOptimizationIntent(): Intent? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!isIgnoringBatteryOptimizations()) {
+                return Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+            }
+        }
+        return null
     }
     
     private fun initializeGateway() {
@@ -197,6 +272,9 @@ class GatewayService : Service() {
         
         scope.cancel()
         
+        // === DOZE MODE: Release WakeLock ===
+        releaseWakeLock()
+        
         try {
             gattServer?.stop()
         } catch (e: SecurityException) {
@@ -243,7 +321,9 @@ class GatewayService : Service() {
             .setSmallIcon(R.drawable.ic_notification_gateway)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            // Use PRIORITY_HIGH for foreground service to prevent system from killing it
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
     }
     

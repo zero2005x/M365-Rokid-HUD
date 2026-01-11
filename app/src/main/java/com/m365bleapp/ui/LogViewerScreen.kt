@@ -1,6 +1,7 @@
 package com.m365bleapp.ui
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -10,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
@@ -26,7 +28,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.m365bleapp.R
+import com.m365bleapp.utils.LogExporter
 import com.m365bleapp.utils.TelemetryLogger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -38,12 +44,18 @@ fun LogViewerScreen(
 ) {
     val context = LocalContext.current
     val logger = remember { TelemetryLogger(context) }
+    val logExporter = remember { LogExporter(context) }
+    val scope = rememberCoroutineScope()
     
     var logFiles by remember { mutableStateOf<List<File>>(emptyList()) }
     var selectedFile by remember { mutableStateOf<File?>(null) }
     var fileContent by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showDeleteAllDialog by remember { mutableStateOf(false) }
+    
+    // Export state
+    var isExporting by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
     
     // Logging enabled state
     var loggingEnabled by remember { mutableStateOf(logger.isLoggingEnabled()) }
@@ -175,6 +187,23 @@ fun LogViewerScreen(
                             Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete))
                         }
                     } else {
+                        // Export All button
+                        IconButton(
+                            onClick = { showExportDialog = true },
+                            enabled = logFiles.isNotEmpty() && !isExporting
+                        ) {
+                            if (isExporting) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.CloudUpload,
+                                    contentDescription = stringResource(R.string.export_logs)
+                                )
+                            }
+                        }
                         IconButton(onClick = { refreshFiles() }) {
                             Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh))
                         }
@@ -265,6 +294,69 @@ fun LogViewerScreen(
                 }
             }
         }
+    }
+    
+    // Export confirmation dialog
+    if (showExportDialog) {
+        val logsCount = logExporter.getLogsCount()
+        val logsSize = logExporter.formatFileSize(logExporter.getLogsTotalSize())
+        
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text(stringResource(R.string.export_logs_title)) },
+            text = { 
+                Text(stringResource(R.string.export_logs_message, logsCount, logsSize))
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExportDialog = false
+                        isExporting = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                logExporter.createLogArchive(
+                                    includeLogcat = true,
+                                    includeDeviceInfo = true
+                                )
+                            }
+                            isExporting = false
+                            
+                            if (result.success && result.zipFile != null) {
+                                // Create and launch share intent
+                                val shareIntent = logExporter.createShareIntent(result.zipFile)
+                                if (shareIntent != null) {
+                                    context.startActivity(
+                                        Intent.createChooser(
+                                            shareIntent,
+                                            context.getString(R.string.share_logs_to)
+                                        )
+                                    )
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        R.string.export_share_failed,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.export_failed, result.errorMessage ?: "Unknown error"),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.export_and_share))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExportDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 }
 

@@ -138,4 +138,10 @@
     <string name="bluetooth_enable">开启蓝牙</string>
     <string name="bluetooth_settings">打开设置</string>
     <string name="bluetooth_gateway_disabled_message">请开启蓝牙以广播到 Rokid 眼镜。</string>
+    
+    <!-- Battery Optimization -->
+    <string name="battery_optimization_title">电池优化</string>
+    <string name="battery_optimization_warning">⚠️ 电池优化已开启</string>
+    <string name="battery_optimization_message">Android 可能会在后台关闭应用程序，导致眼镜连接中断。点击以关闭电池优化，确保连接稳定。</string>
+    <string name="battery_optimization_exempt">关闭优化</string>
 </resources>

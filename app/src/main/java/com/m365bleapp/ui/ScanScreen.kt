@@ -2,8 +2,13 @@ package com.m365bleapp.ui
 
 import android.Manifest
 import android.bluetooth.le.ScanResult
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +46,26 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retry
 import kotlinx.coroutines.launch
+
+/**
+ * Check if the app is exempt from battery optimization (Doze mode).
+ */
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        return pm.isIgnoringBatteryOptimizations(context.packageName)
+    }
+    return true // Pre-M devices don't have Doze
+}
+
+/**
+ * Create an intent to request battery optimization exemption.
+ */
+private fun createBatteryOptimizationIntent(context: Context): Intent {
+    return Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+        data = Uri.parse("package:${context.packageName}")
+    }
+}
 
 /**
  * Data class to hold scan result with registration status for sorting
@@ -520,6 +545,63 @@ fun ScanScreen(
                             }
                         }
                     )
+                }
+            }
+            
+            // ========== Battery Optimization Warning ==========
+            // Check if battery optimization is enabled (can cause app to be killed)
+            var isBatteryOptimized by remember { 
+                mutableStateOf(!isIgnoringBatteryOptimizations(context)) 
+            }
+            
+            // Launcher for battery optimization settings
+            val batteryOptLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult()
+            ) { _ ->
+                // Refresh battery optimization status after returning from settings
+                isBatteryOptimized = !isIgnoringBatteryOptimizations(context)
+            }
+            
+            // Show warning banner if battery optimization is ON and gateway is enabled
+            if (isBatteryOptimized && gatewayEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            batteryOptLauncher.launch(createBatteryOptimizationIntent(context))
+                        }
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    shape = MaterialTheme.shapes.small
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.battery_optimization_warning),
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Text(
+                                text = stringResource(R.string.battery_optimization_message),
+                                fontSize = MaterialTheme.typography.bodySmall.fontSize,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                        Button(
+                            onClick = { 
+                                batteryOptLauncher.launch(createBatteryOptimizationIntent(context))
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.tertiary
+                            )
+                        ) {
+                            Text(stringResource(R.string.battery_optimization_exempt))
+                        }
+                    }
                 }
             }
             

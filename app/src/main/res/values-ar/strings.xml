@@ -138,4 +138,10 @@
     <string name="bluetooth_enable">تفعيل البلوتوث</string>
     <string name="bluetooth_settings">فتح الإعدادات</string>
     <string name="bluetooth_gateway_disabled_message">يرجى تفعيل البلوتوث للبث إلى نظارات Rokid.</string>
+    
+    <!-- Battery Optimization -->
+    <string name="battery_optimization_title">تحسين البطارية</string>
+    <string name="battery_optimization_warning">⚠️ تحسين البطارية مفعّل</string>
+    <string name="battery_optimization_message">قد يغلق Android التطبيق في الخلفية، مما يؤدي إلى فقدان الاتصال بالنظارات. انقر لتعطيل تحسين البطارية للحصول على اتصال مستقر.</string>
+    <string name="battery_optimization_exempt">تعطيل التحسين</string>
 </resources>

@@ -12,6 +12,16 @@
     
     <!-- Keep screen on for HUD -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    
+    <!-- Foreground service to maintain BLE connection -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    
+    <!-- Post notifications for foreground service -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
+    <!-- Request ignore battery optimizations to prevent app from being killed -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- BLE Feature -->
     <uses-feature 
@@ -38,6 +48,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        
+        <!-- BLE Connection Foreground Service -->
+        <service
+            android:name=".BleConnectionService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
         
     </application>
 

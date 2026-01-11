@@ -26,15 +26,17 @@ class BleClient(private val context: Context) {
     
     companion object {
         private const val TAG = "BleClient"
-        private const val SCAN_TIMEOUT_MS = 30000L
+        private const val SCAN_TIMEOUT_MS = 45000L  // Extended from 30s to 45s for more reliable scanning
         
         // LATENCY MONITORING: Watchdog timeout for stale data detection
         // If no telemetry received for this long, consider connection stale
+        // Increased to 3s to reduce false positive disconnects from brief BLE hiccups
         private const val TELEMETRY_STALE_TIMEOUT_MS = 3000L
         private const val WATCHDOG_CHECK_INTERVAL_MS = 1000L
         
         // CONNECTION HEALTH: Auto-reconnect after this many stale checks
         // 5 checks * 1000ms interval = 5 seconds of no data before reconnect attempt
+        // Increased to be more tolerant of brief connection issues
         private const val STALE_CHECKS_BEFORE_RECONNECT = 5
         
         // Scan retry without filter after this timeout (some devices don't advertise UUID correctly)
@@ -42,6 +44,12 @@ class BleClient(private val context: Context) {
         
         // GLASSES BATTERY: Send interval for glasses battery to phone
         private const val BATTERY_SEND_INTERVAL_MS = 30000L  // Send every 30 seconds
+        
+        // === RSSI MONITORING ===
+        // Periodically check signal strength for connection quality indication
+        private const val RSSI_CHECK_INTERVAL_MS = 5000L    // Check every 5 seconds
+        private const val RSSI_THRESHOLD_WEAK_DBM = -80     // Below this = weak signal
+        private const val RSSI_THRESHOLD_POOR_DBM = -90     // Below this = very poor signal
     }
     
     // CONNECTION HEALTH: Count consecutive stale checks
@@ -54,6 +62,10 @@ class BleClient(private val context: Context) {
     @Volatile private var batterySendHandler: android.os.Handler? = null
     @Volatile private var glassesBatteryCharacteristic: BluetoothGattCharacteristic? = null
     
+    // === RSSI MONITORING ===
+    // Handler for periodic RSSI checking
+    @Volatile private var rssiMonitorHandler: android.os.Handler? = null
+    
     // Connection state
     sealed class ConnectionState {
         object Disconnected : ConnectionState()
@@ -61,6 +73,13 @@ class BleClient(private val context: Context) {
         object Connecting : ConnectionState()
         object Connected : ConnectionState()
         data class Error(val message: String) : ConnectionState()
+    }
+    
+    // === SIGNAL STRENGTH INDICATOR ===
+    enum class SignalStrength {
+        Good,   // RSSI >= -80 dBm
+        Weak,   // RSSI between -90 and -80 dBm
+        Poor    // RSSI < -90 dBm
     }
     
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -82,6 +101,10 @@ class BleClient(private val context: Context) {
     
     private val _rssi = MutableStateFlow(0)
     val rssi: StateFlow<Int> = _rssi.asStateFlow()
+    
+    // === SIGNAL STRENGTH INDICATOR ===
+    private val _signalStrength = MutableStateFlow(SignalStrength.Good)
+    val signalStrength: StateFlow<SignalStrength> = _signalStrength.asStateFlow()
     
     // LATENCY MONITORING: Track last telemetry update time
     @Volatile private var lastTelemetryUpdateMs: Long = 0
@@ -274,6 +297,7 @@ class BleClient(private val context: Context) {
         stopScan() // Ensure scan is stopped
         stopWatchdog() // Stop telemetry monitoring
         stopBatterySending() // Stop battery sending
+        stopRssiMonitoring() // Stop RSSI monitoring
         
         gatt?.let { g ->
             g.disconnect()
@@ -288,6 +312,7 @@ class BleClient(private val context: Context) {
         _connectionState.value = ConnectionState.Disconnected
         _telemetry.value = TelemetryData()
         _timeData.value = TimeData()
+        _signalStrength.value = SignalStrength.Good  // Reset signal strength
     }
     
     /**
@@ -349,6 +374,25 @@ class BleClient(private val context: Context) {
     private val gattCallback = object : BluetoothGattCallback() {
         
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            // Enhanced logging for connection diagnostics
+            val statusName = when (status) {
+                BluetoothGatt.GATT_SUCCESS -> "GATT_SUCCESS"
+                8 -> "GATT_CONN_TIMEOUT"
+                19 -> "GATT_CONN_TERMINATE_PEER"
+                22 -> "GATT_CONN_TERMINATE_LOCAL"
+                34 -> "GATT_CONN_LMP_TIMEOUT"
+                133 -> "GATT_ERROR"
+                else -> "Unknown($status)"
+            }
+            val stateName = when (newState) {
+                BluetoothProfile.STATE_CONNECTED -> "CONNECTED"
+                BluetoothProfile.STATE_DISCONNECTED -> "DISCONNECTED"
+                BluetoothProfile.STATE_CONNECTING -> "CONNECTING"
+                BluetoothProfile.STATE_DISCONNECTING -> "DISCONNECTING"
+                else -> "Unknown($newState)"
+            }
+            Log.i(TAG, "onConnectionStateChange: status=$statusName, newState=$stateName")
+            
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     Log.i(TAG, "Connected to GATT server")
@@ -379,11 +423,58 @@ class BleClient(private val context: Context) {
                     }, 200)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.i(TAG, "Disconnected from GATT server")
+                    Log.i(TAG, "Disconnected from GATT server (status=$statusName)")
+                    
+                    // Log disconnect reason for diagnostics
+                    val shouldAutoReconnect = when (status) {
+                        8 -> {
+                            Log.w(TAG, "DISCONNECT REASON: Connection timeout - phone may be out of range")
+                            true // Auto-reconnect on timeout
+                        }
+                        19 -> {
+                            Log.w(TAG, "DISCONNECT REASON: Remote device terminated connection")
+                            true // Auto-reconnect when remote disconnected
+                        }
+                        22 -> {
+                            Log.w(TAG, "DISCONNECT REASON: Local device terminated connection")
+                            false // Don't auto-reconnect on intentional local disconnect
+                        }
+                        34 -> {
+                            Log.w(TAG, "DISCONNECT REASON: LMP response timeout")
+                            true // Auto-reconnect on LMP timeout
+                        }
+                        133 -> {
+                            Log.e(TAG, "DISCONNECT REASON: GATT_ERROR - stack issue, may need device restart")
+                            true // Try to recover from GATT error
+                        }
+                        0 -> {
+                            Log.d(TAG, "DISCONNECT REASON: Graceful disconnect")
+                            false // Don't auto-reconnect on graceful disconnect
+                        }
+                        else -> {
+                            Log.w(TAG, "DISCONNECT REASON: Unknown status $status")
+                            true // Try to recover from unknown errors
+                        }
+                    }
+                    
                     isConnecting = false
+                    stopWatchdog()
+                    stopBatterySending()
+                    stopRssiMonitoring()
                     _connectionState.value = ConnectionState.Disconnected
                     this@BleClient.gatt?.close()
                     this@BleClient.gatt = null
+                    
+                    // Auto-reconnect if enabled and disconnect was unexpected
+                    if (shouldAutoReconnect && autoReconnectEnabled) {
+                        Log.i(TAG, "AUTO-RECONNECT: Will attempt to reconnect in 2 seconds...")
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            if (_connectionState.value == ConnectionState.Disconnected) {
+                                Log.i(TAG, "AUTO-RECONNECT: Starting scan...")
+                                startScan()
+                            }
+                        }, 2000)
+                    }
                 }
             }
         }
@@ -463,6 +554,9 @@ class BleClient(private val context: Context) {
             
             // GLASSES BATTERY: Start sending battery level to phone
             startBatterySending()
+            
+            // RSSI MONITORING: Start checking signal strength
+            startRssiMonitoring()
         }
         
         override fun onCharacteristicChanged(
@@ -475,6 +569,7 @@ class BleClient(private val context: Context) {
                     // LATENCY MONITORING: Track update timing
                     val now = System.currentTimeMillis()
                     telemetryUpdateCount++
+                    recordPacketReceived() // Record for session statistics
                     
                     // Log update frequency every 5 seconds
                     if (now - lastLogTimeMs >= 5000L) {
@@ -514,6 +609,26 @@ class BleClient(private val context: Context) {
         override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 _rssi.value = rssi
+                
+                // Record RSSI sample for session statistics
+                recordRssiSample(rssi)
+                
+                // === SIGNAL STRENGTH CLASSIFICATION ===
+                val strength = when {
+                    rssi >= RSSI_THRESHOLD_WEAK_DBM -> SignalStrength.Good
+                    rssi >= RSSI_THRESHOLD_POOR_DBM -> SignalStrength.Weak
+                    else -> SignalStrength.Poor
+                }
+                
+                // Log warning if signal is degrading
+                if (strength != _signalStrength.value) {
+                    when (strength) {
+                        SignalStrength.Weak -> Log.w(TAG, "SIGNAL: Weak signal detected: $rssi dBm")
+                        SignalStrength.Poor -> Log.e(TAG, "SIGNAL: Poor signal detected: $rssi dBm - connection may be unstable")
+                        SignalStrength.Good -> Log.i(TAG, "SIGNAL: Signal recovered to good: $rssi dBm")
+                    }
+                    _signalStrength.value = strength
+                }
             }
         }
     }
@@ -566,6 +681,7 @@ class BleClient(private val context: Context) {
                 
                 if (timeSinceLastUpdate > TELEMETRY_STALE_TIMEOUT_MS) {
                     consecutiveStaleChecks++
+                    recordStaleEvent() // Record for session statistics
                     
                     if (_isTelemetryFresh.value) {
                         Log.w(TAG, "CONNECTION HEALTH: Telemetry stale! No update for ${timeSinceLastUpdate}ms (check $consecutiveStaleChecks/$STALE_CHECKS_BEFORE_RECONNECT)")
@@ -600,20 +716,30 @@ class BleClient(private val context: Context) {
     
     /**
      * Initiate auto-reconnect when connection is detected as lost.
+     * Uses a longer delay to ensure the BLE stack fully resets before reconnecting.
      */
     private fun initiateAutoReconnect() {
         Log.i(TAG, "CONNECTION HEALTH: Initiating auto-reconnect...")
         
+        // Disable auto-reconnect temporarily to prevent rapid reconnect loops
+        val wasAutoReconnectEnabled = autoReconnectEnabled
+        autoReconnectEnabled = false
+        
         // Disconnect current connection
         disconnect()
         
-        // Wait a moment before reconnecting
+        // Wait 2 seconds for BLE stack to fully reset before reconnecting
+        // This helps prevent connection issues from lingering BLE state
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            // Re-enable auto-reconnect
+            autoReconnectEnabled = wasAutoReconnectEnabled
+            
             if (_connectionState.value == ConnectionState.Disconnected) {
                 Log.i(TAG, "CONNECTION HEALTH: Starting new scan for auto-reconnect")
+                recordReconnect() // Record reconnect for session statistics
                 startScan()
             }
-        }, 1000) // 1 second delay before reconnect
+        }, 2000) // 2 second delay before reconnect (increased from 1s)
     }
     
     /**
@@ -708,5 +834,103 @@ class BleClient(private val context: Context) {
     private fun stopBatterySending() {
         batterySendHandler?.removeCallbacksAndMessages(null)
         batterySendHandler = null
+    }
+    
+    // ========== RSSI MONITORING: Periodic signal strength checking ==========
+    
+    // === CONNECTION METRICS: Track session statistics ===
+    private var sessionStartTimeMs: Long = 0
+    private var totalPacketsReceived: Long = 0
+    private var totalStaleEvents: Long = 0
+    private var reconnectCount: Int = 0
+    private var rssiSamples: MutableList<Int> = mutableListOf()
+    
+    /**
+     * Start periodically checking RSSI (signal strength) to monitor connection quality.
+     * This helps detect weak signals before the connection drops.
+     */
+    private fun startRssiMonitoring() {
+        stopRssiMonitoring() // Stop any existing handler
+        
+        // Initialize session metrics
+        sessionStartTimeMs = System.currentTimeMillis()
+        totalPacketsReceived = 0
+        totalStaleEvents = 0
+        rssiSamples.clear()
+        
+        rssiMonitorHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        val rssiRunnable = object : Runnable {
+            override fun run() {
+                // Request RSSI update from the connected device
+                gatt?.readRemoteRssi()
+                
+                // Continue monitoring while connected
+                if (_connectionState.value == ConnectionState.Connected) {
+                    rssiMonitorHandler?.postDelayed(this, RSSI_CHECK_INTERVAL_MS)
+                }
+            }
+        }
+        
+        // Start monitoring after initial delay
+        rssiMonitorHandler?.postDelayed(rssiRunnable, RSSI_CHECK_INTERVAL_MS)
+        Log.d(TAG, "RSSI MONITORING: Started checking signal strength every ${RSSI_CHECK_INTERVAL_MS}ms")
+    }
+    
+    /**
+     * Stop the RSSI monitoring timer and log session summary.
+     */
+    private fun stopRssiMonitoring() {
+        // Log session summary before stopping
+        if (sessionStartTimeMs > 0 && totalPacketsReceived > 0) {
+            val sessionDurationSec = (System.currentTimeMillis() - sessionStartTimeMs) / 1000.0
+            val avgRssi = if (rssiSamples.isNotEmpty()) rssiSamples.average() else 0.0
+            val minRssi = rssiSamples.minOrNull() ?: 0
+            val maxRssi = rssiSamples.maxOrNull() ?: 0
+            val packetsPerSec = totalPacketsReceived / sessionDurationSec
+            
+            Log.i(TAG, "=== CONNECTION SESSION SUMMARY ===")
+            Log.i(TAG, "Duration: ${String.format("%.1f", sessionDurationSec)}s")
+            Log.i(TAG, "Packets received: $totalPacketsReceived (${String.format("%.1f", packetsPerSec)}/sec)")
+            Log.i(TAG, "Stale events: $totalStaleEvents")
+            Log.i(TAG, "Reconnects this session: $reconnectCount")
+            Log.i(TAG, "RSSI - Avg: ${String.format("%.0f", avgRssi)} dBm, Min: $minRssi dBm, Max: $maxRssi dBm")
+            Log.i(TAG, "=================================")
+        }
+        
+        rssiMonitorHandler?.removeCallbacksAndMessages(null)
+        rssiMonitorHandler = null
+    }
+    
+    /**
+     * Record RSSI sample for session statistics.
+     */
+    private fun recordRssiSample(rssi: Int) {
+        rssiSamples.add(rssi)
+        // Keep only last 100 samples to avoid memory issues
+        if (rssiSamples.size > 100) {
+            rssiSamples.removeAt(0)
+        }
+    }
+    
+    /**
+     * Increment packet count for session statistics.
+     */
+    private fun recordPacketReceived() {
+        totalPacketsReceived++
+    }
+    
+    /**
+     * Record stale event for session statistics.
+     */
+    private fun recordStaleEvent() {
+        totalStaleEvents++
+    }
+    
+    /**
+     * Increment reconnect count for session statistics.
+     */
+    fun recordReconnect() {
+        reconnectCount++
+        Log.d(TAG, "CONNECTION METRICS: Reconnect count = $reconnectCount")
     }
 }

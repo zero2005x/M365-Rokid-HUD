@@ -51,6 +51,8 @@ fun HudScreen(
     telemetry: TelemetryData,
     timeData: TimeData,
     connectionState: BleClient.ConnectionState,
+    signalStrength: BleClient.SignalStrength = BleClient.SignalStrength.Good,
+    isTelemetryFresh: Boolean = true,
     onRetryClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -102,6 +104,8 @@ fun HudScreen(
                     telemetry = telemetry,
                     timeData = timeData,
                     glassesBattery = glassesBattery,
+                    signalStrength = signalStrength,
+                    isTelemetryFresh = isTelemetryFresh,
                     primaryColor = primaryColor,
                     secondaryColor = secondaryColor,
                     warningColor = warningColor
@@ -193,10 +197,15 @@ private fun ConnectedHudView(
     telemetry: TelemetryData,
     timeData: TimeData,
     glassesBattery: Int,
+    signalStrength: BleClient.SignalStrength,
+    isTelemetryFresh: Boolean,
     primaryColor: Color,
     secondaryColor: Color,
     warningColor: Color
 ) {
+    // Warning color for stale data or weak signal
+    val staleWarningColor = Color(0xFFFF6600)
+    
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -274,6 +283,35 @@ private fun ConnectedHudView(
                     maxLines = 1,
                     softWrap = false
                 )
+            }
+            
+            Spacer(modifier = Modifier.height(2.dp))
+            
+            // Connection Quality Indicator
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.wrapContentWidth()
+            ) {
+                // Signal strength icon
+                val (signalIcon, signalColor) = when (signalStrength) {
+                    BleClient.SignalStrength.Good -> "📶" to Color(0xFF00FF88)
+                    BleClient.SignalStrength.Weak -> "📶" to warningColor
+                    BleClient.SignalStrength.Poor -> "📵" to Color.Red
+                }
+                Text(
+                    text = signalIcon,
+                    fontSize = 12.sp
+                )
+                
+                // Stale data warning
+                if (!isTelemetryFresh) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "⚠",
+                        fontSize = 12.sp,
+                        color = staleWarningColor
+                    )
+                }
             }
         }
         

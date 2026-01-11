@@ -138,4 +138,10 @@
     <string name="bluetooth_enable">Bluetoothを有効にする</string>
     <string name="bluetooth_settings">設定を開く</string>
     <string name="bluetooth_gateway_disabled_message">Rokidグラスに配信するにはBluetoothを有効にしてください。</string>
+    
+    <!-- Battery Optimization -->
+    <string name="battery_optimization_title">バッテリー最適化</string>
+    <string name="battery_optimization_warning">⚠️ バッテリー最適化が有効になっています</string>
+    <string name="battery_optimization_message">Androidがバックグラウンドでアプリを終了し、グラスの接続が切断される可能性があります。安定した接続のためにバッテリー最適化を無効にするにはタップしてください。</string>
+    <string name="battery_optimization_exempt">最適化を無効にする</string>
 </resources>

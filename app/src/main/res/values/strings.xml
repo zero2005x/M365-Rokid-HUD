@@ -113,6 +113,18 @@
     <string name="refresh">Refresh</string>
     <string name="view_logs">View Logs</string>
     
+    <!-- Log Export -->
+    <string name="export_logs">Export Logs</string>
+    <string name="export_all">Export All</string>
+    <string name="export_logs_title">Export All Logs</string>
+    <string name="export_logs_message">Export %1$d log files (%2$s) to a ZIP archive and share to cloud storage?</string>
+    <string name="export_and_share">Export &amp; Share</string>
+    <string name="share_logs_to">Share logs to…</string>
+    <string name="export_failed">Export failed: %1$s</string>
+    <string name="export_share_failed">Failed to create share intent</string>
+    <string name="logs_summary">Log Files</string>
+    <string name="logs_count_size">%1$d files • %2$s</string>
+    
     <!-- Connection States -->
     <string name="state_logging_in">Logging in…</string>
     <string name="state_press_power_button">🔥 Press the scooter power button! 🔥</string>
@@ -138,4 +150,10 @@
     <string name="bluetooth_enable">Enable Bluetooth</string>
     <string name="bluetooth_settings">Open Settings</string>
     <string name="bluetooth_gateway_disabled_message">Please enable Bluetooth to broadcast to Rokid Glasses.</string>
+    
+    <!-- Battery Optimization -->
+    <string name="battery_optimization_title">Battery Optimization</string>
+    <string name="battery_optimization_warning">⚠️ Battery optimization is enabled</string>
+    <string name="battery_optimization_message">Android may kill the app in background, causing glasses connection to drop. Tap to disable battery optimization for stable connection.</string>
+    <string name="battery_optimization_exempt">Disable Optimization</string>
 </resources>

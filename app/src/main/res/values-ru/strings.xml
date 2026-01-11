@@ -138,4 +138,10 @@
     <string name="bluetooth_enable">Включить Bluetooth</string>
     <string name="bluetooth_settings">Открыть настройки</string>
     <string name="bluetooth_gateway_disabled_message">Пожалуйста, включите Bluetooth для трансляции на очки Rokid.</string>
+    
+    <!-- Battery Optimization -->
+    <string name="battery_optimization_title">Оптимизация батареи</string>
+    <string name="battery_optimization_warning">⚠️ Оптимизация батареи включена</string>
+    <string name="battery_optimization_message">Android может закрыть приложение в фоне, что приведёт к разрыву соединения с очками. Нажмите, чтобы отключить оптимизацию батареи для стабильного соединения.</string>
+    <string name="battery_optimization_exempt">Отключить оптимизацию</string>
 </resources>

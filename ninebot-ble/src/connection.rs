@@ -16,13 +16,107 @@ const RECONNECT_DELAY_SECS: u64 = 8;
 #[cfg(not(target_os = "windows"))]
 const RECONNECT_DELAY_SECS: u64 = 3;
 
+/// Adaptive reconnection delay configuration with exponential backoff.
+/// Implements progressive delay strategy to avoid overwhelming the BLE stack.
+pub struct AdaptiveReconnect {
+  base_delay_ms: u64,
+  max_delay_ms: u64,
+  current_delay_ms: u64,
+  consecutive_failures: u32,
+}
+
+impl Default for AdaptiveReconnect {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl AdaptiveReconnect {
+  /// Create a new AdaptiveReconnect with default settings.
+  /// Base delay: 1s, Max delay: 30s
+  pub fn new() -> Self {
+    Self {
+      base_delay_ms: 1000,
+      max_delay_ms: 30000,
+      current_delay_ms: 1000,
+      consecutive_failures: 0,
+    }
+  }
+  
+  /// Create with custom delay settings.
+  pub fn with_delays(base_ms: u64, max_ms: u64) -> Self {
+    Self {
+      base_delay_ms: base_ms,
+      max_delay_ms: max_ms,
+      current_delay_ms: base_ms,
+      consecutive_failures: 0,
+    }
+  }
+  
+  /// Get the next delay duration using exponential backoff.
+  pub fn next_delay(&mut self) -> Duration {
+    let delay = self.current_delay_ms;
+    // Exponential backoff: double the delay each time, up to max
+    self.current_delay_ms = (self.current_delay_ms * 2).min(self.max_delay_ms);
+    self.consecutive_failures += 1;
+    tracing::debug!(
+      "AdaptiveReconnect: next delay = {}ms, failures = {}", 
+      delay, 
+      self.consecutive_failures
+    );
+    Duration::from_millis(delay)
+  }
+  
+  /// Reset the delay to base after a successful connection.
+  pub fn reset(&mut self) {
+    tracing::debug!(
+      "AdaptiveReconnect: resetting after {} failures", 
+      self.consecutive_failures
+    );
+    self.current_delay_ms = self.base_delay_ms;
+    self.consecutive_failures = 0;
+  }
+  
+  /// Get the current failure count.
+  pub fn failure_count(&self) -> u32 {
+    self.consecutive_failures
+  }
+  
+  /// Check if we should give up (too many consecutive failures).
+  pub fn should_give_up(&self, max_failures: u32) -> bool {
+    self.consecutive_failures >= max_failures
+  }
+}
+
 pub struct ConnectionHelper {
-  device: Peripheral
+  device: Peripheral,
+  adaptive_reconnect: AdaptiveReconnect,
 }
 
 impl ConnectionHelper {
   pub fn new(device: &Peripheral) -> Self {
-    Self { device: device.clone() }
+    Self { 
+      device: device.clone(),
+      adaptive_reconnect: AdaptiveReconnect::new(),
+    }
+  }
+  
+  /// Create with custom adaptive reconnect settings.
+  pub fn with_adaptive_reconnect(device: &Peripheral, base_delay_ms: u64, max_delay_ms: u64) -> Self {
+    Self {
+      device: device.clone(),
+      adaptive_reconnect: AdaptiveReconnect::with_delays(base_delay_ms, max_delay_ms),
+    }
+  }
+  
+  /// Reset adaptive reconnect counter after successful operations.
+  pub fn reset_reconnect_counter(&mut self) {
+    self.adaptive_reconnect.reset();
+  }
+  
+  /// Get current failure count.
+  pub fn failure_count(&self) -> u32 {
+    self.adaptive_reconnect.failure_count()
   }
 
   /// Check if the device is actually connected and stable
@@ -128,15 +222,49 @@ impl ConnectionHelper {
     Ok(true)
   }
 
-  pub async fn reconnect(&self) -> Result<bool> {
+  pub async fn reconnect(&mut self) -> Result<bool> {
     tracing::debug!("Reconnecting...");
     self.disconnect().await?;
     
-    // Windows BLE driver needs significant time between disconnect and reconnect
-    tracing::debug!("Waiting {}s before reconnecting (Windows BLE stabilization)...", RECONNECT_DELAY_SECS);
-    time::sleep(Duration::from_secs(RECONNECT_DELAY_SECS)).await;
+    // Use adaptive delay for reconnection
+    let adaptive_delay = self.adaptive_reconnect.next_delay();
+    let base_delay = Duration::from_secs(RECONNECT_DELAY_SECS);
     
-    self.connect().await?;
-    Ok(true)
+    // Use the larger of adaptive delay or platform-specific minimum
+    let actual_delay = adaptive_delay.max(base_delay);
+    
+    tracing::debug!(
+      "Waiting {:?} before reconnecting (adaptive: {:?}, platform min: {:?}, failures: {})...", 
+      actual_delay,
+      adaptive_delay,
+      base_delay,
+      self.adaptive_reconnect.failure_count()
+    );
+    time::sleep(actual_delay).await;
+    
+    match self.connect().await {
+      Ok(true) => {
+        // Reset adaptive reconnect on successful connection
+        self.adaptive_reconnect.reset();
+        Ok(true)
+      },
+      Ok(false) => Ok(false),
+      Err(e) => Err(e.into()),
+    }
+  }
+  
+  /// Reconnect with a maximum failure limit.
+  /// Returns Err if max failures reached.
+  pub async fn reconnect_with_limit(&mut self, max_failures: u32) -> Result<bool> {
+    if self.adaptive_reconnect.should_give_up(max_failures) {
+      tracing::error!(
+        "AdaptiveReconnect: giving up after {} consecutive failures (max: {})",
+        self.adaptive_reconnect.failure_count(),
+        max_failures
+      );
+      return Err(anyhow::anyhow!("Max reconnection attempts exceeded"));
+    }
+    
+    self.reconnect().await
   }
 }

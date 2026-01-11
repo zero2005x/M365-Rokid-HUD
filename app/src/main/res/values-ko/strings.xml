@@ -138,4 +138,10 @@
     <string name="bluetooth_enable">블루투스 켜기</string>
     <string name="bluetooth_settings">설정 열기</string>
     <string name="bluetooth_gateway_disabled_message">Rokid 안경으로 송신하려면 블루투스를 켜주세요.</string>
+    
+    <!-- Battery Optimization -->
+    <string name="battery_optimization_title">배터리 최적화</string>
+    <string name="battery_optimization_warning">⚠️ 배터리 최적화가 활성화되어 있습니다</string>
+    <string name="battery_optimization_message">Android가 백그라운드에서 앱을 종료하여 안경 연결이 끊어질 수 있습니다. 안정적인 연결을 위해 배터리 최적화를 비활성화하려면 탭하세요.</string>
+    <string name="battery_optimization_exempt">최적화 비활성화</string>
 </resources>

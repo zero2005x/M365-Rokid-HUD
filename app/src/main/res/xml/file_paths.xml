@@ -2,4 +2,6 @@
 <paths>
     <external-path name="logs" path="Android/data/com.m365bleapp/files/logs" />
     <files-path name="internal_logs" path="logs" />
+    <!-- Cache path for exported ZIP files -->
+    <cache-path name="exports" path="exports" />
 </paths>

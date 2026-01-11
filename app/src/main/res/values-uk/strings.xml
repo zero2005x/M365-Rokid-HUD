@@ -138,4 +138,10 @@
     <string name="bluetooth_enable">Увімкнути Bluetooth</string>
     <string name="bluetooth_settings">Відкрити налаштування</string>
     <string name="bluetooth_gateway_disabled_message">Будь ласка, увімкніть Bluetooth для трансляції на окуляри Rokid.</string>
+    
+    <!-- Battery Optimization -->
+    <string name="battery_optimization_title">Оптимізація батареї</string>
+    <string name="battery_optimization_warning">⚠️ Оптимізацію батареї увімкнено</string>
+    <string name="battery_optimization_message">Android може закрити додаток у фоні, що призведе до втрати з\'єднання з окулярами. Натисніть, щоб вимкнути оптимізацію батареї для стабільного з\'єднання.</string>
+    <string name="battery_optimization_exempt">Вимкнути оптимізацію</string>
 </resources>

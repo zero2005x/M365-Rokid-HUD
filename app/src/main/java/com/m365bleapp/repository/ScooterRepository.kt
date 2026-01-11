@@ -32,6 +32,28 @@ sealed class ConnectionState {
     data class Error(val message: String) : ConnectionState()
 }
 
+/**
+ * Tiered Retry Strategy for BLE connection error recovery.
+ * Implements exponential backoff based on consecutive failure count.
+ */
+sealed class RetryStrategy {
+    object Immediate : RetryStrategy()     // Retry immediately
+    data class ShortDelay(val delayMs: Long = 500L) : RetryStrategy()  // Retry after 500ms
+    data class LongDelay(val delayMs: Long = 3000L) : RetryStrategy()  // Retry after 3 seconds
+    object Reconnect : RetryStrategy()     // Full reconnection required
+    
+    companion object {
+        fun fromFailureCount(failures: Int): RetryStrategy {
+            return when {
+                failures < 3 -> Immediate
+                failures < 5 -> ShortDelay()
+                failures < 10 -> LongDelay()
+                else -> Reconnect
+            }
+        }
+    }
+}
+
 data class MotorInfo(
     val speed: Double,
     val battery: Int,
@@ -54,6 +76,18 @@ class ScooterRepository private constructor(private val context: Context) {
                 INSTANCE ?: ScooterRepository(context.applicationContext).also { INSTANCE = it }
             }
         }
+        
+        // === Dynamic Polling Interval (BLE Connection Optimization) ===
+        // Shorter interval while moving for real-time HUD display, longer when idle to save power
+        private const val POLL_INTERVAL_MOVING_MS = 100L    // Speed > threshold
+        private const val POLL_INTERVAL_IDLE_MS = 500L      // Speed <= threshold
+        private const val SPEED_THRESHOLD_KMH = 5.0
+        
+        // === Tiered Query Strategy ===
+        // Different data types have different update frequency requirements
+        private const val TRIP_QUERY_INTERVAL_TICKS = 50    // ~5 seconds at 100ms polling
+        private const val RANGE_QUERY_INTERVAL_TICKS = 100  // ~10 seconds
+        private const val BATTERY_QUERY_INTERVAL_TICKS = 50 // ~5 seconds
     }
     
     private val native = M365Native()
@@ -389,12 +423,14 @@ class ScooterRepository private constructor(private val context: Context) {
         var tick = 0
         var consecutiveFailures = 0
         
-        // LATENCY OPTIMIZATION: Track last update times to prioritize speed updates
-        // Speed (0xB0) is queried more frequently for real-time HUD display
+        // === Dynamic Polling: Track last speed for adaptive interval ===
+        var lastSpeed = 0.0
+        
+        // === Tiered Query Strategy ===
+        // Different data types have different update frequency requirements
+        // Speed (0xB0) is queried most frequently for real-time HUD display
         var lastTripQueryTick = 0
         var lastRangeQueryTick = 0
-        val TRIP_QUERY_INTERVAL = 5   // Query trip info every 5 ticks (~750ms)
-        val RANGE_QUERY_INTERVAL = 10 // Query remaining km every 10 ticks (~1500ms)
         
         while (currentCoroutineContext().isActive && activeGatt != null) {
             try {
@@ -408,18 +444,19 @@ class ScooterRepository private constructor(private val context: Context) {
                 // 0x3A: Trip Info - seconds this trip, meters this trip (param=0x04)
                 // 0x25: Remaining km (param=0x02)
                 // 
-                // LATENCY OPTIMIZATION: Prioritize speed updates!
+                // === Tiered Query Strategy ===
                 // - Query Motor Info (speed) most frequently for real-time HUD
                 // - Query Trip Info less frequently (doesn't change as fast)
                 // - Query Remaining KM even less frequently (changes slowly)
                 
                 val (attribute, payload) = when {
-                    // Always query motor info (speed) by default - highest priority
-                    tick - lastTripQueryTick >= TRIP_QUERY_INTERVAL -> {
+                    // Query trip info at defined interval
+                    tick - lastTripQueryTick >= TRIP_QUERY_INTERVAL_TICKS -> {
                         lastTripQueryTick = tick
                         0x3A to byteArrayOf(0x04) // Trip info: 4 bytes
                     }
-                    tick - lastRangeQueryTick >= RANGE_QUERY_INTERVAL -> {
+                    // Query remaining km at defined interval
+                    tick - lastRangeQueryTick >= RANGE_QUERY_INTERVAL_TICKS -> {
                         lastRangeQueryTick = tick
                         0x25 to byteArrayOf(0x02) // Remaining km: 2 bytes
                     }
@@ -449,6 +486,8 @@ class ScooterRepository private constructor(private val context: Context) {
                          Log.d("ScooterRepo", "Rx Decrypted: ${decrypted.toHex()}")
                          parseTelemetry(decrypted)
                          consecutiveFailures = 0 // Reset on success
+                         // Update last known speed for dynamic polling
+                         _motorInfo.value?.let { lastSpeed = it.speed }
                     } else {
                          Log.w("ScooterRepo", "Decryption failed")
                          consecutiveFailures++
@@ -458,11 +497,26 @@ class ScooterRepository private constructor(private val context: Context) {
                     consecutiveFailures++
                 }
                 
-                // If too many failures, connection is likely lost (scooter powered off?)
-                if (consecutiveFailures >= 10) {
-                    Log.e("ScooterRepo", "CONNECTION HEALTH: Too many consecutive failures ($consecutiveFailures), connection may be lost")
-                    _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
-                    break
+                // === Tiered Retry Strategy ===
+                // Handle failures with progressive backoff
+                val retryStrategy = RetryStrategy.fromFailureCount(consecutiveFailures)
+                when (retryStrategy) {
+                    is RetryStrategy.Reconnect -> {
+                        Log.e("ScooterRepo", "CONNECTION HEALTH: Too many failures ($consecutiveFailures), initiating reconnect")
+                        _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+                        break
+                    }
+                    is RetryStrategy.LongDelay -> {
+                        Log.w("ScooterRepo", "CONNECTION HEALTH: Multiple failures ($consecutiveFailures), waiting ${retryStrategy.delayMs}ms before retry")
+                        delay(retryStrategy.delayMs)
+                    }
+                    is RetryStrategy.ShortDelay -> {
+                        Log.w("ScooterRepo", "CONNECTION HEALTH: Some failures ($consecutiveFailures), waiting ${retryStrategy.delayMs}ms before retry")
+                        delay(retryStrategy.delayMs)
+                    }
+                    is RetryStrategy.Immediate -> {
+                        // Continue with normal polling interval
+                    }
                 }
                 
                 tick++
@@ -477,10 +531,27 @@ class ScooterRepository private constructor(private val context: Context) {
                     _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
                     break
                 }
+                
+                // Apply retry strategy even for exceptions
+                val retryStrategy = RetryStrategy.fromFailureCount(consecutiveFailures)
+                if (retryStrategy is RetryStrategy.LongDelay || retryStrategy is RetryStrategy.ShortDelay) {
+                    val delayMs = when (retryStrategy) {
+                        is RetryStrategy.LongDelay -> retryStrategy.delayMs
+                        is RetryStrategy.ShortDelay -> retryStrategy.delayMs
+                        else -> 0L
+                    }
+                    delay(delayMs)
+                }
             }
-            // LATENCY OPTIMIZATION: Reduced from 500ms to 150ms for faster speed updates
-            // Speed is queried most frequently for real-time HUD display on Rokid glasses
-            delay(150)
+            
+            // === Dynamic Polling Interval ===
+            // Shorter interval while moving for real-time HUD, longer when idle to save power
+            val pollInterval = if (lastSpeed > SPEED_THRESHOLD_KMH) {
+                POLL_INTERVAL_MOVING_MS
+            } else {
+                POLL_INTERVAL_IDLE_MS
+            }
+            delay(pollInterval)
         }
     }
 

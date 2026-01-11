@@ -18,8 +18,10 @@ A modern Android application for connecting to and monitoring Xiaomi/Ninebot M36
 - 🔑 **Token-based Login** - Fast reconnection with saved authentication
 - 📊 **Real-time Telemetry** - Monitor speed, battery, temperature, and more
 - 🕶️ **Rokid AR HUD** - Display telemetry on Rokid glasses via BLE Gateway
+- � **Connection Quality Indicator** - Signal strength and data freshness on HUD
 - 🔒 **Motor Lock/Unlock** - Control scooter lock status remotely
 - 💡 **Tail Light Control** - Toggle tail light on/off
+- 🔋 **Battery Optimization Guide** - Prompt to disable battery optimization for stable connection
 - 🌍 **Multi-language Support** - 11 languages supported
 - 🎨 **Modern UI** - Built with Jetpack Compose and Material3 design
 
@@ -77,9 +79,10 @@ M365-Rokid-HUD/
 │   └── src/main/
 │       └── java/com/m365hud/glass/
 │           ├── MainActivity.kt   # Glass app entry point
-│           ├── BleClient.kt      # BLE client (connects to phone)
+│           ├── BleClient.kt      # BLE client (connects to phone, with session stats)
+│           ├── BleConnectionService.kt # Foreground service for stable connection
 │           ├── GattProfile.kt    # GATT service definitions
-│           ├── HudScreen.kt      # AR HUD display
+│           ├── HudScreen.kt      # AR HUD display (with signal indicator)
 │           ├── DataModels.kt     # Shared data structures
 │           └── ui/               # Compose UI components
 ├── ninebot-ffi/                  # Rust FFI library for Android
@@ -200,7 +203,15 @@ Or directly install to connected device:
 1. Install the `glass-hud` APK on your Rokid glasses
 2. On the phone app, connect to your scooter and enable "Rokid HUD Gateway"
 3. On the glasses, the HUD will automatically scan and connect to the phone Gateway
-4. The HUD displays: Speed, Scooter Battery, Phone Battery, Glasses Battery, and Current Time
+4. The HUD displays: Speed, Scooter Battery, Phone Battery, Glasses Battery, Current Time, and **Signal Quality Indicator**
+
+**HUD Signal Indicators:**
+
+- 📶 = Good signal (RSSI ≥ -80 dBm)
+- ⚠️ = Data stale (no update for 2+ seconds)
+- 📵 = Not connected
+
+> ⚠️ **Important**: If you see the "Battery optimization enabled" warning on the phone app, tap it to disable battery optimization. This prevents Android from killing the app in background.
 
 > ⚠️ **Warning**: Registration will unpair the scooter from other apps (e.g., Mi Home). Only register devices you own.
 

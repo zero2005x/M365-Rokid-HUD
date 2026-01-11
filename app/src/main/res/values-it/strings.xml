@@ -138,4 +138,10 @@
     <string name="bluetooth_enable">Abilita Bluetooth</string>
     <string name="bluetooth_settings">Apri Impostazioni</string>
     <string name="bluetooth_gateway_disabled_message">Abilita il Bluetooth per trasmettere agli Occhiali Rokid.</string>
+    
+    <!-- Battery Optimization -->
+    <string name="battery_optimization_title">Ottimizzazione Batteria</string>
+    <string name="battery_optimization_warning">⚠️ L\'ottimizzazione della batteria è abilitata</string>
+    <string name="battery_optimization_message">Android potrebbe chiudere l\'app in background, causando la perdita di connessione con gli occhiali. Tocca per disabilitare l\'ottimizzazione della batteria per una connessione stabile.</string>
+    <string name="battery_optimization_exempt">Disabilita Ottimizzazione</string>
 </resources>

@@ -18,8 +18,10 @@
 - 🔑 **Token 登录** - 使用已保存的认证快速重新连接
 - 📊 **实时遥测** - 监控速度、电量、温度等数据
 - 🕶️ **Rokid AR HUD** - 通过 BLE 网关在 Rokid 眼镜上显示遥测数据
+- � **连接质量指标** - HUD 上显示信号强度和数据新鲜度
 - 🔒 **电机锁定/解锁** - 远程控制滑板车锁定状态
 - 💡 **尾灯控制** - 开关尾灯
+- 🔋 **电池优化指引** - 引导关闭电池优化以确保稳定连接
 - 🌍 **多语言支持** - 支持 11 种语言
 - 🎨 **现代化界面** - 采用 Jetpack Compose 和 Material3 设计
 
@@ -77,9 +79,10 @@ M365-Rokid-HUD/
 │   └── src/main/
 │       └── java/com/m365hud/glass/
 │           ├── MainActivity.kt   # 眼镜应用程序入口点
-│           ├── BleClient.kt      # BLE 客户端（连接手机）
+│           ├── BleClient.kt      # BLE 客户端（连接手机，含会话统计）
+│           ├── BleConnectionService.kt # 前景服务，确保稳定连接
 │           ├── GattProfile.kt    # GATT 服务定义
-│           ├── HudScreen.kt      # AR HUD 显示界面
+│           ├── HudScreen.kt      # AR HUD 显示界面（含信号指标）
 │           ├── DataModels.kt     # 共用数据结构
 │           └── ui/               # Compose UI 组件
 ├── ninebot-ffi/                  # Android 用 Rust FFI 库
@@ -200,7 +203,15 @@ cargo ndk -t arm64-v8a -t armeabi-v7a -o ../app/src/main/jniLibs build --release
 1. 在 Rokid 眼镜上安装 `glass-hud` APK
 2. 在手机 App 上连接滑板车，并启用「Rokid HUD 网关」
 3. 眼镜上的 HUD 将自动扫描并连接到手机网关
-4. HUD 显示内容：速度、滑板车电量、手机电量、眼镜电量、当前时间
+4. HUD 显示内容：速度、滑板车电量、手机电量、眼镜电量、当前时间、**连接质量指标**
+
+**HUD 信号指标说明：**
+
+- 📶 = 信号良好（RSSI ≥ -80 dBm）
+- ⚠️ = 数据过时（超过 2 秒未更新）
+- 📵 = 未连接
+
+> ⚠️ **重要**：若手机 App 显示「电池优化已开启」警告，请点击关闭电池优化，防止 Android 在后台关闭 App。
 
 > ⚠️ **警告**：注册将使滑板车与其他应用程序（如米家）解除配对。请只注册您拥有的设备。
 

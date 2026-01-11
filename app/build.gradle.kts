@@ -21,12 +21,22 @@ android {
         applicationId = "com.m365bleapp"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 4
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+        ndk {
+            // 明確指定支援的架構，包含 64 位元 (arm64-v8a)
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+        // 支援 16 KB 記憶體分頁大小 (Google Play 新要求)
+        packaging {
+            jniLibs {
+                useLegacyPackaging = false
+            }
         }
     }
     signingConfigs {
@@ -42,6 +52,7 @@ android {
         release {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
+            isDebuggable = false
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

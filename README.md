@@ -5,11 +5,20 @@
 </p>
 
 <p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.m365bleapp">
+    <img src="https://img.shields.io/badge/Google%20Play-Download-brightgreen?logo=google-play&logoColor=white" alt="Google Play">
+  </a>
   <img src="https://img.shields.io/badge/Android-29+-green?logo=android" alt="Android">
   <img src="https://img.shields.io/badge/Kotlin-1.9-purple?logo=kotlin" alt="Kotlin">
   <img src="https://img.shields.io/badge/Jetpack%20Compose-Material3-blue" alt="Jetpack Compose">
   <img src="https://img.shields.io/badge/Rust-FFI-orange?logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/Rokid-AR%20Glasses-00E5FF" alt="Rokid AR">
+</p>
+
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.m365bleapp">
+    <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="80">
+  </a>
 </p>
 
 A modern Android application for connecting to and monitoring Xiaomi/Ninebot M365 electric scooters via Bluetooth Low Energy (BLE), featuring native support for **Rokid AR glasses** as a Heads-Up Display (HUD).

@@ -1,11 +1,23 @@
-# M365 蓝牙应用
+# M365 Rokid HUD
 
-![Android](https://img.shields.io/badge/Android-29+-green?logo=android)
-![Kotlin](https://img.shields.io/badge/Kotlin-1.9-purple?logo=kotlin)
-![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Material3-blue)
-![Rust](https://img.shields.io/badge/Rust-FFI-orange?logo=rust)
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.m365bleapp">
+    <img src="https://img.shields.io/badge/Google%20Play-下载-brightgreen?logo=google-play&logoColor=white" alt="Google Play">
+  </a>
+  <img src="https://img.shields.io/badge/Android-29+-green?logo=android" alt="Android">
+  <img src="https://img.shields.io/badge/Kotlin-1.9-purple?logo=kotlin" alt="Kotlin">
+  <img src="https://img.shields.io/badge/Jetpack%20Compose-Material3-blue" alt="Jetpack Compose">
+  <img src="https://img.shields.io/badge/Rust-FFI-orange?logo=rust" alt="Rust">
+  <img src="https://img.shields.io/badge/Rokid-AR%20眼镜-00E5FF" alt="Rokid AR">
+</p>
 
-一款现代化的 Android 应用程序，用于通过蓝牙低功耗（BLE）连接和监控小米/九号 M365 电动滑板车。
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.m365bleapp">
+    <img src="https://play.google.com/intl/zh-CN/badges/static/images/badges/zh-cn_badge_web_generic.png" alt="在 Google Play 上获取" height="80">
+  </a>
+</p>
+
+一款现代化的 Android 应用程序，用于通过蓝牙低功耗（BLE）连接和监控小米/九号 M365 电动滑板车，并支持 **Rokid AR 眼镜** 作为抬头显示器（HUD）。
 
 > 📖 **[English](../README.md)** | **[繁體中文](README_zh-TW.md)**
 

@@ -113,6 +113,18 @@
     <string name="refresh">Actualizar</string>
     <string name="view_logs">Ver Registros</string>
 
+    <!-- Log Export -->
+    <string name="export_logs">Exportar Registros</string>
+    <string name="export_all">Exportar Todo</string>
+    <string name="export_logs_title">Exportar Todos los Registros</string>
+    <string name="export_logs_message">¿Exportar %1$d archivos de registro (%2$s) a un archivo ZIP y compartir en almacenamiento en la nube?</string>
+    <string name="export_and_share">Exportar y Compartir</string>
+    <string name="share_logs_to">Compartir registros en…</string>
+    <string name="export_failed">Error de exportación: %1$s</string>
+    <string name="export_share_failed">Error al crear intento de compartir</string>
+    <string name="logs_summary">Archivos de Registro</string>
+    <string name="logs_count_size">%1$d archivos • %2$s</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">Iniciando sesión…</string>
     <string name="state_press_power_button">🔥 ¡Presiona el botón de encendido del patinete! 🔥</string>

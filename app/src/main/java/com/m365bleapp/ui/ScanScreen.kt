@@ -40,6 +40,7 @@ import com.m365bleapp.gateway.GatewayService
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
 import com.m365bleapp.utils.BluetoothHelper
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
@@ -264,6 +265,9 @@ fun ScanScreen(
                         devicesMap[mac] = scannedDevice
                     }
                 }
+        } catch (e: CancellationException) {
+            // Normal cancellation when navigating away from scan screen - not an error
+            Log.d("ScanScreen", "Scan cancelled (navigating away)")
         } catch (e: Exception) {
             Log.e("ScanScreen", "Scan exception: ${e.message}")
             scanError = e.message

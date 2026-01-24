@@ -113,6 +113,18 @@
     <string name="refresh">Actualiser</string>
     <string name="view_logs">Voir les Journaux</string>
 
+    <!-- Log Export -->
+    <string name="export_logs">Exporter les Journaux</string>
+    <string name="export_all">Tout Exporter</string>
+    <string name="export_logs_title">Exporter Tous les Journaux</string>
+    <string name="export_logs_message">Exporter %1$d fichiers journaux (%2$s) vers une archive ZIP et partager vers le stockage cloud ?</string>
+    <string name="export_and_share">Exporter et Partager</string>
+    <string name="share_logs_to">Partager les journaux vers…</string>
+    <string name="export_failed">Échec de l\'exportation : %1$s</string>
+    <string name="export_share_failed">Échec de création de l\'intention de partage</string>
+    <string name="logs_summary">Fichiers Journaux</string>
+    <string name="logs_count_size">%1$d fichiers • %2$s</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">Connexion…</string>
     <string name="state_press_power_button">🔥 Appuyez sur le bouton d\'alimentation de la trottinette ! 🔥</string>

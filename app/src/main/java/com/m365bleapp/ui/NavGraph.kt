@@ -1,6 +1,8 @@
 package com.m365bleapp.ui
 
 import android.app.Activity
+import android.content.Intent
+import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
@@ -55,12 +57,26 @@ fun NavHostContainer(repository: ScooterRepository) {
             LanguageScreen(
                 onBack = { navController.popBackStack() },
                 onLanguageChanged = {
-                    // Safely restart the activity to apply language change
-                    // First disconnect BLE to properly release resources
-                    repository.disconnect()
-                    
+                    // Restart the activity to apply language change
+                    // Do NOT disconnect BLE here - the GatewayService needs
+                    // the scooter connection to remain active for glasses HUD
+                    // 
+                    // Note: Using finish() + startActivity() instead of recreate()
+                    // because some devices (like Rokid glasses) throw ClassCastException
+                    // in ActivityImpl.checkAccessControl when using recreate()
                     val activity = context as? Activity
-                    activity?.recreate()
+                    activity?.let {
+                        val intent = it.intent
+                        it.finish()
+                        it.startActivity(intent)
+                        // No animation for seamless transition
+                        @Suppress("DEPRECATION")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            it.overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+                        } else {
+                            it.overridePendingTransition(0, 0)
+                        }
+                    }
                 }
             )
         }

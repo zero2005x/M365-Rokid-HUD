@@ -113,6 +113,18 @@
     <string name="refresh">Aggiorna</string>
     <string name="view_logs">Visualizza Log</string>
 
+    <!-- Log Export -->
+    <string name="export_logs">Esporta Log</string>
+    <string name="export_all">Esporta Tutto</string>
+    <string name="export_logs_title">Esporta Tutti i Log</string>
+    <string name="export_logs_message">Esportare %1$d file log (%2$s) in un archivio ZIP e condividere su cloud storage?</string>
+    <string name="export_and_share">Esporta e Condividi</string>
+    <string name="share_logs_to">Condividi log su…</string>
+    <string name="export_failed">Esportazione fallita: %1$s</string>
+    <string name="export_share_failed">Impossibile creare intent di condivisione</string>
+    <string name="logs_summary">File Log</string>
+    <string name="logs_count_size">%1$d file • %2$s</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">Accesso in corso…</string>
     <string name="state_press_power_button">🔥 Premi il pulsante di accensione del monopattino! 🔥</string>

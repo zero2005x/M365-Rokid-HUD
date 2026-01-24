@@ -113,6 +113,18 @@
     <string name="refresh">Обновить</string>
     <string name="view_logs">Просмотр логов</string>
 
+    <!-- Log Export -->
+    <string name="export_logs">Экспорт логов</string>
+    <string name="export_all">Экспортировать всё</string>
+    <string name="export_logs_title">Экспорт всех логов</string>
+    <string name="export_logs_message">Экспортировать %1$d файлов логов (%2$s) в ZIP-архив и поделиться в облачное хранилище?</string>
+    <string name="export_and_share">Экспортировать и поделиться</string>
+    <string name="share_logs_to">Поделиться логами в…</string>
+    <string name="export_failed">Ошибка экспорта: %1$s</string>
+    <string name="export_share_failed">Не удалось создать интент для обмена</string>
+    <string name="logs_summary">Файлы логов</string>
+    <string name="logs_count_size">%1$d файлов • %2$s</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">Вход…</string>
     <string name="state_press_power_button">🔥 Нажмите кнопку питания самоката! 🔥</string>

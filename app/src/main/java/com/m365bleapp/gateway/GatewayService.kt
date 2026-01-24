@@ -208,10 +208,14 @@ class GatewayService : Service() {
         // Get shared repository instance (singleton pattern)
         repository = ScooterRepository.getInstance(applicationContext)
         
+        Log.i(TAG, "Starting telemetry observer, scooter connected: ${repository?.connectionState?.value is ConnectionState.Ready}")
+        
         // Observe motor info and push to BLE
         scope.launch {
+            Log.i(TAG, "Telemetry observer coroutine started, collecting motorInfo...")
             repository?.motorInfo?.collectLatest { info ->
                 if (info != null) {
+                    Log.d(TAG, "MotorInfo received: speed=${info.speed}, battery=${info.battery}, subscribers=${gattServer?.getConnectedDeviceCount() ?: 0}")
                     val connState = when (repository?.connectionState?.value) {
                         is ConnectionState.Disconnected -> M365HudGattProfile.STATE_DISCONNECTED
                         is ConnectionState.Connecting, is ConnectionState.Handshaking -> M365HudGattProfile.STATE_CONNECTING
@@ -239,6 +243,84 @@ class GatewayService : Service() {
                     } catch (e: SecurityException) {
                         Log.e(TAG, "Security exception updating telemetry", e)
                     }
+                } else {
+                    // Send "disconnected" state telemetry so glasses know gateway is alive
+                    // but scooter is not connected. This prevents glasses from detecting
+                    // "stale data" and constantly reconnecting.
+                    Log.d(TAG, "MotorInfo is null - sending disconnected state to glasses")
+                    try {
+                        gattServer?.updateTelemetry(
+                            speedKmh = 0.0,
+                            scooterBattery = 0,
+                            tempC = 0.0,
+                            totalMileageM = 0L,
+                            avgSpeedKmh = 0.0,
+                            remainingKm = 0.0,
+                            connectionState = M365HudGattProfile.STATE_DISCONNECTED,
+                            tripMeters = 0,
+                            tripSeconds = 0
+                        )
+                    } catch (e: SecurityException) {
+                        Log.e(TAG, "Security exception sending disconnected state", e)
+                    }
+                }
+            }
+        }
+        
+        // === HEARTBEAT: Keep glasses connection alive ===
+        // StateFlow only emits on value CHANGE, so when scooter is idle (speed=0 steady),
+        // no updates are emitted. This heartbeat ensures glasses receive regular updates
+        // to prevent "stale data" detection and reconnection loops.
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(1000L) // Send every 1 second
+                
+                // Only send if glasses are connected
+                if (gattServer?.isDeviceConnected() != true) {
+                    continue
+                }
+                
+                val info = repository?.motorInfo?.value
+                val connState = when (repository?.connectionState?.value) {
+                    is ConnectionState.Disconnected -> M365HudGattProfile.STATE_DISCONNECTED
+                    is ConnectionState.Connecting, is ConnectionState.Handshaking -> M365HudGattProfile.STATE_CONNECTING
+                    is ConnectionState.Ready -> M365HudGattProfile.STATE_READY
+                    is ConnectionState.Error -> M365HudGattProfile.STATE_DISCONNECTED
+                    else -> M365HudGattProfile.STATE_DISCONNECTED
+                }
+                
+                try {
+                    if (info != null) {
+                        // Scooter connected: send current telemetry as heartbeat
+                        gattServer?.updateTelemetry(
+                            speedKmh = info.speed,
+                            scooterBattery = info.battery,
+                            tempC = info.temp,
+                            totalMileageM = (info.mileage * 1000).toLong(),
+                            avgSpeedKmh = info.avgSpeed,
+                            remainingKm = info.remainingKm,
+                            connectionState = connState,
+                            tripMeters = info.tripMeters,
+                            tripSeconds = info.tripSeconds
+                        )
+                        Log.d(TAG, "Heartbeat: speed=${info.speed}, battery=${info.battery}")
+                    } else {
+                        // Scooter not connected: send disconnected state
+                        gattServer?.updateTelemetry(
+                            speedKmh = 0.0,
+                            scooterBattery = 0,
+                            tempC = 0.0,
+                            totalMileageM = 0L,
+                            avgSpeedKmh = 0.0,
+                            remainingKm = 0.0,
+                            connectionState = connState,
+                            tripMeters = 0,
+                            tripSeconds = 0
+                        )
+                        Log.d(TAG, "Heartbeat: scooter disconnected (state: $connState)")
+                    }
+                } catch (e: SecurityException) {
+                    Log.e(TAG, "Security exception in heartbeat", e)
                 }
             }
         }

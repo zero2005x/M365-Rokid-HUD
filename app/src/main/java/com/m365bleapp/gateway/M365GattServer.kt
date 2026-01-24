@@ -71,12 +71,11 @@ class M365GattServer(
         }
         
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-            Log.d(TAG, "Connection state changed: ${device.address} -> $newState")
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 subscribedDevices.remove(device.address)
-                Log.d(TAG, "Device disconnected: ${device.address}")
+                Log.i(TAG, "Device DISCONNECTED: ${device.address}, remaining subscribers: ${subscribedDevices.size}")
             } else if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.d(TAG, "Device connected: ${device.address}")
+                Log.i(TAG, "Device CONNECTED: ${device.address}, waiting for notification subscription...")
             }
         }
         
@@ -91,11 +90,11 @@ class M365GattServer(
         ) {
             if (descriptor.uuid == M365HudGattProfile.CCCD_UUID) {
                 if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
-                    Log.d(TAG, "Notifications enabled for ${device.address}")
                     subscribedDevices[device.address] = device
+                    Log.i(TAG, "Notifications ENABLED for ${device.address}, total subscribers: ${subscribedDevices.size}")
                 } else if (value.contentEquals(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE)) {
-                    Log.d(TAG, "Notifications disabled for ${device.address}")
                     subscribedDevices.remove(device.address)
+                    Log.i(TAG, "Notifications DISABLED for ${device.address}, total subscribers: ${subscribedDevices.size}")
                 }
                 
                 if (responseNeeded) {

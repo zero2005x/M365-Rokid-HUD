@@ -26,7 +26,7 @@ class BleClient(private val context: Context) {
     
     companion object {
         private const val TAG = "BleClient"
-        private const val SCAN_TIMEOUT_MS = 45000L  // Extended from 30s to 45s for more reliable scanning
+        private const val SCAN_TIMEOUT_MS = 30000L  // 30 seconds per scan cycle (service will retry)
         
         // LATENCY MONITORING: Watchdog timeout for stale data detection
         // If no telemetry received for this long, consider connection stale

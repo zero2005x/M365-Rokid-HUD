@@ -59,6 +59,11 @@ class MainActivity : ComponentActivity() {
     
     override fun onDestroy() {
         super.onDestroy()
-        repository.disconnect()
+        // Only disconnect if the activity is actually finishing (user pressed back, etc.)
+        // Do NOT disconnect on configuration changes or activity recreation
+        // because the GatewayService needs the scooter connection to remain active
+        if (isFinishing) {
+            repository.disconnect()
+        }
     }
 }

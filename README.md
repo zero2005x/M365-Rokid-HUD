@@ -9,7 +9,7 @@
     <img src="https://img.shields.io/badge/Google%20Play-Download-brightgreen?logo=google-play&logoColor=white" alt="Google Play">
   </a>
   <img src="https://img.shields.io/badge/Android-29+-green?logo=android" alt="Android">
-  <img src="https://img.shields.io/badge/Kotlin-1.9-purple?logo=kotlin" alt="Kotlin">
+  <img src="https://img.shields.io/badge/Kotlin-2.2-purple?logo=kotlin" alt="Kotlin">
   <img src="https://img.shields.io/badge/Jetpack%20Compose-Material3-blue" alt="Jetpack Compose">
   <img src="https://img.shields.io/badge/Rust-FFI-orange?logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/Rokid-AR%20Glasses-00E5FF" alt="Rokid AR">
@@ -109,14 +109,12 @@ M365-Rokid-HUD/
 │   └── src/
 │       ├── lib.rs                # Library entry point
 │       ├── connection.rs         # BLE connection handling
-│       ├── clone_connection.rs   # Connection cloning utilities
 │       ├── protocol.rs           # M365 protocol implementation
 │       ├── mi_crypto.rs          # ECDH, HKDF, AES-CCM encryption
 │       ├── login.rs              # Login flow implementation
 │       ├── register.rs           # Registration flow
 │       ├── scanner.rs            # BLE device scanning
 │       ├── consts.rs             # Protocol constants
-│       ├── android_api.rs        # Android-specific API
 │       └── session/              # Session management
 └── doc/                          # Documentation
     ├── BLE_PROTOCOL_GUIDE.md     # Detailed protocol documentation
@@ -147,14 +145,16 @@ The app implements the Xiaomi M365 encrypted BLE protocol:
 ### Android App
 
 - **Minimum SDK**: Android 10 (API 29)
-- **Target SDK**: Android 15 (API 35)
+- **Target SDK**: Android 16 (API 36)
 - **Permissions**: Bluetooth, Location (for BLE scanning)
 
 ### Build Environment
 
-- Android Studio Iguana or later
-- **Java 17** (JDK 17+)
-- Kotlin 1.9.22+
+- Android Studio Ladybug or later
+- **Java 21** (JDK 21+)
+- Kotlin 2.2.10+ (with Compose compiler plugin)
+- Gradle 9.3.0
+- Android Gradle Plugin (AGP) 9.0.0
 - Rust toolchain (for building native libraries)
 - Android NDK
 

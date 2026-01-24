@@ -112,7 +112,19 @@
     <string name="delete">删除</string>
     <string name="refresh">刷新</string>
     <string name="view_logs">查看日志</string>
-    
+
+    <!-- Log Export -->
+    <string name="export_logs">导出日志</string>
+    <string name="export_all">导出全部</string>
+    <string name="export_logs_title">导出所有日志</string>
+    <string name="export_logs_message">将 %1$d 个日志文件（%2$s）导出为 ZIP 压缩包并分享至云存储？</string>
+    <string name="export_and_share">导出并分享</string>
+    <string name="share_logs_to">分享日志至…</string>
+    <string name="export_failed">导出失败：%1$s</string>
+    <string name="export_share_failed">无法创建分享意图</string>
+    <string name="logs_summary">日志文件</string>
+    <string name="logs_count_size">%1$d 个文件 • %2$s</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">登录中…</string>
     <string name="state_press_power_button">🔥 请按下滑板车电源键！🔥</string>

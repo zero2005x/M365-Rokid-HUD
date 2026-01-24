@@ -5,7 +5,7 @@
     <img src="https://img.shields.io/badge/Google%20Play-下载-brightgreen?logo=google-play&logoColor=white" alt="Google Play">
   </a>
   <img src="https://img.shields.io/badge/Android-29+-green?logo=android" alt="Android">
-  <img src="https://img.shields.io/badge/Kotlin-1.9-purple?logo=kotlin" alt="Kotlin">
+  <img src="https://img.shields.io/badge/Kotlin-2.2-purple?logo=kotlin" alt="Kotlin">
   <img src="https://img.shields.io/badge/Jetpack%20Compose-Material3-blue" alt="Jetpack Compose">
   <img src="https://img.shields.io/badge/Rust-FFI-orange?logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/Rokid-AR%20眼镜-00E5FF" alt="Rokid AR">
@@ -105,14 +105,12 @@ M365-Rokid-HUD/
 │   └── src/
 │       ├── lib.rs                # 库入口点
 │       ├── connection.rs         # BLE 连接处理
-│       ├── clone_connection.rs   # 连接克隆工具
 │       ├── protocol.rs           # M365 协议实现
 │       ├── mi_crypto.rs          # ECDH、HKDF、AES-CCM 加密
 │       ├── login.rs              # 登录流程实现
 │       ├── register.rs           # 注册流程
 │       ├── scanner.rs            # BLE 设备扫描
 │       ├── consts.rs             # 协议常量
-│       ├── android_api.rs        # Android 专用 API
 │       └── session/              # 会话管理
 └── doc/                          # 文档
     ├── BLE_PROTOCOL_GUIDE.md     # 详细协议文档
@@ -143,14 +141,16 @@ M365-Rokid-HUD/
 ### Android 应用
 
 - **最低 SDK**：Android 10（API 29）
-- **目标 SDK**：Android 15（API 35）
+- **目标 SDK**：Android 16（API 36）
 - **权限**：蓝牙、位置（用于 BLE 扫描）
 
 ### 构建环境
 
-- Android Studio Iguana 或更新版本
-- **Java 17**（JDK 17+）
-- Kotlin 1.9.22+
+- Android Studio Ladybug 或更新版本
+- **Java 21**（JDK 21+）
+- Kotlin 2.2.10+（含 Compose 编译器插件）
+- Gradle 9.3.0
+- Android Gradle Plugin（AGP）9.0.0
 - Rust 工具链（用于构建原生库）
 - Android NDK
 

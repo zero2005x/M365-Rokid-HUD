@@ -33,6 +33,9 @@ class BleConnectionService : Service() {
         
         // Wake lock timeout - 4 hours max to prevent battery drain
         private const val WAKE_LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
+        
+        // Retry scan after this delay when scan fails to find gateway
+        private const val SCAN_RETRY_DELAY_MS = 5000L
     }
     
     private var bleClient: BleClient? = null
@@ -195,6 +198,18 @@ class BleConnectionService : Service() {
                 }
                 updateNotification(statusText)
                 Log.d(TAG, "Connection state: $statusText")
+                
+                // Auto-retry scan when in Error state (e.g., scan timeout, gateway not found)
+                // This handles the case where glasses start scanning before phone starts advertising
+                if (state is BleClient.ConnectionState.Error) {
+                    Log.i(TAG, "Connection error detected, will retry scan in ${SCAN_RETRY_DELAY_MS}ms...")
+                    delay(SCAN_RETRY_DELAY_MS)
+                    // Only retry if still in error state (not manually reconnected)
+                    if (bleClient?.connectionState?.value is BleClient.ConnectionState.Error) {
+                        Log.i(TAG, "Retrying scan after error...")
+                        bleClient?.startScan()
+                    }
+                }
             }
         }
     }

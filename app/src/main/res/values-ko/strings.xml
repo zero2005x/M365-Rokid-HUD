@@ -113,6 +113,18 @@
     <string name="refresh">새로고침</string>
     <string name="view_logs">로그 보기</string>
 
+    <!-- Log Export -->
+    <string name="export_logs">로그 내보내기</string>
+    <string name="export_all">전체 내보내기</string>
+    <string name="export_logs_title">모든 로그 내보내기</string>
+    <string name="export_logs_message">%1$d개의 로그 파일(%2$s)을 ZIP 아카이브로 내보내고 클라우드 저장소에 공유하시겠습니까?</string>
+    <string name="export_and_share">내보내고 공유</string>
+    <string name="share_logs_to">로그 공유 대상…</string>
+    <string name="export_failed">내보내기 실패: %1$s</string>
+    <string name="export_share_failed">공유 인텐트를 생성할 수 없습니다</string>
+    <string name="logs_summary">로그 파일</string>
+    <string name="logs_count_size">%1$d개 파일 • %2$s</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">로그인 중…</string>
     <string name="state_press_power_button">🔥 스쿠터 전원 버튼을 누르세요! 🔥</string>

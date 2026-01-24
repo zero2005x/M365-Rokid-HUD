@@ -113,6 +113,18 @@
     <string name="refresh">更新</string>
     <string name="view_logs">ログを表示</string>
 
+    <!-- Log Export -->
+    <string name="export_logs">ログをエクスポート</string>
+    <string name="export_all">すべてエクスポート</string>
+    <string name="export_logs_title">すべてのログをエクスポート</string>
+    <string name="export_logs_message">%1$d 個のログファイル（%2$s）をZIPアーカイブにエクスポートしてクラウドストレージに共有しますか？</string>
+    <string name="export_and_share">エクスポートして共有</string>
+    <string name="share_logs_to">ログを共有…</string>
+    <string name="export_failed">エクスポート失敗：%1$s</string>
+    <string name="export_share_failed">共有インテントを作成できませんでした</string>
+    <string name="logs_summary">ログファイル</string>
+    <string name="logs_count_size">%1$d ファイル • %2$s</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">ログイン中…</string>
     <string name="state_press_power_button">🔥 スクーターの電源ボタンを押してください！🔥</string>

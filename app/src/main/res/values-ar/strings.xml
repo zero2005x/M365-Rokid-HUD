@@ -113,6 +113,18 @@
     <string name="refresh">تحديث</string>
     <string name="view_logs">عرض السجلات</string>
 
+    <!-- Log Export -->
+    <string name="export_logs">تصدير السجلات</string>
+    <string name="export_all">تصدير الكل</string>
+    <string name="export_logs_title">تصدير جميع السجلات</string>
+    <string name="export_logs_message">تصدير %1$d ملفات سجل (%2$s) إلى أرشيف ZIP ومشاركتها على التخزين السحابي؟</string>
+    <string name="export_and_share">تصدير ومشاركة</string>
+    <string name="share_logs_to">مشاركة السجلات إلى…</string>
+    <string name="export_failed">فشل التصدير: %1$s</string>
+    <string name="export_share_failed">فشل إنشاء نية المشاركة</string>
+    <string name="logs_summary">ملفات السجلات</string>
+    <string name="logs_count_size">%1$d ملفات • %2$s</string>
+
     <!-- Connection States -->
     <string name="state_logging_in">جارٍ تسجيل الدخول…</string>
     <string name="state_press_power_button">🔥 اضغط على زر الطاقة في السكوتر! 🔥</string>

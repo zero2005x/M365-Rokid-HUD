@@ -14,8 +14,8 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // Rokid Maven Repository - 官方 SDK 來源
-        // 如需使用 CXR-M SDK 進行官方眼鏡連線，請取消下方註解
+        // Rokid Maven Repository - Official SDK source
+        // Uncomment below to use CXR-M SDK for official glasses connection
         // maven { url = uri("https://maven.rokid.com/repository/maven-public/") }
         google()
         mavenCentral()

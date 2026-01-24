@@ -684,14 +684,23 @@ class ScooterRepository private constructor(private val context: Context) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
-            Log.d("ScooterRepo", "Turning tail light on")
+            Log.d("ScooterRepo", "Turning tail light on (0x7D = 0x0002)")
             val packet = buildPacket(
                 dest = 0x20.toByte(),    // Master to Motor
                 rw = 0x03.toByte(),      // Write
                 attr = 0x7D.toByte(),    // TailLight address
                 payload = byteArrayOf(0x02, 0x00)  // Value 0x0002 (little-endian: LSB first)
             )
+            Log.d("ScooterRepo", "Tail light packet: ${packet.toHex()}")
             sendCommand(packet, "Tail Light On")
+            
+            // Wait for scooter to process the command
+            delay(200)
+            
+            // Read back the state to confirm
+            Log.d("ScooterRepo", "Reading tail light state to confirm...")
+            readLightState()
+            
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e("ScooterRepo", "Light on failed: ${e.message}", e)
@@ -710,14 +719,23 @@ class ScooterRepository private constructor(private val context: Context) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
-            Log.d("ScooterRepo", "Turning tail light off")
+            Log.d("ScooterRepo", "Turning tail light off (0x7D = 0x0000)")
             val packet = buildPacket(
                 dest = 0x20.toByte(),    // Master to Motor
                 rw = 0x03.toByte(),      // Write
                 attr = 0x7D.toByte(),    // TailLight address
                 payload = byteArrayOf(0x00, 0x00)  // Value 0x0000 = Off
             )
+            Log.d("ScooterRepo", "Tail light packet: ${packet.toHex()}")
             sendCommand(packet, "Tail Light Off")
+            
+            // Wait for scooter to process the command
+            delay(200)
+            
+            // Read back the state to confirm
+            Log.d("ScooterRepo", "Reading tail light state to confirm...")
+            readLightState()
+            
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e("ScooterRepo", "Light off failed: ${e.message}", e)
@@ -1059,13 +1077,22 @@ class ScooterRepository private constructor(private val context: Context) {
      * Data format: u16 LE - 0x0000=off, 0x0001=on brake, 0x0002=always on
      */
     private fun parseTailLightState(data: ByteArray) {
+        Log.i("ScooterRepo", "=== TAIL LIGHT RESPONSE RECEIVED ===")
+        Log.i("ScooterRepo", "Raw data (${data.size} bytes): ${data.toHex()}")
+        
         if (data.size < 2) {
             Log.w("ScooterRepo", "Tail light data too short: ${data.size} bytes")
             return
         }
         val value = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        val stateDesc = when (value) {
+            0x0000 -> "OFF"
+            0x0001 -> "ON (brake only)"
+            0x0002 -> "ALWAYS ON"
+            else -> "UNKNOWN ($value)"
+        }
         val isOn = value > 0  // 0x0001 or 0x0002 means light is on
-        Log.d("ScooterRepo", "Tail light state: 0x${value.toString(16)} -> isOn=$isOn")
+        Log.i("ScooterRepo", "Tail light state: 0x${value.toString(16)} = $stateDesc, isOn=$isOn")
         _isLightOn.value = isOn
     }
     
@@ -1263,6 +1290,9 @@ class ScooterRepository private constructor(private val context: Context) {
             return
         }
         
+        // Track if we had an actual connection
+        val hadConnection = activeGatt != null
+        
         // Important: Must call disconnect() BEFORE close() to properly release
         // the BLE connection and clear Android's connection cache.
         // Just calling close() leaves the device in a cached state,
@@ -1288,7 +1318,12 @@ class ScooterRepository private constructor(private val context: Context) {
              sessionPtr = 0
         }
         
-        Log.i("ScooterRepo", "Disconnected and cleaned up BLE resources")
+        // Only log if we actually had a connection to disconnect
+        if (hadConnection) {
+            Log.i("ScooterRepo", "Disconnected and cleaned up BLE resources")
+        } else {
+            Log.d("ScooterRepo", "disconnect() called but no active connection")
+        }
     }
     
     fun getLogs(): List<java.io.File> = logger.getLogFiles()

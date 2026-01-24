@@ -15,23 +15,80 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+// ============================================================
+// M365 Rokid HUD - Original Theme System
+// Custom brand colors for Material 3
+// ============================================================
+
+private val M365DarkColorScheme = darkColorScheme(
+    primary = ScooterCyan,
+    onPrimary = NeutralWhite,
+    primaryContainer = ScooterCyanDark,
+    onPrimaryContainer = ScooterCyanLight,
+    
+    secondary = EnergyGreen,
+    onSecondary = NeutralWhite,
+    secondaryContainer = EnergyGreenDark,
+    onSecondaryContainer = EnergyGreenLight,
+    
+    tertiary = CautionAmber,
+    onTertiary = NeutralDark,
+    tertiaryContainer = CautionAmberDark,
+    onTertiaryContainer = CautionAmberLight,
+    
+    error = DangerRed,
+    onError = NeutralWhite,
+    errorContainer = DangerRedDark,
+    onErrorContainer = DangerRedLight,
+    
+    background = SurfaceDark,
+    onBackground = NeutralLight,
+    surface = SurfaceDark,
+    onSurface = NeutralLight,
+    surfaceVariant = SurfaceVariantDark,
+    onSurfaceVariant = NeutralMedium,
+    
+    outline = NeutralMedium,
+    outlineVariant = CardDark
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
+private val M365LightColorScheme = lightColorScheme(
+    primary = ScooterCyanDark,
+    onPrimary = NeutralWhite,
+    primaryContainer = ScooterCyanLight,
+    onPrimaryContainer = ScooterCyanDark,
+    
+    secondary = EnergyGreenDark,
+    onSecondary = NeutralWhite,
+    secondaryContainer = EnergyGreenLight,
+    onSecondaryContainer = EnergyGreenDark,
+    
+    tertiary = CautionAmberDark,
+    onTertiary = NeutralWhite,
+    tertiaryContainer = CautionAmberLight,
+    onTertiaryContainer = CautionAmberDark,
+    
+    error = DangerRed,
+    onError = NeutralWhite,
+    errorContainer = DangerRedLight,
+    onErrorContainer = DangerRedDark,
+    
+    background = SurfaceLight,
+    onBackground = NeutralDark,
+    surface = SurfaceLight,
+    onSurface = NeutralDark,
+    surfaceVariant = SurfaceVariantLight,
+    onSurfaceVariant = NeutralMedium,
+    
+    outline = NeutralMedium,
+    outlineVariant = SurfaceVariantLight
 )
 
 @Composable
 fun M365BleAppTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    // Disable dynamic color for brand consistency
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
@@ -39,22 +96,22 @@ fun M365BleAppTheme(
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        darkTheme -> M365DarkColorScheme
+        else -> M365LightColorScheme
     }
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            @Suppress("DEPRECATION")
-            window.statusBarColor = colorScheme.primary.toArgb()
+            window.statusBarColor = colorScheme.surface.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = androidx.compose.material3.Typography(),
+        typography = M365Typography,
         content = content
     )
 }
+

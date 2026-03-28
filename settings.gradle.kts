@@ -14,9 +14,12 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // Rokid Maven Repository - Official SDK source
-        // Uncomment below to use CXR-M SDK for official glasses connection
-        // maven { url = uri("https://maven.rokid.com/repository/maven-public/") }
+        // Rokid Maven Repository - Official SDK source for CXR-M glasses connection
+        maven { 
+            url = uri("https://maven.rokid.com/repository/maven-public/") 
+            // Allow insecure protocol if needed
+            isAllowInsecureProtocol = true
+        }
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }

@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.m365bleapp.R
 import com.m365bleapp.gateway.GatewayService
+import com.m365bleapp.gateway.wifi.WifiGatewayServer
+import com.m365bleapp.gateway.wifi.WifiGatewayService
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
 import com.m365bleapp.utils.BluetoothHelper
@@ -60,15 +62,27 @@ fun DashboardScreen(
     var glassesBattery by remember { mutableIntStateOf(-1) }
     var glassesConnected by remember { mutableStateOf(GatewayService.isGlassesConnected()) }
     
+    // WiFi Gateway state
+    var wifiGatewayEnabled by remember { mutableStateOf(WifiGatewayService.isRunning()) }
+    var wifiServerState by remember { mutableStateOf(WifiGatewayService.getServerState()) }
+    var wifiClientCount by remember { mutableIntStateOf(WifiGatewayService.getConnectedDeviceCount()) }
+    
     // Refresh gateway status and glasses info periodically
     LaunchedEffect(Unit) {
         while (true) {
+            // BLE Gateway
             gatewayEnabled = GatewayService.isRunning()
             glassesConnected = GatewayService.isGlassesConnected()
             if (gatewayEnabled && glassesConnected) {
                 glassesBattery = GatewayService.getGlassesBatteryLevel()
             }
-            kotlinx.coroutines.delay(3000L)
+            
+            // WiFi Gateway
+            wifiGatewayEnabled = WifiGatewayService.isRunning()
+            wifiServerState = WifiGatewayService.getServerState()
+            wifiClientCount = WifiGatewayService.getConnectedDeviceCount()
+            
+            kotlinx.coroutines.delay(2000L)
         }
     }
     
@@ -571,6 +585,71 @@ fun DashboardScreen(
                 }
             }
             
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // WiFi Gateway Toggle - Alternative to BLE with lower latency
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = when {
+                        wifiClientCount > 0 -> MaterialTheme.colorScheme.primaryContainer
+                        wifiGatewayEnabled -> MaterialTheme.colorScheme.secondaryContainer
+                        else -> MaterialTheme.colorScheme.surfaceVariant
+                    }
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("📶", fontSize = 24.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = stringResource(R.string.wifi_gateway_title),
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = when {
+                                    wifiClientCount > 0 -> stringResource(R.string.wifi_gateway_clients, wifiClientCount)
+                                    wifiServerState is WifiGatewayServer.ServerState.Running -> {
+                                        val state = wifiServerState as WifiGatewayServer.ServerState.Running
+                                        stringResource(R.string.wifi_gateway_running, "${state.localAddress}:${state.port}")
+                                    }
+                                    wifiServerState is WifiGatewayServer.ServerState.Error -> {
+                                        val state = wifiServerState as WifiGatewayServer.ServerState.Error
+                                        stringResource(R.string.wifi_gateway_error, state.message)
+                                    }
+                                    wifiGatewayEnabled -> stringResource(R.string.wifi_gateway_starting)
+                                    else -> stringResource(R.string.wifi_gateway_hint)
+                                },
+                                fontSize = 12.sp,
+                                color = if (wifiServerState is WifiGatewayServer.ServerState.Error)
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = wifiGatewayEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                wifiGatewayEnabled = true
+                                WifiGatewayService.start(context)
+                            } else {
+                                wifiGatewayEnabled = false
+                                WifiGatewayService.stop(context)
+                            }
+                        }
+                    )
+                }
+            }
+            
             Spacer(modifier = Modifier.height(24.dp))
             
             // Secondary action buttons in a row
@@ -593,6 +672,11 @@ fun DashboardScreen(
                 }
             }
             
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Ko-fi support button
+            KofiButton()
+
             Spacer(modifier = Modifier.height(12.dp))
 
             // Disconnect button - prominent but with warning color

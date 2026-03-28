@@ -60,6 +60,17 @@
     <string name="gateway_notification_text">Трансляція телеметрії на окуляри Rokid</string>
     <string name="glasses_connected">Окуляри підключені ✓</string>
     <string name="glasses_connect_hint">Увімкніть, щоб окуляри підключилися першими</string>
+    
+    <!-- WiFi Gateway -->
+    <string name="wifi_gateway_title">Шлюз WiFi</string>
+    <string name="wifi_gateway_off">Вимк</string>
+    <string name="wifi_gateway_starting">Запуск…</string>
+    <string name="wifi_gateway_running">Працює на %1$s</string>
+    <string name="wifi_gateway_clients">%1$d пристроїв підключено</string>
+    <string name="wifi_gateway_error">Помилка: %1$s</string>
+    <string name="wifi_gateway_notification_title">Шлюз WiFi M365</string>
+    <string name="wifi_gateway_notification_text">Стрімінг телеметрії через WiFi</string>
+    <string name="wifi_gateway_hint">Альтернатива BLE з меншою затримкою</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Деталі самоката</string>

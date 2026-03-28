@@ -60,6 +60,17 @@
     <string name="gateway_notification_text">Rokid 안경으로 원격 측정 중</string>
     <string name="glasses_connected">안경 연결됨 ✓</string>
     <string name="glasses_connect_hint">안경을 먼저 연결하려면 켜세요</string>
+    
+    <!-- WiFi Gateway -->
+    <string name="wifi_gateway_title">WiFi 게이트웨이</string>
+    <string name="wifi_gateway_off">꺼짐</string>
+    <string name="wifi_gateway_starting">시작 중…</string>
+    <string name="wifi_gateway_running">%1$s에서 실행 중</string>
+    <string name="wifi_gateway_clients">%1$d개 장치 연결됨</string>
+    <string name="wifi_gateway_error">오류: %1$s</string>
+    <string name="wifi_gateway_notification_title">M365 WiFi 게이트웨이</string>
+    <string name="wifi_gateway_notification_text">WiFi를 통해 원격 측정 스트리밍 중</string>
+    <string name="wifi_gateway_hint">BLE보다 낮은 지연 시간 대안</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">스쿠터 상세 정보</string>

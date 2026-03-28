@@ -61,6 +61,17 @@
     <string name="glasses_connected">眼鏡已連接 ✓</string>
     <string name="glasses_connect_hint">先開啟讓眼鏡連接</string>
     
+    <!-- WiFi Gateway -->
+    <string name="wifi_gateway_title">WiFi 閘道</string>
+    <string name="wifi_gateway_off">關閉</string>
+    <string name="wifi_gateway_starting">啟動中…</string>
+    <string name="wifi_gateway_running">運行於 %1$s</string>
+    <string name="wifi_gateway_clients">%1$d 個裝置已連接</string>
+    <string name="wifi_gateway_error">錯誤：%1$s</string>
+    <string name="wifi_gateway_notification_title">M365 WiFi 閘道</string>
+    <string name="wifi_gateway_notification_text">正在透過 WiFi 串流遙測資料</string>
+    <string name="wifi_gateway_hint">比藍牙更低延遲的替代方案</string>
+    
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">滑板車詳細資訊</string>
     <string name="info_speed_section">速度資訊</string>

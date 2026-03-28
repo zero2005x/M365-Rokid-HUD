@@ -60,6 +60,17 @@
     <string name="gateway_notification_text">Diffusion de la télémétrie vers les lunettes Rokid</string>
     <string name="glasses_connected">Lunettes connectées ✓</string>
     <string name="glasses_connect_hint">Activez pour permettre aux lunettes de se connecter d\'abord</string>
+    
+    <!-- WiFi Gateway -->
+    <string name="wifi_gateway_title">Passerelle WiFi</string>
+    <string name="wifi_gateway_off">Désactivé</string>
+    <string name="wifi_gateway_starting">Démarrage…</string>
+    <string name="wifi_gateway_running">En cours sur %1$s</string>
+    <string name="wifi_gateway_clients">%1$d appareils connectés</string>
+    <string name="wifi_gateway_error">Erreur : %1$s</string>
+    <string name="wifi_gateway_notification_title">Passerelle WiFi M365</string>
+    <string name="wifi_gateway_notification_text">Diffusion de la télémétrie par WiFi</string>
+    <string name="wifi_gateway_hint">Alternative à faible latence au BLE</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Détails de la Trottinette</string>

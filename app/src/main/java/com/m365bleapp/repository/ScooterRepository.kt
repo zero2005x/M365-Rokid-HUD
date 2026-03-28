@@ -150,11 +150,32 @@ class ScooterRepository private constructor(private val context: Context) {
     private val _securityStatus = MutableStateFlow<com.m365bleapp.utils.SecurityChecker.SecurityStatus?>(null)
     val securityStatus = _securityStatus.asStateFlow()
 
+    /**
+     * Initialize repository with background native library loading.
+     * This prevents blocking the UI thread during app startup.
+     */
     fun init() {
-        native.init()
+        // Load native library and initialize in background to prevent UI blocking
+        scope.launch(Dispatchers.IO) {
+            try {
+                val startTime = System.currentTimeMillis()
+                Log.d("ScooterRepo", "Initializing native library on background thread...")
+                
+                // Load native library asynchronously
+                if (M365Native.loadLibraryAsync()) {
+                    native.init()  // Call instance init after library is loaded
+                    val elapsed = System.currentTimeMillis() - startTime
+                    Log.i("ScooterRepo", "Native library initialized in ${elapsed}ms")
+                } else {
+                    Log.e("ScooterRepo", "Failed to load native library: ${M365Native.getLoadError()?.message}")
+                }
+            } catch (e: Exception) {
+                Log.e("ScooterRepo", "Native init failed: ${e.message}", e)
+            }
+        }
         
         // P3: Check device security status on init (non-blocking warning)
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             val status = com.m365bleapp.utils.SecurityChecker.checkSecurity()
             _securityStatus.value = status
             if (status.hasWarnings) {

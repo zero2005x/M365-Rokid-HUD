@@ -58,3 +58,11 @@
 -keep public class * extends android.app.Service
 -keep public class * extends android.content.BroadcastReceiver
 -keep public class * extends android.content.ContentProvider
+
+# ============================================
+# Remove Verbose Logging in Release Build
+# ============================================
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+}

@@ -61,6 +61,17 @@
     <string name="glasses_connected">Glasses Connected ✓</string>
     <string name="glasses_connect_hint">Turn on to let glasses connect first</string>
     
+    <!-- WiFi Gateway -->
+    <string name="wifi_gateway_title">WiFi Gateway</string>
+    <string name="wifi_gateway_off">Off</string>
+    <string name="wifi_gateway_starting">Starting…</string>
+    <string name="wifi_gateway_running">Running on %1$s</string>
+    <string name="wifi_gateway_clients">%1$d clients connected</string>
+    <string name="wifi_gateway_error">Error: %1$s</string>
+    <string name="wifi_gateway_notification_title">M365 WiFi Gateway</string>
+    <string name="wifi_gateway_notification_text">Streaming telemetry over WiFi</string>
+    <string name="wifi_gateway_hint">Lower latency alternative to BLE</string>
+    
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Scooter Details</string>
     <string name="info_speed_section">Speed Info</string>

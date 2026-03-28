@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.BatteryManager
 import android.os.ParcelUuid
 import android.util.Log
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,19 +53,18 @@ class BleClient(private val context: Context) {
         private const val RSSI_THRESHOLD_POOR_DBM = -90     // Below this = very poor signal
     }
     
+    // === COROUTINE SCOPE for BLE operations ===
+    // Uses IO dispatcher for BLE operations to prevent blocking UI thread
+    private val bleScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    
     // CONNECTION HEALTH: Count consecutive stale checks
     @Volatile private var consecutiveStaleChecks = 0
     
     // CONNECTION HEALTH: Auto-reconnect enabled flag
     @Volatile private var autoReconnectEnabled = true
     
-    // GLASSES BATTERY: Handler for periodic battery sending
-    @Volatile private var batterySendHandler: android.os.Handler? = null
+    // GLASSES BATTERY: Characteristic for sending battery level
     @Volatile private var glassesBatteryCharacteristic: BluetoothGattCharacteristic? = null
-    
-    // === RSSI MONITORING ===
-    // Handler for periodic RSSI checking
-    @Volatile private var rssiMonitorHandler: android.os.Handler? = null
     
     // Connection state
     sealed class ConnectionState {
@@ -109,7 +109,6 @@ class BleClient(private val context: Context) {
     // LATENCY MONITORING: Track last telemetry update time
     @Volatile private var lastTelemetryUpdateMs: Long = 0
     @Volatile private var telemetryUpdateCount: Int = 0
-    @Volatile private var watchdogHandler: android.os.Handler? = null
     @Volatile private var lastLogTimeMs: Long = 0
     
     // LATENCY MONITORING: Telemetry freshness indicator (true = receiving data normally)
@@ -159,23 +158,30 @@ class BleClient(private val context: Context) {
             return
         }
         
-        // Fallback: Try scanning without UUID filter after 5 seconds if nothing found
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
-                Log.w(TAG, "No device found with UUID filter, retrying without filter...")
-                stopScan()
-                startScanWithoutFilter()
+        // Use coroutine for delayed operations (more efficient than Handler)
+        bleScope.launch {
+            // Fallback: Try scanning without UUID filter after 5 seconds if nothing found
+            delay(SCAN_RETRY_WITHOUT_FILTER_MS)
+            withContext(Dispatchers.Main) {
+                if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
+                    Log.w(TAG, "No device found with UUID filter, retrying without filter...")
+                    stopScan()
+                    startScanWithoutFilter()
+                }
             }
-        }, SCAN_RETRY_WITHOUT_FILTER_MS)
+        }
         
-        // Auto-stop scan after timeout
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            if (_connectionState.value == ConnectionState.Scanning) {
-                stopScan()
-                Log.e(TAG, "Scan timeout - Gateway not found after ${SCAN_TIMEOUT_MS}ms")
-                _connectionState.value = ConnectionState.Error("Gateway not found - make sure HUD Gateway is enabled on phone")
+        // Auto-stop scan after timeout (using coroutine)
+        bleScope.launch {
+            delay(SCAN_TIMEOUT_MS)
+            withContext(Dispatchers.Main) {
+                if (_connectionState.value == ConnectionState.Scanning) {
+                    stopScan()
+                    Log.e(TAG, "Scan timeout - Gateway not found after ${SCAN_TIMEOUT_MS}ms")
+                    _connectionState.value = ConnectionState.Error("Gateway not found - make sure HUD Gateway is enabled on phone")
+                }
             }
-        }, SCAN_TIMEOUT_MS)
+        }
     }
     
     /**
@@ -301,10 +307,17 @@ class BleClient(private val context: Context) {
         
         gatt?.let { g ->
             g.disconnect()
-            // Wait briefly for disconnect to complete before closing
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                g.close()
-            }, 100)
+            // Wait briefly for disconnect to complete before closing (using coroutine)
+            bleScope.launch {
+                delay(100)
+                withContext(Dispatchers.Main) {
+                    try {
+                        g.close()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error closing GATT: ${e.message}")
+                    }
+                }
+            }
         }
         gatt = null
         targetDevice = null
@@ -417,10 +430,13 @@ class BleClient(private val context: Context) {
                         Log.w(TAG, "Failed to refresh GATT cache: ${e.message}")
                     }
                     
-                    // Small delay after refresh before discovering services
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        gatt.discoverServices()
-                    }, 200)
+                    // Small delay after refresh before discovering services (using coroutine)
+                    bleScope.launch {
+                        delay(200)
+                        withContext(Dispatchers.Main) {
+                            gatt.discoverServices()
+                        }
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.i(TAG, "Disconnected from GATT server (status=$statusName)")
@@ -465,15 +481,18 @@ class BleClient(private val context: Context) {
                     this@BleClient.gatt?.close()
                     this@BleClient.gatt = null
                     
-                    // Auto-reconnect if enabled and disconnect was unexpected
+                    // Auto-reconnect if enabled and disconnect was unexpected (using coroutine)
                     if (shouldAutoReconnect && autoReconnectEnabled) {
                         Log.i(TAG, "AUTO-RECONNECT: Will attempt to reconnect in 2 seconds...")
-                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                            if (_connectionState.value == ConnectionState.Disconnected) {
-                                Log.i(TAG, "AUTO-RECONNECT: Starting scan...")
-                                startScan()
+                        bleScope.launch {
+                            delay(2000)
+                            withContext(Dispatchers.Main) {
+                                if (_connectionState.value == ConnectionState.Disconnected) {
+                                    Log.i(TAG, "AUTO-RECONNECT: Starting scan...")
+                                    startScan()
+                                }
                             }
-                        }, 2000)
+                        }
                     }
                 }
             }
@@ -512,11 +531,14 @@ class BleClient(private val context: Context) {
                 targetDevice = null
                 isConnecting = false
                 
-                // Resume scanning to find the correct device
+                // Resume scanning to find the correct device (using coroutine)
                 _connectionState.value = ConnectionState.Scanning
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    startScan()
-                }, 500) // Brief delay before restarting scan
+                bleScope.launch {
+                    delay(500) // Brief delay before restarting scan
+                    withContext(Dispatchers.Main) {
+                        startScan()
+                    }
+                }
                 return
             }
             
@@ -536,11 +558,14 @@ class BleClient(private val context: Context) {
                 enableNotification(gatt, telemetryChar)
             }
             
-            // Enable time notification after telemetry (queue)
+            // Enable time notification after telemetry (queue, using coroutine)
             if (timeChar != null) {
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    enableNotification(gatt, timeChar)
-                }, 500)
+                bleScope.launch {
+                    delay(500)
+                    withContext(Dispatchers.Main) {
+                        enableNotification(gatt, timeChar)
+                    }
+                }
             }
             
             _connectionState.value = ConnectionState.Connected
@@ -659,10 +684,14 @@ class BleClient(private val context: Context) {
     
     // ========== CONNECTION HEALTH: Watchdog for stale data detection and auto-reconnect ==========
     
+    // Watchdog job for coroutine-based monitoring
+    @Volatile private var watchdogJob: Job? = null
+    
     /**
      * Start the watchdog timer to monitor telemetry freshness.
      * If no telemetry is received for TELEMETRY_STALE_TIMEOUT_MS, marks data as stale.
      * After STALE_CHECKS_BEFORE_RECONNECT consecutive stale checks, attempts auto-reconnect.
+     * Uses coroutine for better resource management.
      */
     private fun startWatchdog() {
         stopWatchdog() // Stop any existing watchdog
@@ -673,9 +702,10 @@ class BleClient(private val context: Context) {
         consecutiveStaleChecks = 0
         _isTelemetryFresh.value = true
         
-        watchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
-        val watchdogRunnable = object : Runnable {
-            override fun run() {
+        watchdogJob = bleScope.launch {
+            delay(WATCHDOG_CHECK_INTERVAL_MS)
+            
+            while (isActive && _connectionState.value == ConnectionState.Connected) {
                 val now = System.currentTimeMillis()
                 val timeSinceLastUpdate = now - lastTelemetryUpdateMs
                 
@@ -691,8 +721,10 @@ class BleClient(private val context: Context) {
                     // Auto-reconnect if too many stale checks
                     if (consecutiveStaleChecks >= STALE_CHECKS_BEFORE_RECONNECT && autoReconnectEnabled) {
                         Log.e(TAG, "CONNECTION HEALTH: Connection appears lost after $consecutiveStaleChecks stale checks. Initiating auto-reconnect...")
-                        initiateAutoReconnect()
-                        return // Stop this watchdog, new one will start after reconnect
+                        withContext(Dispatchers.Main) {
+                            initiateAutoReconnect()
+                        }
+                        break // Stop this watchdog, new one will start after reconnect
                     }
                 } else {
                     // Reset stale counter on fresh data
@@ -703,14 +735,10 @@ class BleClient(private val context: Context) {
                     _isTelemetryFresh.value = true
                 }
                 
-                // Continue checking while connected
-                if (_connectionState.value == ConnectionState.Connected) {
-                    watchdogHandler?.postDelayed(this, WATCHDOG_CHECK_INTERVAL_MS)
-                }
+                delay(WATCHDOG_CHECK_INTERVAL_MS)
             }
         }
         
-        watchdogHandler?.postDelayed(watchdogRunnable, WATCHDOG_CHECK_INTERVAL_MS)
         Log.d(TAG, "CONNECTION HEALTH: Watchdog started (stale timeout: ${TELEMETRY_STALE_TIMEOUT_MS}ms, reconnect after: ${STALE_CHECKS_BEFORE_RECONNECT} checks)")
     }
     
@@ -728,18 +756,20 @@ class BleClient(private val context: Context) {
         // Disconnect current connection
         disconnect()
         
-        // Wait 2 seconds for BLE stack to fully reset before reconnecting
-        // This helps prevent connection issues from lingering BLE state
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            // Re-enable auto-reconnect
-            autoReconnectEnabled = wasAutoReconnectEnabled
-            
-            if (_connectionState.value == ConnectionState.Disconnected) {
-                Log.i(TAG, "CONNECTION HEALTH: Starting new scan for auto-reconnect")
-                recordReconnect() // Record reconnect for session statistics
-                startScan()
+        // Wait 2 seconds for BLE stack to fully reset before reconnecting (using coroutine)
+        bleScope.launch {
+            delay(2000) // 2 second delay before reconnect
+            withContext(Dispatchers.Main) {
+                // Re-enable auto-reconnect
+                autoReconnectEnabled = wasAutoReconnectEnabled
+                
+                if (_connectionState.value == ConnectionState.Disconnected) {
+                    Log.i(TAG, "CONNECTION HEALTH: Starting new scan for auto-reconnect")
+                    recordReconnect() // Record reconnect for session statistics
+                    startScan()
+                }
             }
-        }, 2000) // 2 second delay before reconnect (increased from 1s)
+        }
     }
     
     /**
@@ -754,13 +784,16 @@ class BleClient(private val context: Context) {
      * Stop the watchdog timer.
      */
     private fun stopWatchdog() {
-        watchdogHandler?.removeCallbacksAndMessages(null)
-        watchdogHandler = null
+        watchdogJob?.cancel()
+        watchdogJob = null
         consecutiveStaleChecks = 0
         _isTelemetryFresh.value = false
     }
     
     // ========== GLASSES BATTERY: Periodic battery level sending to phone ==========
+    
+    // Battery sending job for coroutine-based sending
+    @Volatile private var batterySendJob: Job? = null
     
     /**
      * Get the glasses battery level using BatteryManager.
@@ -773,6 +806,7 @@ class BleClient(private val context: Context) {
     /**
      * Start periodically sending glasses battery level to phone.
      * This runs every BATTERY_SEND_INTERVAL_MS (30 seconds).
+     * Uses coroutine for better resource management.
      */
     private fun startBatterySending() {
         stopBatterySending() // Stop any existing handler
@@ -783,20 +817,21 @@ class BleClient(private val context: Context) {
             return
         }
         
-        batterySendHandler = android.os.Handler(android.os.Looper.getMainLooper())
-        val batterySendRunnable = object : Runnable {
-            override fun run() {
+        batterySendJob = bleScope.launch {
+            // Send immediately
+            withContext(Dispatchers.Main) {
                 sendGlassesBattery()
-                
-                // Continue sending while connected
-                if (_connectionState.value == ConnectionState.Connected) {
-                    batterySendHandler?.postDelayed(this, BATTERY_SEND_INTERVAL_MS)
+            }
+            
+            // Then periodic sending
+            while (isActive && _connectionState.value == ConnectionState.Connected) {
+                delay(BATTERY_SEND_INTERVAL_MS)
+                withContext(Dispatchers.Main) {
+                    sendGlassesBattery()
                 }
             }
         }
         
-        // Send immediately, then start periodic sending
-        batterySendHandler?.post(batterySendRunnable)
         Log.i(TAG, "GLASSES BATTERY: Started sending battery level every ${BATTERY_SEND_INTERVAL_MS}ms")
     }
     
@@ -832,11 +867,14 @@ class BleClient(private val context: Context) {
      * Stop the battery sending timer.
      */
     private fun stopBatterySending() {
-        batterySendHandler?.removeCallbacksAndMessages(null)
-        batterySendHandler = null
+        batterySendJob?.cancel()
+        batterySendJob = null
     }
     
     // ========== RSSI MONITORING: Periodic signal strength checking ==========
+    
+    // RSSI monitoring job for coroutine-based monitoring
+    @Volatile private var rssiMonitorJob: Job? = null
     
     // === CONNECTION METRICS: Track session statistics ===
     private var sessionStartTimeMs: Long = 0
@@ -848,6 +886,7 @@ class BleClient(private val context: Context) {
     /**
      * Start periodically checking RSSI (signal strength) to monitor connection quality.
      * This helps detect weak signals before the connection drops.
+     * Uses coroutine for better resource management.
      */
     private fun startRssiMonitoring() {
         stopRssiMonitoring() // Stop any existing handler
@@ -858,21 +897,18 @@ class BleClient(private val context: Context) {
         totalStaleEvents = 0
         rssiSamples.clear()
         
-        rssiMonitorHandler = android.os.Handler(android.os.Looper.getMainLooper())
-        val rssiRunnable = object : Runnable {
-            override fun run() {
+        rssiMonitorJob = bleScope.launch {
+            delay(RSSI_CHECK_INTERVAL_MS) // Initial delay
+            
+            while (isActive && _connectionState.value == ConnectionState.Connected) {
                 // Request RSSI update from the connected device
-                gatt?.readRemoteRssi()
-                
-                // Continue monitoring while connected
-                if (_connectionState.value == ConnectionState.Connected) {
-                    rssiMonitorHandler?.postDelayed(this, RSSI_CHECK_INTERVAL_MS)
+                withContext(Dispatchers.Main) {
+                    gatt?.readRemoteRssi()
                 }
+                delay(RSSI_CHECK_INTERVAL_MS)
             }
         }
         
-        // Start monitoring after initial delay
-        rssiMonitorHandler?.postDelayed(rssiRunnable, RSSI_CHECK_INTERVAL_MS)
         Log.d(TAG, "RSSI MONITORING: Started checking signal strength every ${RSSI_CHECK_INTERVAL_MS}ms")
     }
     
@@ -880,6 +916,10 @@ class BleClient(private val context: Context) {
      * Stop the RSSI monitoring timer and log session summary.
      */
     private fun stopRssiMonitoring() {
+        // Cancel coroutine job
+        rssiMonitorJob?.cancel()
+        rssiMonitorJob = null
+        
         // Log session summary before stopping
         if (sessionStartTimeMs > 0 && totalPacketsReceived > 0) {
             val sessionDurationSec = (System.currentTimeMillis() - sessionStartTimeMs) / 1000.0
@@ -896,9 +936,6 @@ class BleClient(private val context: Context) {
             Log.i(TAG, "RSSI - Avg: ${String.format("%.0f", avgRssi)} dBm, Min: $minRssi dBm, Max: $maxRssi dBm")
             Log.i(TAG, "=================================")
         }
-        
-        rssiMonitorHandler?.removeCallbacksAndMessages(null)
-        rssiMonitorHandler = null
     }
     
     /**
@@ -932,5 +969,19 @@ class BleClient(private val context: Context) {
     fun recordReconnect() {
         reconnectCount++
         Log.d(TAG, "CONNECTION METRICS: Reconnect count = $reconnectCount")
+    }
+    
+    /**
+     * Clean up resources when the BleClient is no longer needed.
+     * This should be called when the service/activity is destroyed.
+     */
+    fun close() {
+        Log.i(TAG, "Closing BleClient and releasing resources...")
+        disconnect()
+        
+        // Cancel all coroutines
+        bleScope.cancel()
+        
+        Log.i(TAG, "BleClient closed")
     }
 }

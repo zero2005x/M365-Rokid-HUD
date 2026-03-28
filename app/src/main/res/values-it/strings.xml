@@ -60,6 +60,17 @@
     <string name="gateway_notification_text">Trasmissione telemetria agli occhiali Rokid</string>
     <string name="glasses_connected">Occhiali connessi ✓</string>
     <string name="glasses_connect_hint">Attiva per consentire agli occhiali di connettersi prima</string>
+    
+    <!-- WiFi Gateway -->
+    <string name="wifi_gateway_title">Gateway WiFi</string>
+    <string name="wifi_gateway_off">Spento</string>
+    <string name="wifi_gateway_starting">Avvio in corso…</string>
+    <string name="wifi_gateway_running">In esecuzione su %1$s</string>
+    <string name="wifi_gateway_clients">%1$d dispositivi connessi</string>
+    <string name="wifi_gateway_error">Errore: %1$s</string>
+    <string name="wifi_gateway_notification_title">Gateway WiFi M365</string>
+    <string name="wifi_gateway_notification_text">Streaming telemetria via WiFi</string>
+    <string name="wifi_gateway_hint">Alternativa a bassa latenza al BLE</string>
 
     <!-- ScooterInfoScreen -->
     <string name="scooter_info_title">Dettagli Monopattino</string>

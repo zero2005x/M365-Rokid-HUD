@@ -74,6 +74,13 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+        
+        <!-- WiFi Gateway Service -->
+        <service
+            android:name=".gateway.wifi.WifiGatewayService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
             
         <provider
             android:name="androidx.core.content.FileProvider"

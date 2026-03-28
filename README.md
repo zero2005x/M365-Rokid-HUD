@@ -25,6 +25,7 @@ A modern Android application for connecting to and monitoring Xiaomi/Ninebot M36
 
 > 📖 **[繁體中文](doc/README_zh-TW.md)** | **[简体中文](doc/README_zh-CN.md)**
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/liangtinglin)
 ---
 
 ## ✨ Features

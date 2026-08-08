@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.util.Log
+import com.m365bleapp.gateway.M365HudGattProfile
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,6 +52,12 @@ class WifiGatewayServer(private val context: Context) {
         // Telemetry data size (same as BLE)
         const val TELEMETRY_DATA_SIZE = 20
         const val TIME_DATA_SIZE = 12
+
+        /** Largest accepted message; anything else is a protocol violation. */
+        const val MAX_MESSAGE_LENGTH = 1024
+
+        /** Read timeout per client; a silent client is treated as disconnected. */
+        const val CLIENT_READ_TIMEOUT_MS = 30_000
         
         // Connection state constants
         const val STATE_DISCONNECTED = 0
@@ -64,7 +71,11 @@ class WifiGatewayServer(private val context: Context) {
     private var registrationListener: NsdManager.RegistrationListener? = null
     
     private val isRunning = AtomicBoolean(false)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Recreated on every start(): stop() cancels this scope, and a cancelled
+    // scope silently swallows every later launch, so a restarted server would
+    // report Running while never accepting a single client.
+    private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     // Connected clients
     private val connectedClients = ConcurrentHashMap<String, ClientConnection>()
@@ -80,9 +91,10 @@ class WifiGatewayServer(private val context: Context) {
     private val _glassesBatteryLevel = MutableStateFlow(-1)
     val glassesBatteryLevel: StateFlow<Int> = _glassesBatteryLevel.asStateFlow()
     
-    // Latency monitoring
+    // Latency monitoring. AtomicInteger because updateTelemetry() can be called
+    // from more than one coroutine and @Volatile does not make ++ atomic.
     @Volatile private var lastTelemetryUpdateMs: Long = 0
-    @Volatile private var telemetryUpdateCount: Int = 0
+    private val telemetryUpdateCount = java.util.concurrent.atomic.AtomicInteger(0)
     
     /**
      * Server state sealed class
@@ -105,7 +117,12 @@ class WifiGatewayServer(private val context: Context) {
         
         try {
             _serverState.value = ServerState.Starting(port)
-            
+
+            // Fresh scope for this run (see the field declaration).
+            if (!scope.isActive) {
+                scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+            }
+
             // Create server socket
             serverSocket = ServerSocket(port)
             serverSocket?.reuseAddress = true
@@ -198,17 +215,25 @@ class WifiGatewayServer(private val context: Context) {
      */
     private suspend fun handleClient(connection: ClientConnection) {
         try {
+            // Enforce liveness: without a read timeout, a client that stops
+            // sending but keeps the socket open pins a coroutine and a file
+            // descriptor forever, and keeps receiving broadcasts.
+            connection.socket.soTimeout = CLIENT_READ_TIMEOUT_MS
             val input = DataInputStream(connection.socket.inputStream)
-            
+
             while (isRunning.get() && connection.isConnected) {
                 try {
                     // Read message length (4 bytes, big-endian)
                     val length = input.readInt()
-                    if (length <= 0 || length > 1024) {
-                        Log.w(TAG, "Invalid message length: $length")
-                        continue
+                    if (length <= 0 || length > MAX_MESSAGE_LENGTH) {
+                        // The payload bytes cannot be skipped reliably once the
+                        // declared length is bogus, so the stream can never be
+                        // resynchronised: `continue` would leave every later
+                        // readInt() reading from the middle of a message.
+                        Log.w(TAG, "Invalid message length: $length, closing connection ${connection.clientId}")
+                        break
                     }
-                    
+
                     // Read message type
                     val type = input.readByte()
                     
@@ -221,6 +246,9 @@ class WifiGatewayServer(private val context: Context) {
                     
                 } catch (e: java.io.EOFException) {
                     Log.i(TAG, "Client disconnected: ${connection.clientId}")
+                    break
+                } catch (e: java.net.SocketTimeoutException) {
+                    Log.i(TAG, "Client timed out (no data for ${CLIENT_READ_TIMEOUT_MS}ms): ${connection.clientId}")
                     break
                 }
             }
@@ -277,13 +305,13 @@ class WifiGatewayServer(private val context: Context) {
         tripSeconds: Int
     ) {
         val now = System.currentTimeMillis()
-        telemetryUpdateCount++
-        
+        val updates = telemetryUpdateCount.incrementAndGet()
+
         // Log stats every 5 seconds
         if (now - lastTelemetryUpdateMs >= 5000L && lastTelemetryUpdateMs > 0) {
-            val rate = telemetryUpdateCount * 1000.0 / (now - lastTelemetryUpdateMs)
+            val rate = updates * 1000.0 / (now - lastTelemetryUpdateMs)
             Log.d(TAG, "WIFI STATS: ${String.format("%.1f", rate)} updates/sec, clients: ${connectedClients.size}")
-            telemetryUpdateCount = 0
+            telemetryUpdateCount.set(0)
             lastTelemetryUpdateMs = now
         }
         if (lastTelemetryUpdateMs == 0L) lastTelemetryUpdateMs = now
@@ -302,13 +330,30 @@ class WifiGatewayServer(private val context: Context) {
         buffer.putShort(tripMeters.toShort())                         // 14-15
         buffer.putShort(tripSeconds.toShort())                        // 16-17
         
-        // CRC16 placeholder
-        buffer.putShort(0)                                            // 18-19
-        
         val telemetryData = buffer.array()
-        
+
+        // Real CRC over bytes 0..17, matching M365HudGattProfile.CRC16_SPEC.
+        // A hardcoded 0 meant a client that validates the checksum rejected
+        // every frame, and one that does not silently accepted corrupt frames.
+        buffer.putShort(18, calculateCrc16(telemetryData, M365HudGattProfile.TELEMETRY_CRC_COVERED_BYTES))
+
         // Send to all connected clients
         sendToAll(MSG_TYPE_TELEMETRY, telemetryData)
+    }
+
+    /**
+     * CRC-16/MODBUS over the first [length] bytes.
+     * See [M365HudGattProfile.CRC16_SPEC] for the authoritative parameters.
+     */
+    private fun calculateCrc16(data: ByteArray, length: Int): Short {
+        var crc = 0xFFFF
+        for (i in 0 until length) {
+            crc = crc xor (data[i].toInt() and 0xFF)
+            for (j in 0 until 8) {
+                crc = if (crc and 1 != 0) (crc ushr 1) xor 0xA001 else crc ushr 1
+            }
+        }
+        return (crc and 0xFFFF).toShort()
     }
     
     /**

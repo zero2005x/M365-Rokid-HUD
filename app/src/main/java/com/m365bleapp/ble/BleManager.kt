@@ -76,6 +76,19 @@ class BleManager(private val context: Context) {
              } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.w("BleManager", "Disconnected from ${gatt.device?.address}")
                 gatt.close()
+
+                // If the link drops before onServicesDiscovered fires (scooter
+                // powered off / out of range mid-connect), connect() would stay
+                // suspended forever and the stale continuation would make every
+                // later connect() fail immediately via the "Busy" check.
+                val cont = connectContinuation
+                connectContinuation = null
+                if (cont?.isActive == true) cont.resume(null)
+
+                // Drop the notification handler: keeping it would deliver
+                // events from a future session to a caller that already gave up.
+                onNotifyCallback = null
+
                 // Notify upper layer about disconnection
                 onDisconnectCallback?.invoke()
              }
@@ -184,7 +197,29 @@ class BleManager(private val context: Context) {
         // Use TRANSPORT_LE to force BLE connection and avoid BR/EDR interference
         // autoConnect=false for faster initial connection
         Log.d("BleManager", "Connecting to ${device.address} with TRANSPORT_LE...")
-        device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        val gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+
+        if (gatt == null) {
+            // connectGatt returns null when the stack refuses the connection
+            // (max GATT clients reached, adapter unavailable, ...). Without
+            // this, no callback ever fires: connect() hangs forever and the
+            // stale continuation wedges every subsequent attempt.
+            Log.e("BleManager", "connectGatt returned null for ${device.address}")
+            connectContinuation = null
+            onNotifyCallback = null
+            cont.resume(null)
+            return@suspendCancellableCoroutine
+        }
+
+        // If the caller's coroutine is cancelled while suspended here, clear the
+        // fields so the manager does not stay permanently "busy".
+        cont.invokeOnCancellation {
+            if (connectContinuation === cont) {
+                connectContinuation = null
+                onNotifyCallback = null
+            }
+            runCatching { gatt.disconnect() }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -202,6 +237,12 @@ class BleManager(private val context: Context) {
         
         if (waitForResponse) {
              writeContinuation = cont
+             // Without this, a cancelled caller leaves writeContinuation set and
+             // every later write fails on the "already writing" guard, with no
+             // onCharacteristicWrite left to clear it.
+             cont.invokeOnCancellation {
+                 if (writeContinuation === cont) writeContinuation = null
+             }
         }
 
         val service = gatt.getService(serviceUuid)
@@ -214,8 +255,16 @@ class BleManager(private val context: Context) {
         
         @Suppress("DEPRECATION")
         char.value = value
-        char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-        
+        // The write type has to follow waitForResponse. A no-response write is
+        // never acknowledged by the peripheral, so waiting on
+        // onCharacteristicWrite after one only observes a stack-level callback
+        // that says nothing about whether the scooter processed the command.
+        char.writeType = if (waitForResponse) {
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        } else {
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        }
+
         @Suppress("DEPRECATION")
         if (!gatt.writeCharacteristic(char)) {
             Log.e("BleManager", "writeCharacteristic failed for $charUuid")
@@ -254,6 +303,9 @@ class BleManager(private val context: Context) {
         val descriptor = char.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
         if (descriptor != null) {
             descriptorContinuation = cont
+            cont.invokeOnCancellation {
+                if (descriptorContinuation === cont) descriptorContinuation = null
+            }
             @Suppress("DEPRECATION")
             descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             @Suppress("DEPRECATION")

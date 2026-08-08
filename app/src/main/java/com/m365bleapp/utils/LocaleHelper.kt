@@ -3,6 +3,7 @@ package com.m365bleapp.utils
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Configuration
+import android.content.res.Resources
 import android.os.Build
 import android.os.LocaleList
 import java.util.Locale
@@ -94,17 +95,36 @@ object LocaleHelper {
         }
         
         // Use system locale if supported, otherwise English
-        val systemLocale = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            context.resources.configuration.locales[0]
-        } else {
-            @Suppress("DEPRECATION")
-            context.resources.configuration.locale
-        }
-        
+        val systemLocale = getSystemLocale()
+
         return if (isLocaleSupported(systemLocale)) {
             systemLocale
         } else {
             Locale.ENGLISH
+        }
+    }
+
+    /**
+     * Returns the real system locale, independent of any locale this app has
+     * applied to its own contexts.
+     *
+     * Reading `context.resources.configuration` is wrong here: when the context
+     * has already been wrapped by [updateContextLocale] (an Activity recreated
+     * from its localized base context, or applyLocale called twice), that
+     * configuration holds the *app's* previously applied locale, not the
+     * system's. The visible symptom was that choosing "follow system default"
+     * left the app stuck on the previously selected language forever.
+     */
+    private fun getSystemLocale(): Locale {
+        // Resources.getSystem() is the framework's own resources: it is never
+        // wrapped by this app, and unlike LocaleList.getDefault() it is not
+        // affected by the Locale.setDefault() call in updateContextLocale.
+        val systemConfig = Resources.getSystem().configuration
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            systemConfig.locales[0]
+        } else {
+            @Suppress("DEPRECATION")
+            systemConfig.locale
         }
     }
     
@@ -157,26 +177,16 @@ object LocaleHelper {
      * Get the current system locale display name
      */
     fun getSystemLocaleDisplayName(context: Context): String {
-        val systemLocale = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            context.resources.configuration.locales[0]
-        } else {
-            @Suppress("DEPRECATION")
-            context.resources.configuration.locale
-        }
-        return systemLocale.displayName
+        // Single source of truth: see getSystemLocale().
+        return getSystemLocale().displayName
     }
-    
+
     /**
      * Find matching supported language for system locale, or null if not supported
      */
     fun findMatchingLanguage(context: Context): LanguageOption? {
-        val systemLocale = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            context.resources.configuration.locales[0]
-        } else {
-            @Suppress("DEPRECATION")
-            context.resources.configuration.locale
-        }
-        
+        val systemLocale = getSystemLocale()
+
         val langCode = systemLocale.language
         val countryCode = systemLocale.country
         

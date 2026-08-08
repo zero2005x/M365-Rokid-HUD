@@ -21,6 +21,7 @@ import androidx.core.content.FileProvider
 import com.m365bleapp.R
 import com.m365bleapp.repository.ScooterRepository
 import com.m365bleapp.utils.LogExporter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -150,38 +151,55 @@ fun LoggingScreen(
                         showExportDialog = false
                         isExporting = true
                         scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                logExporter.createLogArchive(
-                                    includeLogcat = true,
-                                    includeDeviceInfo = true
-                                )
-                            }
-                            exportResult = result
-                            isExporting = false
-                            
-                            if (result.success && result.zipFile != null) {
-                                // Create and launch share intent
-                                val shareIntent = logExporter.createShareIntent(result.zipFile)
-                                if (shareIntent != null) {
-                                    context.startActivity(
-                                        Intent.createChooser(
-                                            shareIntent,
-                                            context.getString(R.string.share_logs_to)
-                                        )
+                            // Anything thrown here (CancellationException when
+                            // the composable leaves composition,
+                            // ActivityNotFoundException from the chooser, ...)
+                            // used to propagate out of scope.launch and crash
+                            // the app, leaving isExporting stuck true so the
+                            // export buttons were disabled forever.
+                            try {
+                                val result = withContext(Dispatchers.IO) {
+                                    logExporter.createLogArchive(
+                                        includeLogcat = true,
+                                        includeDeviceInfo = true
                                     )
+                                }
+                                exportResult = result
+
+                                if (result.success && result.zipFile != null) {
+                                    // Create and launch share intent
+                                    val shareIntent = logExporter.createShareIntent(result.zipFile)
+                                    if (shareIntent != null) {
+                                        context.startActivity(
+                                            Intent.createChooser(
+                                                shareIntent,
+                                                context.getString(R.string.share_logs_to)
+                                            )
+                                        )
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            R.string.export_share_failed,
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
                                 } else {
                                     Toast.makeText(
                                         context,
-                                        R.string.export_share_failed,
-                                        Toast.LENGTH_SHORT
+                                        context.getString(R.string.export_failed, result.errorMessage ?: "Unknown error"),
+                                        Toast.LENGTH_LONG
                                     ).show()
                                 }
-                            } else {
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.export_failed, result.errorMessage ?: "Unknown error"),
+                                    context.getString(R.string.export_failed, e.message ?: "Unknown error"),
                                     Toast.LENGTH_LONG
                                 ).show()
+                            } finally {
+                                isExporting = false
                             }
                         }
                     }

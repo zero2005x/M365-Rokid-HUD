@@ -14,6 +14,7 @@ import androidx.core.app.ActivityCompat
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Calendar
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -33,7 +34,24 @@ class M365GattServer(
     
     private var gattServer: BluetoothGattServer? = null
     private var advertiser: BluetoothLeAdvertiser? = null
-    private val subscribedDevices = ConcurrentHashMap<String, BluetoothDevice>()
+
+    /**
+     * Notification subscriptions, keyed by characteristic UUID and then by
+     * device address.
+     *
+     * Telemetry and time each have their own CCCD (both using CCCD_UUID). When
+     * subscriptions were keyed by device address alone, disabling notifications
+     * on one characteristic silently unsubscribed the device from the other,
+     * and enabling either one subscribed it to both.
+     */
+    private val subscriptions = ConcurrentHashMap<UUID, ConcurrentHashMap<String, BluetoothDevice>>()
+
+    private fun subscribersOf(charUuid: UUID): ConcurrentHashMap<String, BluetoothDevice> =
+        subscriptions.getOrPut(charUuid) { ConcurrentHashMap() }
+
+    /** Total number of distinct devices subscribed to at least one characteristic. */
+    private fun subscriberCount(): Int =
+        subscriptions.values.flatMap { it.keys }.toSet().size
     
     // Track if service has been added to GATT server
     @Volatile private var serviceAdded = false
@@ -49,7 +67,8 @@ class M365GattServer(
     @Volatile private var currentTime: ByteArray = ByteArray(M365HudGattProfile.TIME_DATA_SIZE)
     @Volatile private var glassesBatteryLevel: Int = -1  // -1 means not received yet
     
-    private var isRunning = false
+    // Written by start()/stop(), read from the telemetry threads.
+    @Volatile private var isRunning = false
     
     // LATENCY MONITORING: Track last update time and frequency for debugging delays
     @Volatile private var lastTelemetryUpdateMs: Long = 0
@@ -71,11 +90,19 @@ class M365GattServer(
         }
         
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
+            // BluetoothDevice.getAddress() requires BLUETOOTH_CONNECT on API 31+
+            // and throws SecurityException without it. This callback runs on the
+            // main thread, so an unguarded read would crash the app.
+            val address = device.addressOrNull() ?: run {
+                Log.w(TAG, "Cannot read device address (missing BLUETOOTH_CONNECT)")
+                return
+            }
+
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                subscribedDevices.remove(device.address)
-                Log.i(TAG, "Device DISCONNECTED: ${device.address}, remaining subscribers: ${subscribedDevices.size}")
+                subscriptions.values.forEach { it.remove(address) }
+                Log.i(TAG, "Device DISCONNECTED: $address, remaining subscribers: ${subscriberCount()}")
             } else if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.i(TAG, "Device CONNECTED: ${device.address}, waiting for notification subscription...")
+                Log.i(TAG, "Device CONNECTED: $address, waiting for notification subscription...")
             }
         }
         
@@ -88,21 +115,52 @@ class M365GattServer(
             offset: Int,
             value: ByteArray
         ) {
-            if (descriptor.uuid == M365HudGattProfile.CCCD_UUID) {
-                if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
-                    subscribedDevices[device.address] = device
-                    Log.i(TAG, "Notifications ENABLED for ${device.address}, total subscribers: ${subscribedDevices.size}")
-                } else if (value.contentEquals(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE)) {
-                    subscribedDevices.remove(device.address)
-                    Log.i(TAG, "Notifications DISABLED for ${device.address}, total subscribers: ${subscribedDevices.size}")
+            if (descriptor.uuid != M365HudGattProfile.CCCD_UUID) return
+
+            val hasPermission = ActivityCompat.checkSelfPermission(
+                context, Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasPermission) {
+                // Dropping the reply silently makes the central time out. There
+                // is nothing else we can do here without the permission, so at
+                // least make the failure visible in the log.
+                Log.w(TAG, "Cannot answer CCCD write: BLUETOOTH_CONNECT not granted")
+                return
+            }
+
+            val address = device.addressOrNull() ?: return
+            // The CCCD belongs to a specific characteristic; track it per
+            // characteristic rather than per device.
+            val charUuid = descriptor.characteristic?.uuid
+
+            val status = when {
+                charUuid == null -> BluetoothGatt.GATT_FAILURE
+
+                value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) -> {
+                    subscribersOf(charUuid)[address] = device
+                    Log.i(TAG, "Notifications ENABLED for $address on $charUuid, total subscribers: ${subscriberCount()}")
+                    BluetoothGatt.GATT_SUCCESS
                 }
-                
-                if (responseNeeded) {
-                    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) 
-                        == PackageManager.PERMISSION_GRANTED) {
-                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-                    }
+
+                value.contentEquals(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE) -> {
+                    subscribersOf(charUuid).remove(address)
+                    Log.i(TAG, "Notifications DISABLED for $address on $charUuid, total subscribers: ${subscriberCount()}")
+                    BluetoothGatt.GATT_SUCCESS
                 }
+
+                else -> {
+                    // This server only ever sends notifications. Acknowledging
+                    // an indication-enable (0x0002) or an arbitrary value would
+                    // leave the central believing it is subscribed while no data
+                    // ever arrives.
+                    Log.w(TAG, "Unsupported CCCD value from $address: ${value.joinToString("") { "%02x".format(it) }}")
+                    BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED
+                }
+            }
+
+            if (responseNeeded) {
+                gattServer?.sendResponse(device, requestId, status, 0, null)
             }
         }
         
@@ -173,6 +231,14 @@ class M365GattServer(
     
     @RequiresPermission(allOf = [Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE])
     fun start(): Boolean {
+        // Without this guard a second start() opens another GATT server and
+        // another advertiser while the previous ones are never closed, leaking
+        // native BLE resources and resetting serviceAdded under the old server.
+        if (isRunning) {
+            Log.w(TAG, "start() called while already running, ignoring")
+            return true
+        }
+
         val adapter = bluetoothManager.adapter ?: run {
             Log.e(TAG, "Bluetooth adapter not available")
             return false
@@ -242,10 +308,10 @@ class M365GattServer(
         
         // Reset service added flag before adding
         serviceAdded = false
-        
+
         val addResult = gattServer?.addService(service)
         Log.d(TAG, "addService called, result: $addResult")
-        
+
         // Wait for service to be added (with timeout)
         if (addResult == true) {
             synchronized(serviceAddedLock) {
@@ -255,22 +321,31 @@ class M365GattServer(
                         serviceAddedLock.wait(5000)
                     } catch (e: InterruptedException) {
                         Log.e(TAG, "Interrupted while waiting for service to be added")
+                        Thread.currentThread().interrupt()
                     }
                 }
             }
-            
-            if (!serviceAdded) {
-                Log.e(TAG, "Timeout waiting for service to be added")
-            } else {
-                Log.i(TAG, "Service successfully registered with GATT server")
-            }
         } else {
+            // Registration failed outright. Advertising anyway would let a
+            // central connect and find no service at all, so fail here.
             Log.e(TAG, "addService returned false or gattServer is null")
+            gattServer?.close()
+            gattServer = null
+            return false
         }
-        
-        // Start Advertising
+
+        if (!serviceAdded) {
+            Log.e(TAG, "Timeout waiting for service to be added")
+            gattServer?.close()
+            gattServer = null
+            return false
+        }
+
+        Log.i(TAG, "Service successfully registered with GATT server")
+
+        // Only advertise once the service is confirmed present.
         startAdvertising()
-        
+
         isRunning = true
         
         // Log device name for debugging (helps identify which device is advertising)
@@ -327,8 +402,15 @@ class M365GattServer(
     /**
      * Update telemetry data and notify all subscribed devices
      * LATENCY OPTIMIZED: Immediately sends notifications to glasses for real-time display
+     *
+     * Synchronized: GatewayService drives this from both a `collectLatest`
+     * collector and a 1-second heartbeat, both on the multi-threaded
+     * Dispatchers.Default. Interleaved calls would otherwise race on
+     * currentTelemetry / telemetryCharacteristic.value and could put a
+     * half-written buffer on the air.
      */
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    @Synchronized
     fun updateTelemetry(
         speedKmh: Double,
         scooterBattery: Int,
@@ -340,6 +422,10 @@ class M365GattServer(
         tripMeters: Int,
         tripSeconds: Int
     ) {
+        // telemetryCharacteristic is lateinit and only assigned in start(); a
+        // call before start() (or after stop(), on a closed server) would throw.
+        if (!isRunning) return
+
         val now = System.currentTimeMillis()
         
         // LATENCY MONITORING: Log update frequency stats periodically
@@ -347,7 +433,7 @@ class M365GattServer(
         if (now - lastLogTimeMs >= LATENCY_LOG_INTERVAL_MS) {
             val intervalSec = (now - lastLogTimeMs) / 1000.0
             val updatesPerSec = telemetryUpdateCount / intervalSec
-            Log.d(TAG, "LATENCY STATS: ${telemetryUpdateCount} updates in ${intervalSec}s = ${String.format("%.1f", updatesPerSec)} updates/sec, subscribers: ${subscribedDevices.size}")
+            Log.d(TAG, "LATENCY STATS: ${telemetryUpdateCount} updates in ${intervalSec}s = ${String.format("%.1f", updatesPerSec)} updates/sec, subscribers: ${subscriberCount()}")
             telemetryUpdateCount = 0
             lastLogTimeMs = now
         }
@@ -385,11 +471,11 @@ class M365GattServer(
         // notifications (unacknowledged) which is faster than indications (acknowledged)
         @Suppress("DEPRECATION")
         telemetryCharacteristic.value = currentTelemetry
-        subscribedDevices.values.forEach { device ->
+        subscribersOf(M365HudGattProfile.TELEMETRY_CHAR_UUID).values.forEach { device ->
             @Suppress("DEPRECATION")
             gattServer?.notifyCharacteristicChanged(device, telemetryCharacteristic, false)
         }
-        
+
         // Also update and notify time
         updateTimeData()
         notifyTime()
@@ -418,7 +504,7 @@ class M365GattServer(
     private fun notifyTime() {
         @Suppress("DEPRECATION")
         timeCharacteristic.value = currentTime
-        subscribedDevices.values.forEach { device ->
+        subscribersOf(M365HudGattProfile.TIME_CHAR_UUID).values.forEach { device ->
             @Suppress("DEPRECATION")
             gattServer?.notifyCharacteristicChanged(device, timeCharacteristic, false)
         }
@@ -445,15 +531,28 @@ class M365GattServer(
         isRunning = false
         advertiser?.stopAdvertising(advertiseCallback)
         gattServer?.close()
-        subscribedDevices.clear()
+        // Null out so a later start() cannot reuse a closed server.
+        advertiser = null
+        gattServer = null
+        subscriptions.clear()
         Log.d(TAG, "GATT Server stopped")
     }
-    
+
     fun isRunning(): Boolean = isRunning
-    
-    fun isDeviceConnected(): Boolean = subscribedDevices.isNotEmpty()
-    
-    fun getConnectedDeviceCount(): Int = subscribedDevices.size
+
+    fun isDeviceConnected(): Boolean = subscriberCount() > 0
+
+    fun getConnectedDeviceCount(): Int = subscriberCount()
+
+    /**
+     * Reads the device address, returning null instead of throwing when
+     * BLUETOOTH_CONNECT is not granted (required on API 31+).
+     */
+    private fun BluetoothDevice.addressOrNull(): String? = try {
+        address
+    } catch (e: SecurityException) {
+        null
+    }
     
     /**
      * Get the glasses battery level received from connected glasses.

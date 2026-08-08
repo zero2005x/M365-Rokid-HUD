@@ -36,8 +36,11 @@ class GatewayService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "m365_gateway_channel"
         
+        // Written in onCreate/onDestroy, read from other threads via the
+        // accessors below.
+        @Volatile
         private var instance: GatewayService? = null
-        
+
         fun isRunning(): Boolean = instance?.isServiceRunning == true
         
         /**
@@ -51,12 +54,25 @@ class GatewayService : Service() {
          */
         fun isGlassesConnected(): Boolean = instance?.gattServer?.isDeviceConnected() == true
         
-        fun start(context: Context) {
+        /**
+         * @return true if the service start was accepted by the system.
+         *
+         * On Android 12+ starting a foreground service from the background
+         * throws ForegroundServiceStartNotAllowedException; report that to the
+         * caller instead of crashing.
+         */
+        fun start(context: Context): Boolean {
             val intent = Intent(context, GatewayService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            return try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not start GatewayService", e)
+                false
             }
         }
         
@@ -68,6 +84,8 @@ class GatewayService : Service() {
     private var repository: ScooterRepository? = null
     private var gattServer: M365GattServer? = null
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // Read cross-thread via the companion accessors.
+    @Volatile
     private var isServiceRunning = false
     
     // === DOZE MODE HANDLING ===
@@ -81,17 +99,34 @@ class GatewayService : Service() {
         
         createNotificationChannel()
         
-        // Start foreground immediately
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID, 
-                buildNotification("Initializing..."),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification("Initializing..."))
+        // Validate permissions BEFORE startForeground: on Android 14+ a
+        // connectedDevice FGS requires BLUETOOTH_CONNECT to be granted at the
+        // moment startForeground is called, so checking afterwards is too late.
+        if (!hasRequiredBlePermissions()) {
+            Log.e(TAG, "Missing BLE permissions, cannot start gateway service")
+            stopSelf()
+            return
         }
-        
+
+        // On Android 12+ a background FGS start throws
+        // ForegroundServiceStartNotAllowedException; handle it instead of
+        // crashing.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification("Initializing..."),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification("Initializing..."))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed; stopping service", e)
+            stopSelf()
+            return
+        }
+
         // === DOZE MODE: Acquire WakeLock to prevent CPU sleep ===
         acquireWakeLock()
         
@@ -111,8 +146,13 @@ class GatewayService : Service() {
                 PowerManager.PARTIAL_WAKE_LOCK,
                 "M365Gateway::TelemetryLock"
             ).apply {
-                // Acquire with timeout of 1 hour, will be re-acquired if needed
-                acquire(60 * 60 * 1000L) // 1 hour
+                // No timeout: this service is START_STICKY and intended to run
+                // indefinitely. The previous 1-hour timeout claimed it "will be
+                // re-acquired if needed", but nothing ever re-acquired it, so
+                // after an hour Doze could suspend telemetry polling while the
+                // service still appeared healthy. releaseWakeLock() in
+                // onDestroy is the matching release.
+                acquire()
             }
             Log.i(TAG, "DOZE: WakeLock acquired for telemetry polling")
         } catch (e: Exception) {
@@ -164,20 +204,31 @@ class GatewayService : Service() {
         return null
     }
     
+    /**
+     * True when the runtime permissions required to run a connectedDevice
+     * foreground service and act as a BLE peripheral are granted.
+     *
+     * Checked before startForeground(), because Android 14+ validates the
+     * while-in-use permission at that exact call.
+     */
+    private fun hasRequiredBlePermissions(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+
+        return ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADVERTISE) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
     private fun initializeGateway() {
-        // Check permissions
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) 
-                != PackageManager.PERMISSION_GRANTED ||
-                ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADVERTISE) 
-                != PackageManager.PERMISSION_GRANTED) {
-                Log.e(TAG, "Missing BLE permissions")
-                updateNotification("⚠️ Missing Bluetooth permissions")
-                stopSelf()
-                return
-            }
+        // Re-check: permissions can be revoked between onCreate and here.
+        if (!hasRequiredBlePermissions()) {
+            Log.e(TAG, "Missing BLE permissions")
+            updateNotification("⚠️ Missing Bluetooth permissions")
+            stopSelf()
+            return
         }
-        
+
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         gattServer = M365GattServer(applicationContext, bluetoothManager)
         
@@ -240,8 +291,11 @@ class GatewayService : Service() {
                         val glassesStatus = if (gattServer?.isDeviceConnected() == true) "🔗" else "⏳"
                         val scooterStatus = if (connState == M365HudGattProfile.STATE_READY) "🛴" else "⚠️"
                         updateNotification("$glassesStatus $scooterStatus ${info.speed.toInt()} km/h | 🔋${info.battery}%")
-                    } catch (e: SecurityException) {
-                        Log.e(TAG, "Security exception updating telemetry", e)
+                    } catch (e: Exception) {
+                        // Catch broadly: anything escaping here would cancel this
+                        // collector and silently stop all telemetry forwarding,
+                        // while the SupervisorJob keeps the service looking alive.
+                        Log.e(TAG, "Failed to update telemetry", e)
                     }
                 } else {
                     // Send "disconnected" state telemetry so glasses know gateway is alive

@@ -14,13 +14,28 @@ import java.util.Locale
  * Stores data in CSV format for later analysis.
  */
 class TelemetryLogger(private val context: Context) {
-    private var currentSessionFile: File? = null
-    private var currentBleLogFile: File? = null
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
-    private val filenameFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-    
-    private var isLogging = false
-    
+    // log()/logBle() are called from BLE callback and worker threads while
+    // startSession()/stopSession() run on other threads. @Volatile gives
+    // visibility; writeLock serialises the actual file writes and the session
+    // state transitions so lines cannot interleave or land in a replaced file.
+    @Volatile private var currentSessionFile: File? = null
+    @Volatile private var currentBleLogFile: File? = null
+    @Volatile private var isLogging = false
+
+    private val writeLock = Any()
+
+    // SimpleDateFormat is not thread-safe: a shared instance produces corrupted
+    // timestamps (or throws) under concurrent formatting. One instance per
+    // thread avoids that without a lock on the hot path.
+    private val dateFormat = ThreadLocal.withInitial {
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+    }
+    private val filenameFormat = ThreadLocal.withInitial {
+        SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+    }
+
+    private fun timestamp(): String = dateFormat.get()!!.format(Date())
+
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     
     companion object {
@@ -46,49 +61,78 @@ class TelemetryLogger(private val context: Context) {
      * Start a new logging session for both telemetry and BLE communication.
      * Will only start if logging is globally enabled.
      */
-    fun startSession() {
+    fun startSession() = synchronized(writeLock) {
         if (!isLoggingEnabled()) {
             return // Logging is disabled, don't create files
         }
-        
+
+        // Re-entrancy guard: calling this twice appended a second header to the
+        // same file (filenames only have second resolution) and abandoned the
+        // in-progress session.
+        if (isLogging) {
+            return
+        }
+
         val dir = File(context.filesDir, "logs")
-        if (!dir.exists()) dir.mkdirs()
-        
-        val timestamp = filenameFormat.format(Date())
-        
-        // Telemetry log file
-        val telemetryFilename = "m365_telemetry_${timestamp}.csv"
-        currentSessionFile = File(dir, telemetryFilename)
-        FileWriter(currentSessionFile, true).use { writer ->
-            writer.append("Timestamp,Speed,Battery,Temperature,AvgSpeed,TripSeconds,TripMeters,RemainingKm,Mileage\n")
+        if (!dir.exists() && !dir.mkdirs()) {
+            android.util.Log.e("TelemetryLogger", "Could not create log directory: $dir")
+            return
         }
-        
-        // BLE communication log file
-        val bleFilename = "m365_ble_${timestamp}.csv"
-        currentBleLogFile = File(dir, bleFilename)
-        FileWriter(currentBleLogFile, true).use { writer ->
-            writer.append("Timestamp,Direction,Type,Service,Characteristic,DataHex,DataLength,Description\n")
+
+        val stamp = filenameFormat.get()!!.format(Date())
+
+        try {
+            // Telemetry log file
+            val telemetryFile = File(dir, "m365_telemetry_${stamp}.csv")
+            FileWriter(telemetryFile, true).use { writer ->
+                writer.append("Timestamp,Speed,Battery,Temperature,AvgSpeed,TripSeconds,TripMeters,RemainingKm,Mileage\n")
+            }
+
+            // BLE communication log file
+            val bleFile = File(dir, "m365_ble_${stamp}.csv")
+            FileWriter(bleFile, true).use { writer ->
+                writer.append("Timestamp,Direction,Type,Service,Characteristic,DataHex,DataLength,Description\n")
+            }
+
+            // Only publish the session once both files exist, so a failure
+            // cannot leave a half-initialised logging state behind.
+            currentSessionFile = telemetryFile
+            currentBleLogFile = bleFile
+            isLogging = true
+        } catch (e: Exception) {
+            android.util.Log.e("TelemetryLogger", "Could not start logging session", e)
+            currentSessionFile = null
+            currentBleLogFile = null
+            isLogging = false
         }
-        
-        isLogging = true
     }
 
     /**
      * Log telemetry data (motor info)
      */
     fun log(info: MotorInfo) {
-        val file = currentSessionFile ?: return
-        if (!isLogging) return
-        try {
-            FileWriter(file, true).use { writer ->
-                val line = "${dateFormat.format(Date())},${info.speed},${info.battery},${info.temp}," +
-                        "${info.avgSpeed},${info.tripSeconds},${info.tripMeters},${info.remainingKm},${info.mileage}\n"
-                writer.append(line)
+        // Format outside the lock; only the write is serialised.
+        val line = "${timestamp()},${info.speed},${info.battery},${info.temp}," +
+                "${info.avgSpeed},${info.tripSeconds},${info.tripMeters},${info.remainingKm},${info.mileage}\n"
+
+        synchronized(writeLock) {
+            val file = currentSessionFile ?: return
+            if (!isLogging) return
+            try {
+                FileWriter(file, true).use { writer -> writer.append(line) }
+            } catch (e: Exception) {
+                android.util.Log.w("TelemetryLogger", "Telemetry log write failed", e)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
     }
+
+    /**
+     * Escapes a value for CSV: wraps it in quotes and doubles any embedded
+     * quotes (RFC 4180). Only stripping commas and newlines left embedded `"`
+     * free to break the row structure and corrupt every following row.
+     */
+    private fun csvEscape(value: String): String =
+        "\"" + value.replace("\"", "\"\"").replace("\r", " ").replace("\n", " ") + "\""
     
     /**
      * Log BLE communication data
@@ -107,17 +151,19 @@ class TelemetryLogger(private val context: Context) {
         data: ByteArray,
         description: String = ""
     ) {
-        val file = currentBleLogFile ?: return
-        if (!isLogging) return
-        try {
-            FileWriter(file, true).use { writer ->
-                val dataHex = data.joinToString("") { "%02X".format(it) }
-                val escapedDesc = description.replace(",", ";").replace("\n", " ")
-                val line = "${dateFormat.format(Date())},$direction,$type,$service,$characteristic,$dataHex,${data.size},\"$escapedDesc\"\n"
-                writer.append(line)
+        val dataHex = data.joinToString("") { "%02X".format(it) }
+        val line = "${timestamp()},${csvEscape(direction)},${csvEscape(type)}," +
+                "${csvEscape(service)},${csvEscape(characteristic)},$dataHex,${data.size}," +
+                "${csvEscape(description)}\n"
+
+        synchronized(writeLock) {
+            val file = currentBleLogFile ?: return
+            if (!isLogging) return
+            try {
+                FileWriter(file, true).use { writer -> writer.append(line) }
+            } catch (e: Exception) {
+                android.util.Log.w("TelemetryLogger", "BLE log write failed", e)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
     }
     
@@ -152,7 +198,7 @@ class TelemetryLogger(private val context: Context) {
     /**
      * Stop the current logging session
      */
-    fun stopSession() {
+    fun stopSession() = synchronized(writeLock) {
         isLogging = false
         currentSessionFile = null
         currentBleLogFile = null

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -70,18 +71,27 @@ fun DashboardScreen(
     // Refresh gateway status and glasses info periodically
     LaunchedEffect(Unit) {
         while (true) {
-            // BLE Gateway
-            gatewayEnabled = GatewayService.isRunning()
-            glassesConnected = GatewayService.isGlassesConnected()
-            if (gatewayEnabled && glassesConnected) {
-                glassesBattery = GatewayService.getGlassesBatteryLevel()
+            // Any throw from these getters (BluetoothAdapter/Binder trouble)
+            // would propagate out of the effect and permanently cancel this
+            // coroutine, freezing gateway/glasses/WiFi status forever.
+            try {
+                // BLE Gateway
+                gatewayEnabled = GatewayService.isRunning()
+                glassesConnected = GatewayService.isGlassesConnected()
+                if (gatewayEnabled && glassesConnected) {
+                    glassesBattery = GatewayService.getGlassesBatteryLevel()
+                }
+
+                // WiFi Gateway
+                wifiGatewayEnabled = WifiGatewayService.isRunning()
+                wifiServerState = WifiGatewayService.getServerState()
+                wifiClientCount = WifiGatewayService.getConnectedDeviceCount()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("DashboardScreen", "Gateway status poll failed", e)
             }
-            
-            // WiFi Gateway
-            wifiGatewayEnabled = WifiGatewayService.isRunning()
-            wifiServerState = WifiGatewayService.getServerState()
-            wifiClientCount = WifiGatewayService.getConnectedDeviceCount()
-            
+
             kotlinx.coroutines.delay(2000L)
         }
     }
@@ -89,22 +99,9 @@ fun DashboardScreen(
     // Bluetooth state dialogs
     var showBluetoothDisabledDialog by remember { mutableStateOf(false) }
     
-    // Launcher for enabling Bluetooth
-    val enableBluetoothLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { _ ->
-        // After returning from Bluetooth settings, check if it's enabled now
-        if (BluetoothHelper.isBluetoothEnabled(context) && pendingGatewayEnable) {
-            // Check permissions again and start gateway
-            if (BluetoothHelper.hasAdvertisePermissions(context)) {
-                gatewayEnabled = true
-                GatewayService.start(context)
-            }
-        }
-        pendingGatewayEnable = false
-    }
-    
-    // Permission launcher for BLE Advertise
+    // Permission launcher for BLE Advertise.
+    // Declared before enableBluetoothLauncher because that launcher needs to be
+    // able to hand off to it when permissions are still missing.
     val advertisePermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -119,7 +116,37 @@ fun DashboardScreen(
         }
         pendingGatewayEnable = false
     }
-    
+
+    // Launcher for enabling Bluetooth
+    val enableBluetoothLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // After returning from Bluetooth settings, check if it's enabled now
+        if (BluetoothHelper.isBluetoothEnabled(context) && pendingGatewayEnable) {
+            // Check permissions again and start gateway
+            if (BluetoothHelper.hasAdvertisePermissions(context)) {
+                gatewayEnabled = true
+                GatewayService.start(context)
+                pendingGatewayEnable = false
+            } else {
+                // Permissions are still missing. The switch handler checks
+                // Bluetooth before permissions, so on a first run with BLE
+                // permissions never granted this path is reached. Request them
+                // and keep pendingGatewayEnable set so the permission callback
+                // can finish the job — clearing it here silently aborted the
+                // whole flow and the gateway never started.
+                advertisePermissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                        Manifest.permission.BLUETOOTH_ADVERTISE
+                    )
+                )
+            }
+        } else {
+            pendingGatewayEnable = false
+        }
+    }
+
     // Motor lock state - Note: M365 doesn't support reading lock state, 
     // so we track it locally and assume unlocked initially
     var isLocked by remember { mutableStateOf(false) }

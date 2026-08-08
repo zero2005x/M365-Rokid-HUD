@@ -39,6 +39,8 @@ class WifiGatewayService : Service() {
         private const val NOTIFICATION_ID = 1002
         private const val CHANNEL_ID = "m365_wifi_gateway_channel"
         
+        // Written in onCreate/onDestroy, read from other threads.
+        @Volatile
         private var instance: WifiGatewayService? = null
         
         fun isRunning(): Boolean = instance?.isServiceRunning == true
@@ -66,6 +68,8 @@ class WifiGatewayService : Service() {
     private var repository: ScooterRepository? = null
     private var wifiServer: WifiGatewayServer? = null
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // Read cross-thread via the companion accessors.
+    @Volatile
     private var isServiceRunning = false
     
     // WakeLock for background operation
@@ -78,17 +82,27 @@ class WifiGatewayService : Service() {
         
         createNotificationChannel()
         
-        // Start foreground immediately
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                buildNotification("Initializing WiFi Gateway..."),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification("Initializing WiFi Gateway..."))
+        // Start foreground immediately.
+        // On Android 14+ a connectedDevice FGS throws SecurityException without
+        // the matching while-in-use permission, and on Android 12+ a background
+        // start throws ForegroundServiceStartNotAllowedException. Neither should
+        // crash the app.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification("Initializing WiFi Gateway..."),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification("Initializing WiFi Gateway..."))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed; stopping service", e)
+            stopSelf()
+            return
         }
-        
+
         // Acquire wake lock
         acquireWakeLock()
         
@@ -221,7 +235,12 @@ class WifiGatewayService : Service() {
                 PowerManager.PARTIAL_WAKE_LOCK,
                 "M365WifiGateway::TelemetryLock"
             ).apply {
-                acquire(60 * 60 * 1000L) // 1 hour
+                // No timeout: this service streams telemetry for as long as it
+                // runs. A 1-hour timeout was silently released by the system
+                // and never re-acquired, so after an hour the CPU could sleep
+                // and interrupt streaming. releaseWakeLock() in onDestroy is
+                // the matching release.
+                acquire()
             }
             Log.i(TAG, "WakeLock acquired")
         } catch (e: Exception) {

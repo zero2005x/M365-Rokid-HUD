@@ -10,7 +10,9 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -65,6 +67,33 @@ private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
 private fun createBatteryOptimizationIntent(context: Context): Intent {
     return Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
         data = Uri.parse("package:${context.packageName}")
+    }
+}
+
+/**
+ * Launches the battery-optimization exemption request.
+ *
+ * ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS throws SecurityException on
+ * API 23+ unless the app holds REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, and
+ * ActivityNotFoundException on devices with no handler. Either would crash the
+ * app straight from a banner tap, so fall back to the generic settings screen.
+ */
+private fun requestBatteryOptimizationExemption(
+    context: Context,
+    launcher: ManagedActivityResultLauncher<Intent, ActivityResult>
+) {
+    try {
+        launcher.launch(createBatteryOptimizationIntent(context))
+    } catch (e: Exception) {
+        Log.w("ScanScreen", "Direct battery optimization request failed, falling back to settings", e)
+        try {
+            context.startActivity(
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e2: Exception) {
+            Log.e("ScanScreen", "Could not open battery optimization settings", e2)
+        }
     }
 }
 
@@ -167,8 +196,19 @@ fun ScanScreen(
     // Scan trigger - incremented to restart scan
     var scanTrigger by remember { mutableStateOf(0) }
     
-    // Bluetooth enabled state
-    var isBluetoothEnabled by remember { mutableStateOf(BluetoothHelper.isBluetoothEnabled(context)) }
+    // Bluetooth enabled state.
+    // Deliberately starts false and is only queried once permissions are
+    // granted: on Android 12+ BluetoothAdapter.isEnabled() requires
+    // BLUETOOTH_CONNECT and throws SecurityException without it, and this
+    // composition runs before the permission launcher fires — so a fresh
+    // install could crash on this screen before the dialog even appeared.
+    var isBluetoothEnabled by remember { mutableStateOf(false) }
+
+    LaunchedEffect(permissionsGranted) {
+        if (permissionsGranted) {
+            isBluetoothEnabled = BluetoothHelper.isBluetoothEnabled(context)
+        }
+    }
     var showBluetoothDisabledDialog by remember { mutableStateOf(false) }
     
     // Launcher for enabling Bluetooth
@@ -572,7 +612,7 @@ fun ScanScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
-                            batteryOptLauncher.launch(createBatteryOptimizationIntent(context))
+                            requestBatteryOptimizationExemption(context, batteryOptLauncher)
                         }
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                     color = MaterialTheme.colorScheme.tertiaryContainer,
@@ -597,7 +637,7 @@ fun ScanScreen(
                         }
                         Button(
                             onClick = { 
-                                batteryOptLauncher.launch(createBatteryOptimizationIntent(context))
+                                requestBatteryOptimizationExemption(context, batteryOptLauncher)
                             },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.tertiary

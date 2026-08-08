@@ -137,9 +137,12 @@ class LogExporter(private val context: Context) {
         return try {
             // Get the content URI for the file using FileProvider
             // Note: Authority must match the one defined in AndroidManifest.xml
+            // Must match android:authorities in the manifest, which is
+            // "${applicationId}.provider". Hardcoding the literal broke as soon
+            // as applicationId gained a suffix (e.g. a debug variant).
             val uri: Uri = FileProvider.getUriForFile(
                 context,
-                "com.m365bleapp.provider",
+                "${context.packageName}.provider",
                 zipFile
             )
             

@@ -1,5 +1,6 @@
 package com.m365bleapp.ffi
 
+import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -31,34 +32,37 @@ class M365Native {
          * Load native library synchronously (for background thread use).
          * Thread-safe and idempotent.
          */
+        /**
+         * The method is @Synchronized, so callers already serialise on the
+         * monitor: the previous isLoading CAS always succeeded and the
+         * busy-wait below it was unreachable. Rely on the monitor plus the
+         * isLoaded/loadError state instead.
+         */
         @Synchronized
         fun loadLibrarySync(): Boolean {
             if (isLoaded.get()) return true
             if (loadError != null) return false
-            
-            if (isLoading.compareAndSet(false, true)) {
-                try {
-                    Log.d(TAG, "Loading native library on thread: ${Thread.currentThread().name}")
-                    val startTime = System.currentTimeMillis()
-                    System.loadLibrary("ninebot_ffi")
-                    val elapsed = System.currentTimeMillis() - startTime
-                    Log.i(TAG, "Native library loaded successfully in ${elapsed}ms")
-                    isLoaded.set(true)
-                    return true
-                } catch (e: UnsatisfiedLinkError) {
-                    Log.e(TAG, "Failed to load native library: ${e.message}", e)
-                    loadError = e
-                    return false
-                } finally {
-                    isLoading.set(false)
-                }
+
+            return try {
+                Log.d(TAG, "Loading native library on thread: ${Thread.currentThread().name}")
+                val startTime = System.currentTimeMillis()
+                System.loadLibrary("ninebot_ffi")
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.i(TAG, "Native library loaded successfully in ${elapsed}ms")
+                isLoaded.set(true)
+                true
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Failed to load native library: ${e.message}", e)
+                loadError = e
+                false
+            } catch (e: Throwable) {
+                // System.loadLibrary can also throw SecurityException or
+                // NullPointerException; without this the throwable escaped and
+                // left loadError unset, so retries silently tried again.
+                Log.e(TAG, "Unexpected error loading native library: ${e.message}", e)
+                loadError = e
+                false
             }
-            
-            // Another thread is loading, wait for it
-            while (isLoading.get()) {
-                Thread.sleep(10)
-            }
-            return isLoaded.get()
         }
         
         /**
@@ -86,41 +90,57 @@ class M365Native {
      * @throws IllegalStateException if library failed to load
      */
     private fun ensureLoaded() {
-        if (!isLoaded.get()) {
-            if (!loadLibrarySync()) {
-                throw IllegalStateException("Native library not loaded: ${loadError?.message}")
-            }
+        if (isLoaded.get()) return
+
+        // loadLibrarySync() blocks on a monitor and may run System.loadLibrary
+        // itself. Doing either on the main thread risks visible jank or an ANR,
+        // so require the caller to have pre-loaded via loadLibraryAsync().
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            throw IllegalStateException(
+                "Native library is not loaded yet. Call M365Native.loadLibraryAsync() " +
+                    "before using this API from the main thread."
+            )
+        }
+
+        if (!loadLibrarySync()) {
+            throw IllegalStateException("Native library not loaded: ${loadError?.message}")
         }
     }
 
     // ========== Native External Functions ==========
-    // These are the actual JNI bindings that match Rust FFI exports
+    // These are the actual JNI bindings that match Rust FFI exports.
     // Function names MUST match exactly: Java_com_m365bleapp_ffi_M365Native_<name>
-    
+    //
+    // They are private on purpose: calling them before the library is loaded
+    // throws an uncaught UnsatisfiedLinkError. Every caller must go through the
+    // *Safe wrappers below, which funnel through ensureLoaded().
+
     /** Initialize library (logger etc) */
-    external fun init()
+    private external fun init()
 
-    /** Returns [8 bytes Ptr][Public Key Bytes...] */
-    external fun prepareHandshake(): ByteArray
+    /** Returns [8 bytes Handle][Public Key Bytes...] */
+    private external fun prepareHandshake(): ByteArray
 
-    /** 
-     * ctxPtr is the first 8 bytes returned from prepareHandshake
-     * Returns [12 bytes Token][DID Ciphertext...] or empty if failed 
+    /**
+     * ctxPtr is the first 8 bytes returned from prepareHandshake.
+     * Single-use: the native side consumes the handle, so a retry needs a fresh
+     * prepareHandshake().
+     * Returns [12 bytes Token][DID Ciphertext...] or empty if failed
      */
-    external fun processHandshake(ctxPtr: Long, remoteKey: ByteArray, remoteInfo: ByteArray): ByteArray
+    private external fun processHandshake(ctxPtr: Long, remoteKey: ByteArray, remoteInfo: ByteArray): ByteArray
 
-    /** Returns [8 bytes Ptr][Login Data...] or empty */
-    external fun login(token: ByteArray, randKey: ByteArray, remoteKey: ByteArray, remoteInfo: ByteArray): ByteArray
+    /** Returns [8 bytes Handle][Login Data...] or empty */
+    private external fun login(token: ByteArray, randKey: ByteArray, remoteKey: ByteArray, remoteInfo: ByteArray): ByteArray
 
-    /** Encrypt payload using session pointer */
-    external fun encrypt(sessionPtr: Long, payload: ByteArray, counter: Long): ByteArray
+    /** Encrypt payload using the session handle */
+    private external fun encrypt(sessionPtr: Long, payload: ByteArray, counter: Long): ByteArray
 
-    /** Decrypt payload using session pointer */
-    external fun decrypt(sessionPtr: Long, encrypted: ByteArray): ByteArray
+    /** Decrypt payload using the session handle */
+    private external fun decrypt(sessionPtr: Long, encrypted: ByteArray): ByteArray
 
-    /** Free the session pointer */
-    external fun freeSession(sessionPtr: Long)
-    
+    /** Release the session handle. Idempotent on the native side. */
+    private external fun freeSession(sessionPtr: Long)
+
     // ========== Safe Wrapper Methods (optional, with ensureLoaded check) ==========
     
     /** Initialize library with automatic library loading */
@@ -161,6 +181,7 @@ class M365Native {
 
     /** freeSession with automatic library loading */
     fun freeSessionSafe(sessionPtr: Long) {
+        if (sessionPtr == 0L) return
         ensureLoaded()
         freeSession(sessionPtr)
     }

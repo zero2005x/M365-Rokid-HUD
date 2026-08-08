@@ -130,8 +130,17 @@ class ScooterRepository private constructor(private val context: Context) {
     
     private val logger = com.m365bleapp.utils.TelemetryLogger(context)
 
+    // These are touched from the connect coroutine (Dispatchers.IO), the
+    // telemetry loop, disconnect() (often Main) and the disconnect callback
+    // (Main). @Volatile gives cross-thread visibility; connectionLock makes
+    // teardown atomic so the native session cannot be released while another
+    // thread is still deciding to use it.
+    @Volatile
     private var activeGatt: BluetoothGatt? = null
+    @Volatile
     private var sessionPtr: Long = 0
+
+    private val connectionLock = Any()
     
     // Single channel for all incoming data for now.
     // In strict implementation we might separate them, but sequential flow allows this.
@@ -163,7 +172,7 @@ class ScooterRepository private constructor(private val context: Context) {
                 
                 // Load native library asynchronously
                 if (M365Native.loadLibraryAsync()) {
-                    native.init()  // Call instance init after library is loaded
+                    native.initSafe()  // Call instance init after library is loaded
                     val elapsed = System.currentTimeMillis() - startTime
                     Log.i("ScooterRepo", "Native library initialized in ${elapsed}ms")
                 } else {
@@ -200,6 +209,19 @@ class ScooterRepository private constructor(private val context: Context) {
         scope.launch(Dispatchers.IO) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
             _connectionState.value = ConnectionState.Connecting
             try {
+                // Every BLE call below (getDevice, connect, requestMtu,
+                // enableNotifications, requestPriority) throws SecurityException
+                // on Android 12+ without this permission. The @RequiresPermission
+                // annotation is compile-time only, so check it for real and fail
+                // with a clear message instead of an opaque crash.
+                if (ActivityCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.BLUETOOTH_CONNECT
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    throw SecurityException(getString(R.string.bluetooth_permission_required))
+                }
+
                 val device = bleManager.getDevice(normalizedMac)
                 
                 // Clear old data from channels
@@ -224,10 +246,17 @@ class ScooterRepository private constructor(private val context: Context) {
                     }
                     logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
                     
-                    if (uuid == BleManager.UART_RX) {
-                        uartRxChannel.trySend(data)
+                    // trySend fails silently when the bounded channel is full.
+                    // Dropping an AUTH frame causes a spurious handshake
+                    // timeout, and dropping telemetry loses a sample, so at
+                    // least make the loss visible instead of invisible.
+                    val delivered = if (uuid == BleManager.UART_RX) {
+                        uartRxChannel.trySend(data).isSuccess
                     } else {
-                        controlChannel.trySend(data)
+                        controlChannel.trySend(data).isSuccess
+                    }
+                    if (!delivered) {
+                        Log.w("ScooterRepo", "Dropped ${data.size}-byte notification from $charName: channel full")
                     }
                 } 
                 if (gatt == null) throw Exception(getString(R.string.error_gatt_failed))
@@ -238,6 +267,8 @@ class ScooterRepository private constructor(private val context: Context) {
                 bleManager.requestPriority(gatt, BluetoothGatt.CONNECTION_PRIORITY_HIGH)
                 
                 // Request MTU for larger packets (Optional but helps)
+                // Permission is already verified at the top of connect(); this
+                // re-check is belt-and-braces for the lint annotation.
                 Log.d("ScooterRepo", "Requesting MTU 512")
                 if (androidx.core.app.ActivityCompat.checkSelfPermission(
                         context,
@@ -297,8 +328,10 @@ class ScooterRepository private constructor(private val context: Context) {
 
             } catch (e: Exception) {
                 Log.e("ScooterRepo", "Connection error", e)
-                _connectionState.value = ConnectionState.Error(e.message ?: getString(R.string.state_unknown_error))
+                // Clean up first: disconnect() sets state to Disconnected, so
+                // setting Error before it meant the UI never saw the failure.
                 disconnect()
+                _connectionState.value = ConnectionState.Error(e.message ?: getString(R.string.state_unknown_error))
             }
         }
     }
@@ -316,7 +349,7 @@ class ScooterRepository private constructor(private val context: Context) {
         // delay(250) // Reverted: Delay caused timeout. Rust proceeds fast.
 
         // 2. Prepare ECDH
-        val myPubKey = native.prepareHandshake() 
+        val myPubKey = native.prepareHandshakeSafe() 
         val ctxPtr = myPubKey.sliceArray(0 until 8).toLong()
         val myPubKeyBytes = myPubKey.sliceArray(8 until myPubKey.size)
         // Rust: public_key_bytes.as_bytes()[1..]
@@ -356,7 +389,7 @@ class ScooterRepository private constructor(private val context: Context) {
         
         val fullRemoteKey = byteArrayOf(0x04) + remoteKeyBytes
         
-        val tokenAndDid = native.processHandshake(ctxPtr, fullRemoteKey, remoteInfo)
+        val tokenAndDid = native.processHandshakeSafe(ctxPtr, fullRemoteKey, remoteInfo)
         if (tokenAndDid.isEmpty()) throw Exception("Handshake failed")
         
         val token = tokenAndDid.sliceArray(0 until 12)
@@ -398,7 +431,10 @@ class ScooterRepository private constructor(private val context: Context) {
         Log.d("ScooterRepo", "Got RCV_RDY!")
         delay(40)
         
-        val randKey = ByteArray(16).apply { java.util.Random().nextBytes(this) }
+        // SecureRandom, not java.util.Random: this nonce participates in the
+        // ECDH/login exchange, and java.util.Random's output is predictable
+        // from a previously observed sequence, which weakens BLE authentication.
+        val randKey = ByteArray(16).apply { java.security.SecureRandom().nextBytes(this) }
         writeMiParcel(AUTH_SERVICE, AUTH_AVDTP, randKey)
         
         waitForCmd("00000100") // RCV_OK
@@ -412,7 +448,7 @@ class ScooterRepository private constructor(private val context: Context) {
         val remoteInfo = readMiParcelWithProtocol()
         
         // 4. Native Login
-        val res = native.login(token, randKey, remoteKey, remoteInfo)
+        val res = native.loginSafe(token, randKey, remoteKey, remoteInfo)
         if (res.isEmpty()) throw Exception("Login calc failed")
         
         sessionPtr = res.sliceArray(0 until 8).toLong()
@@ -493,7 +529,7 @@ class ScooterRepository private constructor(private val context: Context) {
                 
                 Log.d("ScooterRepo", "Loop: Query 0x${attribute.toString(16)}: ${packet.toHex()}")
                 
-                val encrypted = native.encrypt(sessionPtr, packet, counter)
+                val encrypted = native.encryptSafe(sessionPtr, packet, counter)
                 Log.d("ScooterRepo", "Encrypted (${encrypted.size} bytes): ${encrypted.toHex()}")
                 
                 // Write Encrypted to UART TX
@@ -502,7 +538,7 @@ class ScooterRepository private constructor(private val context: Context) {
                 val frame = readEncryptedFrame()
                 if (frame.isNotEmpty()) {
                     Log.d("ScooterRepo", "Rx Encrypted (${frame.size} bytes): ${frame.toHex()}")
-                    val decrypted = native.decrypt(sessionPtr, frame)
+                    val decrypted = native.decryptSafe(sessionPtr, frame)
                     if (decrypted.isNotEmpty()) {
                          Log.d("ScooterRepo", "Rx Decrypted: ${decrypted.toHex()}")
                          parseTelemetry(decrypted)
@@ -523,7 +559,11 @@ class ScooterRepository private constructor(private val context: Context) {
                 val retryStrategy = RetryStrategy.fromFailureCount(consecutiveFailures)
                 when (retryStrategy) {
                     is RetryStrategy.Reconnect -> {
-                        Log.e("ScooterRepo", "CONNECTION HEALTH: Too many failures ($consecutiveFailures), initiating reconnect")
+                        // Previously this only set Error and broke out, leaving
+                        // the GATT link open and the native session allocated,
+                        // so the next connect() leaked both.
+                        Log.e("ScooterRepo", "CONNECTION HEALTH: Too many failures ($consecutiveFailures), tearing down connection")
+                        releaseConnection()
                         _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
                         break
                     }
@@ -824,7 +864,7 @@ class ScooterRepository private constructor(private val context: Context) {
      */
     private suspend fun sendCommand(packet: ByteArray, commandName: String = "Command") {
         val counter = 0L  // Always use counter=0 (scooter doesn't track)
-        val encrypted = native.encrypt(sessionPtr, packet, counter)
+        val encrypted = native.encryptSafe(sessionPtr, packet, counter)
         Log.d("ScooterRepo", "Command Encrypted (${encrypted.size} bytes): ${encrypted.toHex()}")
         
         // Log the command to CSV
@@ -1268,24 +1308,59 @@ class ScooterRepository private constructor(private val context: Context) {
     }
 
     /**
+     * Releases the GATT link and the native crypto session.
+     *
+     * Idempotent and safe to call from any thread: the whole teardown runs
+     * under [connectionLock], and each resource is cleared before it is
+     * released so a concurrent caller cannot free the same session twice.
+     */
+    private fun releaseConnection(closeGatt: Boolean = true) {
+        val (gatt, ptr) = synchronized(connectionLock) {
+            val g = activeGatt
+            val p = sessionPtr
+            activeGatt = null
+            sessionPtr = 0
+            g to p
+        }
+
+        if (closeGatt && gatt != null) {
+            try {
+                gatt.disconnect()
+                // Give the stack a moment to complete the disconnect before
+                // close(); closing immediately leaves the device cached and
+                // undiscoverable on the next scan.
+                Thread.sleep(100)
+            } catch (e: Exception) {
+                Log.w("ScooterRepo", "Error during disconnect: ${e.message}")
+            }
+            try {
+                gatt.close()
+            } catch (e: Exception) {
+                Log.w("ScooterRepo", "Error during close: ${e.message}")
+            }
+        }
+
+        if (ptr != 0L) {
+            native.freeSessionSafe(ptr)
+        }
+    }
+
+    /**
      * Handle unexpected BLE disconnection (e.g., scooter powered off, out of range).
      * This is called from BleManager's disconnect callback.
      */
     private fun handleUnexpectedDisconnection() {
         scope.launch(Dispatchers.Main) {
             Log.e("ScooterRepo", "CONNECTION HEALTH: Unexpected disconnection detected!")
-            
+
             // Only handle if we were in Ready state (connected and authenticated)
-            if (_connectionState.value == ConnectionState.Ready || 
+            if (_connectionState.value == ConnectionState.Ready ||
                 _connectionState.value is ConnectionState.Handshaking) {
-                
-                // Clean up resources
-                activeGatt = null
-                if (sessionPtr != 0L) {
-                    native.freeSession(sessionPtr)
-                    sessionPtr = 0
-                }
-                
+
+                // The stack already closed the GATT client in
+                // onConnectionStateChange, so only release the native session.
+                releaseConnection(closeGatt = false)
+
                 // Update state to trigger UI notification
                 _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
                 
@@ -1314,31 +1389,13 @@ class ScooterRepository private constructor(private val context: Context) {
         // Track if we had an actual connection
         val hadConnection = activeGatt != null
         
-        // Important: Must call disconnect() BEFORE close() to properly release
-        // the BLE connection and clear Android's connection cache.
-        // Just calling close() leaves the device in a cached state,
+        // Important: releaseConnection() calls disconnect() BEFORE close() to
+        // properly release the BLE connection and clear Android's connection
+        // cache. Just calling close() leaves the device in a cached state,
         // preventing it from being discovered again on subsequent scans.
-        activeGatt?.let { gatt ->
-            try {
-                gatt.disconnect()
-                // Small delay to ensure disconnect completes before close
-                Thread.sleep(100)
-            } catch (e: Exception) {
-                Log.w("ScooterRepo", "Error during disconnect: ${e.message}")
-            }
-            try {
-                gatt.close()
-            } catch (e: Exception) {
-                Log.w("ScooterRepo", "Error during close: ${e.message}")
-            }
-        }
-        activeGatt = null
+        releaseConnection()
         _connectionState.value = ConnectionState.Disconnected
-        if (sessionPtr != 0L) {
-             native.freeSession(sessionPtr)
-             sessionPtr = 0
-        }
-        
+
         // Only log if we actually had a connection to disconnect
         if (hadConnection) {
             Log.i("ScooterRepo", "Disconnected and cleaned up BLE resources")

@@ -41,7 +41,14 @@ fun M365SpeedDisplay(
     displaySize: Dp = 200.dp
 ) {
     val speedRatio by animateFloatAsState(
-        targetValue = (currentSpeed / maximumSpeed).coerceIn(0f, 1f),
+        // Guard the division: 0/0 is NaN, and NaN.coerceIn(0f, 1f) returns NaN
+        // (every comparison with NaN is false), which propagated into the sweep
+        // angle and made the progress arc vanish.
+        targetValue = if (maximumSpeed > 0f && currentSpeed.isFinite() && maximumSpeed.isFinite()) {
+            (currentSpeed / maximumSpeed).coerceIn(0f, 1f)
+        } else {
+            0f
+        },
         animationSpec = tween(250),
         label = "speed_ratio"
     )

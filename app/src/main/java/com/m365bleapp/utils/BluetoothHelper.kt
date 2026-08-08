@@ -40,6 +40,13 @@ object BluetoothHelper {
         
         /** Missing required permissions */
         data class MissingPermissions(val permissions: List<String>) : BluetoothStatus()
+
+        /**
+         * Location Services are switched off.
+         * On Android 6-11 BLE scanning silently returns no results in this
+         * state, even with ACCESS_FINE_LOCATION granted.
+         */
+        object LocationDisabled : BluetoothStatus()
     }
     
     /**
@@ -156,9 +163,38 @@ object BluetoothHelper {
             Log.w(TAG, "Bluetooth is disabled")
             return BluetoothStatus.Disabled
         }
-        
+
+        // On Android 6-11, BLE scanning additionally requires Location Services
+        // to be switched on — holding ACCESS_FINE_LOCATION is not enough.
+        // Without this check the status reads Ready and the scan then silently
+        // returns no results at all.
+        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.M..Build.VERSION_CODES.R &&
+            !isLocationEnabled(context)
+        ) {
+            Log.w(TAG, "Location services are disabled; BLE scanning will return no results")
+            return BluetoothStatus.LocationDisabled
+        }
+
         Log.d(TAG, "Bluetooth is ready")
         return BluetoothStatus.Ready
+    }
+
+    /**
+     * Whether the device's Location Services are enabled.
+     * Only relevant for BLE scanning on API 23-30.
+     */
+    fun isLocationEnabled(context: Context): Boolean {
+        return try {
+            val locationMode = Settings.Secure.getInt(
+                context.contentResolver,
+                Settings.Secure.LOCATION_MODE,
+                Settings.Secure.LOCATION_MODE_OFF
+            )
+            locationMode != Settings.Secure.LOCATION_MODE_OFF
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not read location mode, assuming enabled", e)
+            true
+        }
     }
     
     /**
@@ -220,8 +256,10 @@ object BluetoothHelper {
                 context.getString(com.m365bleapp.R.string.bluetooth_not_supported)
             is BluetoothStatus.Disabled -> 
                 context.getString(com.m365bleapp.R.string.bluetooth_disabled)
-            is BluetoothStatus.MissingPermissions -> 
+            is BluetoothStatus.MissingPermissions ->
                 context.getString(com.m365bleapp.R.string.bluetooth_permission_required)
+            is BluetoothStatus.LocationDisabled ->
+                context.getString(com.m365bleapp.R.string.bluetooth_location_required)
         }
     }
 }

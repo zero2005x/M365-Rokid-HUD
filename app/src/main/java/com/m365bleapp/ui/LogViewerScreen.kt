@@ -30,6 +30,7 @@ import androidx.core.content.FileProvider
 import com.m365bleapp.R
 import com.m365bleapp.utils.LogExporter
 import com.m365bleapp.utils.TelemetryLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -313,37 +314,52 @@ fun LogViewerScreen(
                         showExportDialog = false
                         isExporting = true
                         scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                logExporter.createLogArchive(
-                                    includeLogcat = true,
-                                    includeDeviceInfo = true
-                                )
-                            }
-                            isExporting = false
-                            
-                            if (result.success && result.zipFile != null) {
-                                // Create and launch share intent
-                                val shareIntent = logExporter.createShareIntent(result.zipFile)
-                                if (shareIntent != null) {
-                                    context.startActivity(
-                                        Intent.createChooser(
-                                            shareIntent,
-                                            context.getString(R.string.share_logs_to)
-                                        )
+                            // Without try/finally an exception here (e.g.
+                            // ActivityNotFoundException when no share target
+                            // exists) skipped `isExporting = false`, crashed the
+                            // coroutine, and left the top-bar spinner stuck.
+                            try {
+                                val result = withContext(Dispatchers.IO) {
+                                    logExporter.createLogArchive(
+                                        includeLogcat = true,
+                                        includeDeviceInfo = true
                                     )
+                                }
+
+                                if (result.success && result.zipFile != null) {
+                                    // Create and launch share intent
+                                    val shareIntent = logExporter.createShareIntent(result.zipFile)
+                                    if (shareIntent != null) {
+                                        context.startActivity(
+                                            Intent.createChooser(
+                                                shareIntent,
+                                                context.getString(R.string.share_logs_to)
+                                            )
+                                        )
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            R.string.export_share_failed,
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
                                 } else {
                                     Toast.makeText(
                                         context,
-                                        R.string.export_share_failed,
-                                        Toast.LENGTH_SHORT
+                                        context.getString(R.string.export_failed, result.errorMessage ?: "Unknown error"),
+                                        Toast.LENGTH_LONG
                                     ).show()
                                 }
-                            } else {
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.export_failed, result.errorMessage ?: "Unknown error"),
+                                    context.getString(R.string.export_failed, e.message ?: "Unknown error"),
                                     Toast.LENGTH_LONG
                                 ).show()
+                            } finally {
+                                isExporting = false
                             }
                         }
                     }

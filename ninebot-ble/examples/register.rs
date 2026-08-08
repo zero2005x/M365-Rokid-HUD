@@ -56,7 +56,7 @@ async fn save_token(token : &AuthToken) -> Result<()> {
 }
 
 async fn register(device: &Peripheral) -> Result<()> {
-  let connection = ConnectionHelper::new(&device);
+  let mut connection = ConnectionHelper::new(&device);
   let mut retry_count = 0;
   const MAX_RETRIES: u32 = 5;
 

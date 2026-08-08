@@ -52,7 +52,7 @@ async fn main() -> Result<()>{
   let mut scanner = ScooterScanner::new().await?;
   let scooter = scanner.wait_for(&mac).await?;
   let device = scanner.peripheral(&scooter).await?;
-  let connection = ConnectionHelper::new(&device);
+  let mut connection = ConnectionHelper::new(&device);
   connection.reconnect().await?;
 
   let mut request = LoginRequest::new(&device, &token).await?;

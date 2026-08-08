@@ -53,10 +53,15 @@ data class TelemetryData(
             val tripSeconds = buffer.getShort(16).toInt() and 0xFFFF
             val receivedCrc = buffer.getShort(18).toInt() and 0xFFFF
             
-            // Validate CRC
-            val calculatedCrc = calculateCrc16(bytes.copyOfRange(0, 18))
-            val isValid = calculatedCrc == receivedCrc
-            
+            // Validate CRC over bytes 0..17 (no copy: this runs on the hot BLE
+            // notification path, and copyOfRange allocated on every frame).
+            val calculatedCrc = calculateCrc16(bytes, 18)
+            if (calculatedCrc != receivedCrc) {
+                // Return a zeroed record so a corrupt frame cannot leak bogus
+                // speed/battery values to a caller that forgets to check isValid.
+                return TelemetryData(isValid = false)
+            }
+
             return TelemetryData(
                 speedKmh = speedRaw / 100f,
                 scooterBattery = batteryRaw,
@@ -67,27 +72,32 @@ data class TelemetryData(
                 connectionState = connectionState,
                 tripMeters = tripMeters,
                 tripSeconds = tripSeconds,
-                isValid = isValid
+                isValid = true
             )
         }
         
         /**
-         * CRC-16-CCITT calculation
+         * CRC-16/MODBUS, matching the gateway's `M365HudGattProfile.CRC16_SPEC`.
+         *
+         * Parameters: width 16, polynomial 0xA001 (reflected 0x8005),
+         * init 0xFFFF, input and output reflected, no final xor. The result is
+         * carried in the frame as a little-endian u16.
+         *
+         * This used to be CRC-16/CCITT-FALSE (poly 0x1021, non-reflected),
+         * which never matched the gateway's checksum, so `isValid` was false
+         * for every packet and all telemetry was silently discarded.
+         *
+         * @param length number of leading bytes covered (bytes 0..length-1)
          */
-        private fun calculateCrc16(data: ByteArray): Int {
+        private fun calculateCrc16(data: ByteArray, length: Int = data.size): Int {
             var crc = 0xFFFF
-            for (byte in data) {
-                crc = crc xor ((byte.toInt() and 0xFF) shl 8)
-                for (i in 0 until 8) {
-                    crc = if ((crc and 0x8000) != 0) {
-                        (crc shl 1) xor 0x1021
-                    } else {
-                        crc shl 1
-                    }
-                    crc = crc and 0xFFFF
+            for (i in 0 until length) {
+                crc = crc xor (data[i].toInt() and 0xFF)
+                for (j in 0 until 8) {
+                    crc = if ((crc and 1) != 0) (crc ushr 1) xor 0xA001 else crc ushr 1
                 }
             }
-            return crc
+            return crc and 0xFFFF
         }
     }
     

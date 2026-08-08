@@ -35,6 +35,13 @@ class CxrMClient(private val context: Context) {
         const val MSG_TYPE_COMMAND = 0x03.toByte()
         const val MSG_TYPE_HEARTBEAT = 0x04.toByte()
         const val MSG_TYPE_GLASSES_BATTERY = 0x05.toByte()
+
+        /**
+         * Bytes consumed by a telemetry payload, excluding the 4-byte length
+         * prefix and the 1-byte type: short + byte + short + short + short +
+         * int + short + byte.
+         */
+        const val TELEMETRY_PAYLOAD_SIZE = 16
     }
     
     // Connection state
@@ -64,11 +71,15 @@ class CxrMClient(private val context: Context) {
     private val _telemetry = MutableStateFlow<TelemetryData?>(null)
     val telemetry: StateFlow<TelemetryData?> = _telemetry.asStateFlow()
     
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    
-    // CXR-M SDK components (lazy initialization)
-    private var artcClient: Any? = null
-    private var isInitialized = false
+    // Recreated by release() so the client stays reusable: a cancelled scope
+    // silently drops every later launch.
+    private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // CXR-M SDK components (lazy initialization).
+    // Mutated inside Dispatchers.IO coroutines and read from callers, so both
+    // need @Volatile for cross-thread visibility.
+    @Volatile private var artcClient: Any? = null
+    @Volatile private var isInitialized = false
     
     /**
      * Initialize the CXR-M SDK.
@@ -210,7 +221,7 @@ class CxrMClient(private val context: Context) {
                 val callback = java.lang.reflect.Proxy.newProxyInstance(
                     callbackClass.classLoader,
                     arrayOf(callbackClass)
-                ) { _, method, args ->
+                ) { proxy, method, args ->
                     when (method.name) {
                         "onDataReceived" -> {
                             val data = args?.get(0) as? ByteArray
@@ -223,6 +234,13 @@ class CxrMClient(private val context: Context) {
                             _connectionState.value = ConnectionState.Disconnected
                             null
                         }
+                        // java.lang.Object methods reach the handler too.
+                        // Returning null for hashCode() makes the auto-unboxing
+                        // throw NPE as soon as the SDK puts this callback in a
+                        // collection, and equals()/toString() misbehave too.
+                        "hashCode" -> System.identityHashCode(proxy)
+                        "equals" -> proxy === args?.getOrNull(0)
+                        "toString" -> "CxrMClient.DataCallback@${Integer.toHexString(System.identityHashCode(proxy))}"
                         else -> null
                     }
                 }
@@ -240,11 +258,19 @@ class CxrMClient(private val context: Context) {
      */
     private fun handleReceivedData(data: ByteArray) {
         if (data.size < 5) return // Minimum: 4 bytes length + 1 byte type
-        
+
         val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
         val length = buffer.int
         val type = buffer.get()
-        
+
+        // The declared length must match what actually arrived; otherwise a
+        // truncated or concatenated frame gets dispatched on its type byte
+        // alone and is mis-parsed (or falsely succeeds).
+        if (length != data.size - 4) {
+            Log.w(TAG, "Discarding frame: declared length $length, actual ${data.size - 4}")
+            return
+        }
+
         when (type) {
             MSG_TYPE_TELEMETRY -> parseTelemetry(data, 5)
             MSG_TYPE_TIME -> parseTime(data, 5)
@@ -257,10 +283,12 @@ class CxrMClient(private val context: Context) {
      * Parse telemetry data (same format as WiFi Gateway).
      */
     private fun parseTelemetry(data: ByteArray, offset: Int) {
-        if (data.size < offset + 20) return
-        
-        val buffer = ByteBuffer.wrap(data, offset, 20).order(ByteOrder.LITTLE_ENDIAN)
-        
+        // The fields below consume exactly TELEMETRY_PAYLOAD_SIZE bytes
+        // (2+1+2+2+2+4+2+1). Requiring 20 rejected every valid frame.
+        if (data.size < offset + TELEMETRY_PAYLOAD_SIZE) return
+
+        val buffer = ByteBuffer.wrap(data, offset, TELEMETRY_PAYLOAD_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+
         _telemetry.value = TelemetryData(
             speed = buffer.short.toFloat() / 100f,
             battery = buffer.get().toInt() and 0xFF,
@@ -269,6 +297,7 @@ class CxrMClient(private val context: Context) {
             tripDistance = buffer.short.toFloat() / 100f,
             totalMileage = buffer.int.toFloat() / 100f,
             tripTime = buffer.short.toInt() and 0xFFFF,
+            // Signed on purpose: controller temperature can be below 0 °C.
             controllerTemp = buffer.get().toInt()
         )
     }
@@ -302,7 +331,11 @@ class CxrMClient(private val context: Context) {
             try {
                 val payload = ByteBuffer.allocate(6)
                     .order(ByteOrder.LITTLE_ENDIAN)
-                    .putInt(1) // length
+                    // Length counts every byte after the prefix: the type byte
+                    // plus the level byte. Declaring 1 (as before) contradicted
+                    // sendCommand's encoding and the reader's offset of 5, so a
+                    // receiver that uses the prefix to delimit frames drifted.
+                    .putInt(2)
                     .put(MSG_TYPE_GLASSES_BATTERY)
                     .put(level.toByte())
                     .array()
@@ -357,29 +390,47 @@ class CxrMClient(private val context: Context) {
      * Disconnect from the channel.
      */
     fun disconnect() {
-        scope.launch {
-            try {
-                if (artcClient != null) {
-                    val cxrClientClass = Class.forName("com.rokid.cxr.CxrClient")
-                    val leaveMethod = cxrClientClass.getMethod("leaveChannel")
-                    leaveMethod.invoke(artcClient)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Disconnect error: ${e.message}")
-            } finally {
-                artcClient = null
-                _connectionState.value = ConnectionState.Disconnected
-                _telemetry.value = null
+        scope.launch { leaveChannel() }
+    }
+
+    /**
+     * Leaves the ARTC channel and clears the client state.
+     *
+     * Split out of [disconnect] so [release] can await it: previously release()
+     * cancelled the scope immediately after disconnect() had only *scheduled*
+     * the leave, so the channel leaked and stale state was left behind.
+     */
+    private suspend fun leaveChannel() = withContext(Dispatchers.IO) {
+        try {
+            artcClient?.let { client ->
+                val cxrClientClass = Class.forName("com.rokid.cxr.CxrClient")
+                val leaveMethod = cxrClientClass.getMethod("leaveChannel")
+                leaveMethod.invoke(client)
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Disconnect error: ${e.message}")
+        } finally {
+            artcClient = null
+            _connectionState.value = ConnectionState.Disconnected
+            _telemetry.value = null
         }
     }
     
     /**
      * Release all resources.
      */
+    /**
+     * Releases the channel and all resources.
+     *
+     * Blocks until the channel has actually been left, then recreates the
+     * scope so the instance remains usable. Cancelling the scope while the
+     * leave was still pending used to leak the ARTC channel and left the
+     * instance permanently inert (every later call silently no-opped).
+     */
     fun release() {
-        disconnect()
+        runBlocking { leaveChannel() }
         scope.cancel()
+        scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         isInitialized = false
     }
     

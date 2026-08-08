@@ -1,9 +1,11 @@
 package com.m365hud.glass
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -41,6 +43,12 @@ class BleConnectionService : Service() {
     private var bleClient: BleClient? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    // Single connection-state collector, one pending retry, one wake-lock
+    // renewal loop — so repeated onStartCommand calls cannot stack duplicates.
+    private var monitorJob: Job? = null
+    private var retryJob: Job? = null
+    private var wakeLockRenewJob: Job? = null
     
     // Binder for local binding
     private val binder = LocalBinder()
@@ -69,13 +77,26 @@ class BleConnectionService : Service() {
         
         // Start as foreground service with notification
         startForeground(NOTIFICATION_ID, createNotification("Connecting..."))
-        
-        // Start BLE scan
-        bleClient?.startScan()
-        
-        // Monitor connection state and update notification
-        monitorConnectionState()
-        
+
+        // Idempotent: onStartCommand also runs on repeat startService calls and
+        // on a START_STICKY restart with a null intent. Without this guard each
+        // one stacked another connection-state collector and restarted scanning
+        // even while already connected.
+        if (monitorJob?.isActive != true) {
+            if (hasBlePermissions()) {
+                // @SuppressLint only silences lint: on Android 12+ startScan
+                // throws SecurityException without BLUETOOTH_SCAN/CONNECT and
+                // would kill the service.
+                bleClient?.startScan()
+            } else {
+                Log.w(TAG, "BLE permissions not granted, skipping scan")
+                updateNotification("Bluetooth permission required")
+            }
+
+            // Monitor connection state and update notification
+            monitorConnectionState()
+        }
+
         // If service is killed, restart it
         return START_STICKY
     }
@@ -174,9 +195,27 @@ class BleConnectionService : Service() {
             acquire(WAKE_LOCK_TIMEOUT_MS)
         }
         Log.d(TAG, "Wake lock acquired")
+
+        // This service is START_STICKY and runs indefinitely, but the lock is
+        // capped at WAKE_LOCK_TIMEOUT_MS. Without renewal the system silently
+        // released it and the CPU could sleep mid-session, stalling BLE scans
+        // and reconnects. Renew well before it expires.
+        wakeLockRenewJob?.cancel()
+        wakeLockRenewJob = serviceScope.launch {
+            while (isActive) {
+                delay(WAKE_LOCK_TIMEOUT_MS / 2)
+                if (wakeLock?.isHeld != true) {
+                    Log.d(TAG, "Wake lock expired, re-acquiring")
+                    acquireWakeLock()
+                    return@launch
+                }
+            }
+        }
     }
     
     private fun releaseWakeLock() {
+        wakeLockRenewJob?.cancel()
+        wakeLockRenewJob = null
         wakeLock?.let {
             if (it.isHeld) {
                 it.release()
@@ -186,8 +225,22 @@ class BleConnectionService : Service() {
         wakeLock = null
     }
     
+    /**
+     * True when the runtime permissions BLE scanning needs are granted.
+     * Below API 31 these are install-time permissions.
+     */
+    private fun hasBlePermissions(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+
+        return checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) ==
+            PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
     private fun monitorConnectionState() {
-        serviceScope.launch {
+        monitorJob?.cancel()
+        monitorJob = serviceScope.launch {
             bleClient?.connectionState?.collect { state ->
                 val statusText = when (state) {
                     is BleClient.ConnectionState.Disconnected -> "Disconnected"
@@ -198,16 +251,27 @@ class BleConnectionService : Service() {
                 }
                 updateNotification(statusText)
                 Log.d(TAG, "Connection state: $statusText")
-                
-                // Auto-retry scan when in Error state (e.g., scan timeout, gateway not found)
-                // This handles the case where glasses start scanning before phone starts advertising
+
+                // Auto-retry scan when in Error state (e.g., scan timeout,
+                // gateway not found). This handles the case where the glasses
+                // start scanning before the phone starts advertising.
+                //
+                // The retry runs in its own job: delaying inside the collect
+                // lambda blocked the collector for the whole retry window, so
+                // Connecting/Connected transitions during it were conflated
+                // away and the notification went stale.
                 if (state is BleClient.ConnectionState.Error) {
                     Log.i(TAG, "Connection error detected, will retry scan in ${SCAN_RETRY_DELAY_MS}ms...")
-                    delay(SCAN_RETRY_DELAY_MS)
-                    // Only retry if still in error state (not manually reconnected)
-                    if (bleClient?.connectionState?.value is BleClient.ConnectionState.Error) {
-                        Log.i(TAG, "Retrying scan after error...")
-                        bleClient?.startScan()
+                    retryJob?.cancel()
+                    retryJob = serviceScope.launch {
+                        delay(SCAN_RETRY_DELAY_MS)
+                        // Only retry if still in error state (not manually reconnected)
+                        if (bleClient?.connectionState?.value is BleClient.ConnectionState.Error &&
+                            hasBlePermissions()
+                        ) {
+                            Log.i(TAG, "Retrying scan after error...")
+                            bleClient?.startScan()
+                        }
                     }
                 }
             }

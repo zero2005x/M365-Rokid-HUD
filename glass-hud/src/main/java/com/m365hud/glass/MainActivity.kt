@@ -21,8 +21,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.m365hud.glass.ui.theme.GlassHudTheme
-import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -35,9 +38,10 @@ class MainActivity : ComponentActivity() {
     private var bleService: BleConnectionService? = null
     private var serviceBound = false
     
-    // Fallback BLE client when service not available
-    private var fallbackBleClient: BleClient? = null
-    
+    // Single job holding every state-flow collector, so re-observing replaces
+    // rather than duplicates them.
+    private var observeJob: Job? = null
+
     // State holders for UI
     private val connectionState = mutableStateOf<BleClient.ConnectionState>(BleClient.ConnectionState.Disconnected)
     private val telemetryState = mutableStateOf(TelemetryData())
@@ -109,20 +113,23 @@ class MainActivity : ComponentActivity() {
     
     override fun onStart() {
         super.onStart()
-        // Bind to service if it's running
-        if (serviceBound) {
+        // Collectors are normally registered from onServiceConnected. Only
+        // re-register if this Activity restarted while already bound; the
+        // observeJob guard means this can never stack duplicates.
+        if (serviceBound && observeJob?.isActive != true) {
             observeServiceState()
         }
     }
     
     override fun onDestroy() {
         super.onDestroy()
+        observeJob?.cancel()
+        observeJob = null
         // Unbind from service but don't stop it - let it run in background
         if (serviceBound) {
             unbindService(serviceConnection)
             serviceBound = false
         }
-        fallbackBleClient?.disconnect()
     }
     
     private fun checkPermissionsAndStart() {
@@ -164,37 +171,50 @@ class MainActivity : ComponentActivity() {
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
     
+    /**
+     * Collects the client's state flows into the Compose state holders.
+     *
+     * Uses [lifecycleScope] + [repeatOnLifecycle] rather than `MainScope()`.
+     * `MainScope()` created a brand-new scope per call that was never
+     * cancelled, so each of these collectors ran forever while capturing this
+     * Activity — leaking the Activity (and the bound service/BLE client) across
+     * every stop/start and configuration change. Because this method is called
+     * from both onServiceConnected and onStart, those leaked collectors also
+     * accumulated, so every emission triggered N redundant state writes.
+     *
+     * [observeJob] guarantees only one set of collectors is ever active.
+     */
     private fun observeServiceState() {
         val client = bleService?.getBleClient() ?: return
-        
-        // Launch coroutines to observe state flows
-        MainScope().launch {
-            client.connectionState.collect { state ->
-                connectionState.value = state
-            }
-        }
-        
-        MainScope().launch {
-            client.telemetry.collect { data ->
-                telemetryState.value = data
-            }
-        }
-        
-        MainScope().launch {
-            client.timeData.collect { data ->
-                timeDataState.value = data
-            }
-        }
-        
-        MainScope().launch {
-            client.signalStrength.collect { strength ->
-                signalStrengthState.value = strength
-            }
-        }
-        
-        MainScope().launch {
-            client.isTelemetryFresh.collect { fresh ->
-                isTelemetryFreshState.value = fresh
+
+        observeJob?.cancel()
+        observeJob = lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    client.connectionState.collect { state ->
+                        connectionState.value = state
+                    }
+                }
+                launch {
+                    client.telemetry.collect { data ->
+                        telemetryState.value = data
+                    }
+                }
+                launch {
+                    client.timeData.collect { data ->
+                        timeDataState.value = data
+                    }
+                }
+                launch {
+                    client.signalStrength.collect { strength ->
+                        signalStrengthState.value = strength
+                    }
+                }
+                launch {
+                    client.isTelemetryFresh.collect { fresh ->
+                        isTelemetryFreshState.value = fresh
+                    }
+                }
             }
         }
     }

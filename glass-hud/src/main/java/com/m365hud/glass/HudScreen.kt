@@ -42,8 +42,13 @@ private const val MIRROR_FOR_ROKID = false
  * Get the glasses battery level
  */
 private fun getGlassesBatteryLevel(context: Context): Int {
-    val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-    return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    // getSystemService can return null on some builds, and
+    // BATTERY_PROPERTY_CAPACITY returns -1 when the value is unknown — the hard
+    // cast crashed and -1 rendered as "-1%".
+    val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        ?: return 0
+    val capacity = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    return if (capacity in 0..100) capacity else 0
 }
 
 @Composable

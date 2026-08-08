@@ -74,10 +74,14 @@ class UnifiedConnectionManager(private val context: Context) {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     
     // State
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // Recreated by start(): stop() cancels this scope permanently, and every
+    // later launch into a cancelled scope is silently dropped — so after one
+    // stop/start cycle the manager could never connect again.
+    private var scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     @Volatile private var preference = PREFER_AUTO
     @Volatile private var isWifiAvailable = false
     @Volatile private var isCxrAvailable = false
+    @Volatile private var isStarted = false
     
     // State flows
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
@@ -103,10 +107,24 @@ class UnifiedConnectionManager(private val context: Context) {
      * Start connection manager
      */
     fun start(preference: Int = PREFER_AUTO) {
+        // Without this guard a second start() registers another
+        // NetworkCallback (leaking the previous registration), builds new
+        // clients and launches a duplicate set of collectors.
+        if (isStarted) {
+            Log.w(TAG, "start() called while already started, ignoring")
+            return
+        }
+        isStarted = true
+
         this.preference = preference
-        
+
         Log.i(TAG, "Starting unified connection manager, preference: $preference")
-        
+
+        // Fresh scope for this run (see the field declaration).
+        if (!scope.isActive) {
+            scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        }
+
         // Setup network monitoring
         setupNetworkMonitoring()
         
@@ -154,9 +172,11 @@ class UnifiedConnectionManager(private val context: Context) {
         bleClient = null
         wifiClient = null
         cxrClient = null
-        
+        networkCallback = null
+
         _connectionState.value = ConnectionState.Disconnected
         _activeConnectionType.value = ConnectionType.NONE
+        isStarted = false
     }
     
     /**
@@ -177,12 +197,21 @@ class UnifiedConnectionManager(private val context: Context) {
      */
     fun switchTo(type: ConnectionType) {
         Log.i(TAG, "Force switching to: $type")
-        
+
         // Disconnect all first
         bleClient?.disconnect()
         wifiClient?.disconnect()
         cxrClient?.disconnect()
-        
+
+        // Reset the reported state, otherwise the UI keeps showing the previous
+        // transport's Connected state while activeConnectionType has already
+        // moved on.
+        _connectionState.value = if (type == ConnectionType.NONE) {
+            ConnectionState.Disconnected
+        } else {
+            ConnectionState.Connecting(type)
+        }
+
         when (type) {
             ConnectionType.CXR_M -> {
                 startCxrConnection()
@@ -401,20 +430,20 @@ class UnifiedConnectionManager(private val context: Context) {
             val client = cxrClient ?: return@launch
             
             if (!client.initialize()) {
-                Log.w(TAG, "CXR-M SDK not available, falling back to WiFi")
-                startWifiConnection()
+                Log.w(TAG, "CXR-M SDK not available, falling back")
+                fallbackFromCxr()
                 return@launch
             }
-            
-            // If no channelId provided, we need to discover it
-            // For now, use a default discovery channel or wait for phone to advertise
+
+            // Channel discovery is not implemented (see discoverCxrChannel), so
+            // without an explicit channelId this always falls back.
             val channel = channelId ?: discoverCxrChannel()
-            
+
             if (channel != null) {
                 client.connect(channel)
             } else {
-                Log.w(TAG, "No CXR channel found, falling back to WiFi")
-                startWifiConnection()
+                Log.w(TAG, "No CXR channel found, falling back")
+                fallbackFromCxr()
             }
         }
     }
@@ -422,14 +451,35 @@ class UnifiedConnectionManager(private val context: Context) {
     /**
      * Discover CXR channel from phone (placeholder - needs phone-side implementation)
      */
+    /**
+     * Discovers the ARTC channel id advertised by the phone.
+     *
+     * NOT IMPLEMENTED. Until it is, CXR-M can only be used when the caller
+     * passes an explicit `channelId` to [startCxrConnection]; otherwise the
+     * connection falls back to the next available transport. Options for a real
+     * implementation:
+     * 1. mDNS/NSD, alongside the existing `_m365hud._tcp.` service
+     * 2. Exchange the channel id over the existing BLE link
+     * 3. QR code scanning
+     * 4. Manual input
+     */
     private suspend fun discoverCxrChannel(): String? {
-        // TODO: Implement CXR channel discovery
-        // Options:
-        // 1. Use mDNS to find channel ID advertised by phone
-        // 2. Use BLE to exchange channel ID
-        // 3. Use QR code scanning
-        // 4. Manual input
         return null
+    }
+
+    /**
+     * Chooses the next transport when CXR-M cannot be used.
+     *
+     * Previously this unconditionally called [startWifiConnection], which could
+     * select WiFi even when no WiFi network was available.
+     */
+    private fun fallbackFromCxr() {
+        if (isWifiAvailable) {
+            startWifiConnection()
+        } else {
+            Log.i(TAG, "WiFi unavailable, falling back to BLE")
+            startBleConnection()
+        }
     }
     
     /**

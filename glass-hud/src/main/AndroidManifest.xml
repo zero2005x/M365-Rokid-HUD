@@ -5,6 +5,14 @@
     <!-- BLE Permissions for Central Mode -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!--
+      minSdk is 29, so this app also runs on Android 10-11 (API 29-30) where
+      BLUETOOTH_SCAN/BLUETOOTH_CONNECT do not exist and are ignored. On those
+      versions any BLE scan/connect requires the legacy install-time
+      permissions below, or the calls throw SecurityException.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     
     <!-- Location for BLE scanning -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />

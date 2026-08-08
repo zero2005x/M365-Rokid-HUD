@@ -56,9 +56,16 @@ class WifiGatewayClient(private val context: Context) {
         const val HEARTBEAT_INTERVAL_MS = 3000L
         const val MAX_RECONNECT_DELAY_MS = 30000L
         
-        // Data sizes
-        const val TELEMETRY_DATA_SIZE = 20
-        const val TIME_DATA_SIZE = 12
+        // Data sizes — these MUST match what the parsers actually consume.
+        // parseTelemetry reads 18 bytes (2+1+2+4+2+2+1+2+2) and parseTimeData
+        // reads 4 (hour/minute/second/phoneBattery). The previous values of 20
+        // and 12 made the `payload.size < SIZE` guards reject every valid
+        // frame, silently dropping all data.
+        const val TELEMETRY_DATA_SIZE = 18
+        const val TIME_DATA_SIZE = 4
+
+        /** Largest accepted message; anything else is a protocol violation. */
+        const val MAX_MESSAGE_LENGTH = 1024
     }
     
     // Connection state
@@ -79,11 +86,28 @@ class WifiGatewayClient(private val context: Context) {
     }
     
     // State
-    private var socket: Socket? = null
-    private var outputStream: DataOutputStream? = null
-    private var inputStream: DataInputStream? = null
+    // @Volatile: these are mutated by the connect, receive, heartbeat,
+    // reconnect and disconnect coroutines on different Dispatchers.IO threads.
+    // Without it a coroutine can observe a stale (already closed) stream.
+    @Volatile private var socket: Socket? = null
+    @Volatile private var outputStream: DataOutputStream? = null
+    @Volatile private var inputStream: DataInputStream? = null
     private val isRunning = AtomicBoolean(false)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * Guards against overlapping connection attempts.
+     *
+     * `isRunning` is only set once the socket is up, so during a connect
+     * attempt or a reconnect delay it is still false — manual connect(), the
+     * NSD-resolved connect and the auto-reconnect coroutine could all slip past
+     * the guard at once and create competing sockets.
+     */
+    private val isConnecting = AtomicBoolean(false)
+
+    // Recreated by disconnect(): a cancelled scope silently drops every later
+    // launch, which made the client unusable after the first disconnect even
+    // though connect() stays public.
+    private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     // NSD
     private var nsdManager: NsdManager? = null
@@ -205,13 +229,17 @@ class WifiGatewayClient(private val context: Context) {
      * Connect to gateway directly by IP and port
      */
     fun connect(address: String, port: Int = DEFAULT_PORT) {
-        if (isRunning.get()) {
+        if (isRunning.get() || !isConnecting.compareAndSet(false, true)) {
             Log.w(TAG, "Already connected or connecting")
             return
         }
-        
+
         scope.launch {
-            connectInternal(address, port)
+            try {
+                connectInternal(address, port)
+            } finally {
+                isConnecting.set(false)
+            }
         }
     }
     
@@ -266,11 +294,15 @@ class WifiGatewayClient(private val context: Context) {
                 try {
                     // Read message length
                     val length = input.readInt()
-                    if (length <= 0 || length > 1024) {
-                        Log.w(TAG, "Invalid message length: $length")
-                        continue
+                    if (length <= 0 || length > MAX_MESSAGE_LENGTH) {
+                        // The payload cannot be skipped once the declared
+                        // length is bogus, so `continue` would leave every
+                        // later readInt()/readFully() permanently misaligned on
+                        // the stream. Treat it as fatal for this connection.
+                        Log.w(TAG, "Invalid message length: $length, closing connection")
+                        break
                     }
-                    
+
                     // Read message type
                     val type = input.readByte()
                     
@@ -511,6 +543,9 @@ class WifiGatewayClient(private val context: Context) {
         resolveListener = null
         
         scope.cancel()
+        // Recreate so the client can be reconnected later.
+        scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        isConnecting.set(false)
         _connectionState.value = ConnectionState.Disconnected
     }
     

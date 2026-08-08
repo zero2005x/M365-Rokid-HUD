@@ -131,11 +131,13 @@ class BleClient(private val context: Context) {
             return
         }
         
-        // Reset connection flag and clear failed devices list to allow retry
+        // Reset the connection flag only. Do NOT clear failedDevices here:
+        // onServicesDiscovered adds a device to that list and restarts the
+        // scan, so wiping it on every scan made the very same device get
+        // retried immediately — an endless connect / discover-fail / rescan
+        // loop. The list is already cleared on a successful connection.
         isConnecting = false
-        failedDevices.clear()
-        Log.i(TAG, "Cleared failed devices list for fresh scan")
-        
+
         _connectionState.value = ConnectionState.Scanning
         Log.i(TAG, "Starting scan for M365 HUD Gateway with UUID filter...")
         Log.d(TAG, "Looking for Service UUID: ${GattProfile.SERVICE_UUID}")
@@ -292,7 +294,17 @@ class BleClient(private val context: Context) {
         _connectionState.value = ConnectionState.Connecting
         
         Log.i(TAG, "Connecting to ${device.address}...")
-        gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        // The class-level @SuppressLint("MissingPermission") only silences lint;
+        // on Android 12+ connectGatt still throws SecurityException without
+        // BLUETOOTH_CONNECT, and this runs on a Binder thread, so an unhandled
+        // throw crashes the process.
+        gatt = try {
+            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "BLUETOOTH_CONNECT permission not granted", e)
+            _connectionState.value = ConnectionState.Error("Bluetooth permission missing")
+            null
+        }
     }
     
     /**
@@ -554,10 +566,23 @@ class BleClient(private val context: Context) {
                 Log.w(TAG, "Glasses battery characteristic not found on phone Gateway")
             }
             
-            if (telemetryChar != null) {
-                enableNotification(gatt, telemetryChar)
+            if (telemetryChar == null) {
+                // Telemetry is the entire point of this client. Reporting
+                // Connected without it leaves the UI showing a healthy link
+                // that can never receive data.
+                Log.e(TAG, "Telemetry characteristic not found - cannot operate")
+                _connectionState.value = ConnectionState.Error("Telemetry characteristic missing")
+                try {
+                    gatt.disconnect()
+                    gatt.close()
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "Missing BLUETOOTH_CONNECT while tearing down", e)
+                }
+                return
             }
-            
+
+            enableNotification(gatt, telemetryChar)
+
             // Enable time notification after telemetry (queue, using coroutine)
             if (timeChar != null) {
                 bleScope.launch {
@@ -609,6 +634,12 @@ class BleClient(private val context: Context) {
                     _isTelemetryFresh.value = true
                     
                     val data = TelemetryData.fromBytes(value)
+                    if (!data.isValid) {
+                        // Corrupt or malformed frame: keep the previous reading
+                        // rather than blanking the HUD.
+                        Log.w(TAG, "Discarding telemetry frame that failed CRC validation")
+                        return
+                    }
                     Log.d(TAG, "Telemetry: speed=${data.speedKmh}, battery=${data.scooterBattery}%")
                     _telemetry.value = data
                 }
@@ -977,11 +1008,23 @@ class BleClient(private val context: Context) {
      */
     fun close() {
         Log.i(TAG, "Closing BleClient and releasing resources...")
+
+        // Close the GATT client synchronously first. disconnect() defers
+        // gatt.close() onto bleScope, and cancelling the scope below would
+        // abort that coroutine before it runs — leaking the BluetoothGatt (and
+        // its BLE stack resources) on every close.
+        try {
+            gatt?.close()
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Missing BLUETOOTH_CONNECT while closing GATT", e)
+        }
+        gatt = null
+
         disconnect()
-        
+
         // Cancel all coroutines
         bleScope.cancel()
-        
+
         Log.i(TAG, "BleClient closed")
     }
 }

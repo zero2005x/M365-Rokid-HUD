@@ -11,8 +11,13 @@ plugins {
 val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
-    localProperties.load(FileInputStream(localPropertiesFile))
+    // use{} so the stream is closed; a bare FileInputStream leaks a file
+    // descriptor on every configuration run.
+    localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
+
+/** True when the invocation includes a release task, so signing must be configured. */
+val isBuildingRelease = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
 
 android {
     namespace = "com.m365hud.glass"
@@ -33,10 +38,37 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file(localProperties.getProperty("RELEASE_STORE_FILE", "m365-release-key.jks"))
-            storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD", "")
-            keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS", "m365key")
-            keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD", "")
+            // Signing details must come from local.properties. Falling back to
+            // an empty password and a well-known keystore name risks silently
+            // shipping a release signed with an unintended key.
+            //
+            // Missing values are a hard error, but only when a release build is
+            // actually requested, so debug builds keep working without a
+            // keystore.
+            val releaseStoreFile = localProperties.getProperty("RELEASE_STORE_FILE")
+            val releaseStorePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")?.takeIf { it.isNotEmpty() }
+            val releaseKeyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")?.takeIf { it.isNotEmpty() }
+
+            if (releaseStoreFile == null || releaseStorePassword == null || releaseKeyPassword == null) {
+                if (isBuildingRelease) {
+                    throw GradleException(
+                        "Release signing is not configured. Set RELEASE_STORE_FILE, " +
+                            "RELEASE_STORE_PASSWORD, RELEASE_KEY_PASSWORD (and optionally " +
+                            "RELEASE_KEY_ALIAS) in local.properties."
+                    )
+                }
+                logger.warn(
+                    "Release signing is not configured in local.properties; " +
+                        "release builds will fail until it is."
+                )
+            } else {
+                // Resolve relative to the root project, which is where
+                // local.properties is read from.
+                storeFile = rootProject.file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS", "m365key")
+                keyPassword = releaseKeyPassword
+            }
         }
     }
 
@@ -54,6 +86,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // NOTE: no explicit Kotlin jvmTarget is set here. This project relies on
+    // AGP's built-in Kotlin support (no org.jetbrains.kotlin.android plugin is
+    // applied anywhere), so the Kotlin JVM target follows AGP's default. If a
+    // "Inconsistent JVM-target compatibility" error ever appears, pin the
+    // Kotlin jvmTarget to 17 using the DSL that matches the AGP version in use.
     buildFeatures {
         compose = true
     }

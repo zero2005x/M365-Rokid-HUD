@@ -38,6 +38,25 @@
 -keep interface com.rokid.cxr.** { *; }
 
 # ============================================
+# OkHttp optional TLS providers  --  REQUIRED
+# ============================================
+# The Rokid CXR SDK pulls in OkHttp transitively. OkHttp compiles against
+# three optional TLS providers (BouncyCastle JSSE, Conscrypt, OpenJSSE) and
+# picks whichever is present at runtime, guarding each probe with try/catch.
+# None of them is on this project's classpath, which is fine at runtime but
+# makes R8 fail the build:
+#
+#   ERROR: Missing class org.conscrypt.Conscrypt (referenced from:
+#          boolean okhttp3.internal.platform.ConscryptPlatform$Companion...)
+#
+# -dontwarn is the correct response, not -keep: the classes genuinely do not
+# exist and must not be kept. Wildcards are used instead of the exact nine
+# classes R8 listed so an OkHttp upgrade cannot reintroduce the failure.
+-dontwarn org.bouncycastle.jsse.**
+-dontwarn org.conscrypt.**
+-dontwarn org.openjsse.**
+
+# ============================================
 # Retrofit (if using with Rokid SDK)
 # ============================================
 # -keepattributes Signature, InnerClasses, EnclosingMethod

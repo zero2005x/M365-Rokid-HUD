@@ -183,11 +183,18 @@ pub fn gen_key_pair() -> (EphemeralSecret, PublicKey) {
   (secret, public)
 }
 
+// This file is kept byte-identical between ninebot-ble and ninebot-ffi (apart
+// from tracing calls, which ninebot-ffi comments out) so the two crypto
+// implementations cannot drift apart again. ninebot-ble uses gen_rand_key from
+// login.rs; ninebot-ffi does not, and would otherwise emit a dead_code warning
+// on every one of the four Android targets.
+#[allow(dead_code)]
 pub type RandKey = [u8; 16];
 
 /**
  * Generate rand key used for login
  */
+#[allow(dead_code)]
 pub fn gen_rand_key() -> RandKey {
   let mut data : RandKey = [0u8; 16];
   OsRng::fill_bytes(&mut OsRng, &mut data);

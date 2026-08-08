@@ -111,29 +111,75 @@ jobs:
         # 16 KB aligned. The linker flags live in ninebot-ffi/.cargo/config.toml,
         # but RUSTFLAGS in the environment silently overrides them, so verify the
         # artifact rather than trusting the config.
+        #
+        # The program headers are parsed directly instead of scraping
+        # `readelf -l`: for 64-bit objects readelf wraps each LOAD entry across
+        # two lines, so the last field of the LOAD line is an address, not the
+        # alignment. Parsing the ELF gives an unambiguous answer and does not
+        # depend on binutils being present or on its output format.
+        shell: python3 {0}
         run: |
-          fail=0
-          for so in app/src/main/jniLibs/*/libninebot_ffi.so; do
-            aligns=$(llvm-readelf -l "$so" 2>/dev/null | awk '$1=="LOAD"{print $NF}')
-            [ -z "$aligns" ] && aligns=$(readelf -l "$so" | awk '$1=="LOAD"{print $NF}')
-            for a in $aligns; do
-              case "$a" in
-                0x4000|0x10000) ;;
-                *) echo "::error::$so has PT_LOAD align $a, expected 0x4000"; fail=1 ;;
-              esac
-            done
-            echo "$so: $aligns"
-          done
-          exit $fail
+          import glob, struct, sys
+
+          def pt_load_aligns(path):
+              d = open(path, 'rb').read()
+              if d[:4] != b'\x7fELF':
+                  raise SystemExit(f'{path} is not an ELF file')
+              is64 = d[4] == 2
+              if is64:
+                  phoff = struct.unpack_from('<Q', d, 32)[0]
+                  entsize, num = struct.unpack_from('<HH', d, 54)
+              else:
+                  phoff = struct.unpack_from('<I', d, 28)[0]
+                  entsize, num = struct.unpack_from('<HH', d, 42)
+              aligns = []
+              for i in range(num):
+                  o = phoff + i * entsize
+                  if struct.unpack_from('<I', d, o)[0] != 1:   # PT_LOAD
+                      continue
+                  aligns.append(struct.unpack_from('<Q', d, o + 48)[0] if is64
+                                else struct.unpack_from('<I', d, o + 28)[0])
+              return aligns
+
+          libs = sorted(glob.glob('app/src/main/jniLibs/*/libninebot_ffi.so'))
+          if not libs:
+              print('::error::no libninebot_ffi.so found under app/src/main/jniLibs')
+              sys.exit(1)
+
+          failed = False
+          for so in libs:
+              aligns = pt_load_aligns(so)
+              bad = [a for a in aligns if a < 0x4000]
+              print(f"{so}: {[hex(a) for a in aligns]}")
+              if not aligns:
+                  print(f'::error::{so} has no PT_LOAD segments')
+                  failed = True
+              elif bad:
+                  print(f'::error::{so} has PT_LOAD align {[hex(a) for a in bad]}, need >= 0x4000')
+                  failed = True
+          sys.exit(1 if failed else 0)
 
       - name: Verify both APKs are signed with the expected certificate
         run: |
-          BUILD_TOOLS=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null \
+                        | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found under $SDK/build-tools"
+            exit 1
+          fi
+          echo "Using $APKSIGNER"
+
+          fail=0
           for apk in app/build/outputs/apk/release/app-release.apk \
                      glass-hud/build/outputs/apk/release/glass-hud-release.apk; do
             echo "--- $apk"
-            "$BUILD_TOOLS/apksigner" verify --print-certs "$apk" | grep -i "SHA-256 digest"
+            if ! "$APKSIGNER" verify --print-certs "$apk"; then
+              echo "::error::$apk failed signature verification"
+              fail=1
+            fi
           done
+          exit $fail
 
       - name: Stage artifacts with descriptive names
         id: stage

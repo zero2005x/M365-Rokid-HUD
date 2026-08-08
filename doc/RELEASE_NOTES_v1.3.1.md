@@ -138,18 +138,45 @@ hand, from a working tree whose state was not fully known.
 
 ## Signing | 簽章
 
-Both APKs are signed with the same certificate as previous releases:
+Both APKs here are signed with the same certificate as previous GitHub
+releases:
 
-兩顆 APK 皆使用與先前版本相同的憑證簽署：
+本頁兩顆 APK 使用與先前 GitHub 版本相同的憑證簽署：
 
 ```
 SHA-256: 7C:A3:A3:F7:BA:C7:48:3C:0D:16:BB:9E:1E:BD:B6:57:
          F0:94:CE:77:94:83:DD:BC:7F:E3:64:32:46:01:E3:0B
 ```
 
-Existing installations update in place — no uninstall required.
+Sideloaded installs from a previous GitHub release update in place — no
+uninstall required.
 
-現有安裝可直接更新，**無需先解除安裝**。
+從先前 GitHub 版本側載安裝的，可直接更新，**無需先解除安裝**。
+
+> ### ⚠️ Play Store users | Play 商店使用者請注意
+>
+> The phone app on Google Play is signed by **Play App Signing** with a
+> different certificate
+> (`1D:89:90:42:4E:33:F0:7B:...:74:76:8D:4D`), because Google re-signs every
+> release it distributes. Android refuses to install an APK over an existing
+> app with a different signature.
+>
+> Play 商店上的手機端由 **Play App Signing** 以不同憑證簽署
+> （`1D:89:90:42:4E:33:F0:7B:...:74:76:8D:4D`），因為 Google 會重新簽署它所
+> 派送的每個版本。Android 不允許以不同簽章的 APK 覆蓋既有安裝。
+>
+> **Installed from Google Play?** Update from Google Play. Do not sideload the
+> APK here — it will fail with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, and
+> switching requires uninstalling first, which erases your paired scooter
+> token.
+>
+> **從 Google Play 安裝的？** 請一樣從 Google Play 更新。不要側載這裡的 APK，
+> 它會以 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 失敗；若要改用側載版必須先解除
+> 安裝，這會清除已配對的滑板車憑證。
+>
+> The glasses app is not on Google Play, so this does not apply to it.
+>
+> 眼鏡端未在 Google Play 上架，因此不受此限制。
 
 ---
 

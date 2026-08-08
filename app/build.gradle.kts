@@ -170,8 +170,8 @@ android {
         applicationId = "com.m365bleapp"
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.3"
+        versionCode = 6
+        versionName = "1.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

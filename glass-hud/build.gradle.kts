@@ -30,8 +30,8 @@ android {
         // Aligned with the phone app so a joint release ships two APKs that
         // report the same versionName. versionCode must strictly increase for
         // sideloaded updates to install over an existing build.
-        versionCode = 3
-        versionName = "1.3"
+        versionCode = 4
+        versionName = "1.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

@@ -210,6 +210,13 @@ DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 #   * For example: A user cannot expect ${Hostname} to be expanded, as it is an environment variable and will be
 #     treated as '${Hostname}' itself on the command line.
 
+# Fail with an actionable message rather than a bare JVM "Unable to access
+# jarfile" error if the wrapper jar was not checked out.
+if [ ! -f "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" ] ; then
+    die "ERROR: Gradle wrapper jar is missing at $APP_HOME/gradle/wrapper/gradle-wrapper.jar.
+Commit the wrapper jar (it must not be excluded by .gitignore) or regenerate it with 'gradle wrapper'."
+fi
+
 set -- \
         "-Dorg.gradle.appname=$APP_BASE_NAME" \
         -classpath "$CLASSPATH" \

@@ -22,6 +22,9 @@
 # Kotlin
 *.class
 *.jar
+# ...but the Gradle wrapper jar MUST be committed, otherwise ./gradlew fails on
+# a fresh clone with "Error: Unable to access jarfile".
+!gradle/wrapper/gradle-wrapper.jar
 *.kotlin_module
 
 # Rust
@@ -52,6 +55,7 @@ Thumbs.db
 # Secrets
 *.keystore
 *.jks
+*.jks.*
 google-services.json
 
 # Test outputs

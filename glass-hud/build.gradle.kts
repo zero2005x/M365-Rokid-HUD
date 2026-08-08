@@ -27,8 +27,11 @@ android {
         applicationId = "com.m365hud.glass"
         minSdk = 29  // Android 10+ (Rokid runs Android 12)
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        // Aligned with the phone app so a joint release ships two APKs that
+        // report the same versionName. versionCode must strictly increase for
+        // sideloaded updates to install over an existing build.
+        versionCode = 3
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

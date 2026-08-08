@@ -13,11 +13,29 @@
 -keep class androidx.compose.** { *; }
 
 # ============================================
-# Rokid CXR SDK (for future integration)
-# If using official Rokid CXR-M SDK, uncomment below
+# Rokid CXR SDK  --  REQUIRED, do not comment out
 # ============================================
-# -keep class com.rokid.cxr.** { *; }
-# -dontwarn com.rokid.cxr.**
+# The SDK is a real dependency (com.rokid.cxr:client-m), but CxrMClient only
+# ever touches it reflectively:
+#
+#     Class.forName("com.rokid.cxr.CxrClient")
+#     cxrClientClass.getMethod("sendData", ByteArray::class.java)
+#     Proxy.newProxyInstance(..., arrayOf(Class.forName("com.rokid.cxr.DataCallback")))
+#
+# There is no compile-time reference anywhere, so without these rules R8 sees
+# the whole package as unreachable and strips or renames it. The result is a
+# release-only failure: Class.forName throws ClassNotFoundException,
+# isSdkAvailable() reports false and the CXR-M transport silently disappears,
+# while debug builds (no minification) keep working.
+#
+# `{ *; }` is deliberate: the method names above are resolved by string, so
+# members must keep their original names too.
+-keep class com.rokid.cxr.** { *; }
+-keepclassmembers class com.rokid.cxr.** { *; }
+-dontwarn com.rokid.cxr.**
+
+# The callback is implemented with a dynamic Proxy over the SDK interface.
+-keep interface com.rokid.cxr.** { *; }
 
 # ============================================
 # Retrofit (if using with Rokid SDK)

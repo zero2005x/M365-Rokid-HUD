@@ -45,38 +45,11 @@ hex = "0.4"
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.7", features = ["tracing-log"] }
 
-[[example]]
-name = "register"
-
-[[example]]
-name = "login"
-
-[[example]]
-name = "scanner"
-
-[[example]]
-name = "about"
-
-[[example]]
-name = "settings"
-
-[[example]]
-name = "clone_test"
-
-[[example]]
-name = "clone_connect"
-
-[[example]]
-name = "clone_debug"
-
-[[example]]
-name = "raw_probe"
-
-[[example]]
-name = "miauth_test"
-
-[[example]]
-name = "monitor"
-
-[[example]]
-name = "controller"
+# Examples are auto-discovered from examples/*.rs.
+#
+# There used to be twelve explicit [[example]] entries here, six of which
+# (clone_test, clone_debug, raw_probe, miauth_test, monitor, controller)
+# pointed at files that had been deleted. Cargo refuses to even parse a
+# manifest that names a missing target, so every cargo command in this crate
+# failed with "can't find `clone_debug` example". Relying on auto-discovery
+# means the manifest can never again drift from what is on disk.

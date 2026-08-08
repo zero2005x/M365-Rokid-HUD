@@ -98,7 +98,13 @@ jobs:
           echo "Keystore decoded and readable"
 
       - name: Build release APKs
-        run: ./gradlew --no-daemon :app:assembleRelease :glass-hud:assembleRelease
+        # chmod is belt-and-braces: gradlew is committed with mode 100755, but
+        # the bit is easy to lose again from a Windows checkout, where git's
+        # core.filemode defaults to false. Without it the runner fails with
+        # "./gradlew: Permission denied" (exit 126).
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleRelease :glass-hud:assembleRelease
 
       - name: Verify 16 KB page alignment of the native library
         # Google Play rejects shared libraries whose PT_LOAD segments are not

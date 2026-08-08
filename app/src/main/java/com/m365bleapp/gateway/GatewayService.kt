@@ -1,6 +1,7 @@
 package com.m365bleapp.gateway
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.*
 import android.bluetooth.BluetoothManager
 import android.content.Context
@@ -276,6 +277,10 @@ class GatewayService : Service() {
                     }
                     
                     try {
+                        // BLUETOOTH_CONNECT is granted before the gateway is
+                        // allowed to start; suppressing keeps the call inside
+                        // the telemetry collector readable.
+                        @SuppressLint("MissingPermission")
                         gattServer?.updateTelemetry(
                             speedKmh = info.speed,
                             scooterBattery = info.battery,
@@ -465,6 +470,9 @@ class GatewayService : Service() {
     
     private fun updateNotification(content: String) {
         val manager = getSystemService(NotificationManager::class.java)
+        // This notification belongs to a foreground service, so it is shown
+        // even without POST_NOTIFICATIONS on Android 13+.
+        @SuppressLint("MissingPermission")
         manager.notify(NOTIFICATION_ID, buildNotification(content))
     }
 }

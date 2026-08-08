@@ -1,5 +1,6 @@
 package com.m365bleapp.ui
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.os.Build
@@ -31,6 +32,9 @@ fun NavHostContainer(repository: ScooterRepository) {
                 onLogs = { navController.navigate("logViewer") },
                 onScooterInfo = { navController.navigate("scooterInfo") },
                 onDisconnect = { 
+                    // Reachable only after a successful connection, so
+                    // BLUETOOTH_CONNECT has been granted by this point.
+                    @SuppressLint("MissingPermission")
                     repository.disconnect()
                     navController.popBackStack()
                 }

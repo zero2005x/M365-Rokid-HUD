@@ -57,6 +57,14 @@ fun LogViewerScreen(
     // Export state
     var isExporting by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+
+    // Hoisted resources: context.getString inside a composable/coroutine
+    // does not invalidate on locale change (lint
+    // LocalContextGetResourceValueCall), so resolve them via stringResource.
+    val shareTitle = stringResource(R.string.log_share_title)
+    val shareLogsToTitle = stringResource(R.string.share_logs_to)
+    val exportFailedTemplate = stringResource(R.string.export_failed)
+    fun exportFailedMessage(detail: String) = exportFailedTemplate.format(detail)
     
     // Logging enabled state
     var loggingEnabled by remember { mutableStateOf(logger.isLoggingEnabled()) }
@@ -95,7 +103,7 @@ fun LogViewerScreen(
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(intent, context.getString(R.string.log_share_title)))
+            context.startActivity(Intent.createChooser(intent, shareTitle))
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -333,7 +341,7 @@ fun LogViewerScreen(
                                         context.startActivity(
                                             Intent.createChooser(
                                                 shareIntent,
-                                                context.getString(R.string.share_logs_to)
+                                                shareLogsToTitle
                                             )
                                         )
                                     } else {
@@ -346,7 +354,7 @@ fun LogViewerScreen(
                                 } else {
                                     Toast.makeText(
                                         context,
-                                        context.getString(R.string.export_failed, result.errorMessage ?: "Unknown error"),
+                                        exportFailedMessage(result.errorMessage ?: "Unknown error"),
                                         Toast.LENGTH_LONG
                                     ).show()
                                 }
@@ -355,7 +363,7 @@ fun LogViewerScreen(
                             } catch (e: Exception) {
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.export_failed, e.message ?: "Unknown error"),
+                                    exportFailedMessage(e.message ?: "Unknown error"),
                                     Toast.LENGTH_LONG
                                 ).show()
                             } finally {

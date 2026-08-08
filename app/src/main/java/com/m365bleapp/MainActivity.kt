@@ -1,5 +1,6 @@
 package com.m365bleapp
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
@@ -63,6 +64,9 @@ class MainActivity : ComponentActivity() {
         // Do NOT disconnect on configuration changes or activity recreation
         // because the GatewayService needs the scooter connection to remain active
         if (isFinishing) {
+            // disconnect() only touches BLE when a connection exists, which
+            // implies BLUETOOTH_CONNECT was already granted at connect time.
+            @SuppressLint("MissingPermission")
             repository.disconnect()
         }
     }

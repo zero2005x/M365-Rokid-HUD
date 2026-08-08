@@ -18,11 +18,17 @@
         android:maxSdkVersion="30" />
 
     <!-- New Bluetooth (API 31+) -->
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
+        android:minSdkVersion="31" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"
+        android:minSdkVersion="31"
         tools:targetApi="s" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"
+        android:minSdkVersion="31" />
+
+    <!-- Notifications (API 33+) - required for gateway foreground services -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- ============================================ -->
     <!-- Network Permissions (Rokid SDK requirement)  -->

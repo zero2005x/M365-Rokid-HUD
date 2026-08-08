@@ -1,6 +1,7 @@
 package com.m365bleapp.repository
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.content.Context
@@ -1314,6 +1315,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * under [connectionLock], and each resource is cleared before it is
      * released so a concurrent caller cannot free the same session twice.
      */
+    @SuppressLint("MissingPermission")
     private fun releaseConnection(closeGatt: Boolean = true) {
         val (gatt, ptr) = synchronized(connectionLock) {
             val g = activeGatt

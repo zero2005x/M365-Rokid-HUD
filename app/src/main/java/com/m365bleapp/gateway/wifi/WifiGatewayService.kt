@@ -1,5 +1,6 @@
 package com.m365bleapp.gateway.wifi
 
+import android.annotation.SuppressLint
 import android.app.*
 import android.content.Context
 import android.content.Intent
@@ -313,6 +314,9 @@ class WifiGatewayService : Service() {
     private fun updateNotification(content: String) {
         val notification = buildNotification(content)
         val notificationManager = getSystemService(NotificationManager::class.java)
+        // Foreground-service notifications are shown even without
+        // POST_NOTIFICATIONS on Android 13+.
+        @SuppressLint("MissingPermission")
         notificationManager.notify(NOTIFICATION_ID, notification)
     }
 }

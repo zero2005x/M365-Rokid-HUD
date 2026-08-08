@@ -1,6 +1,7 @@
 package com.m365bleapp.ui
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.le.ScanResult
 import android.content.Context
 import android.content.Intent
@@ -100,6 +101,11 @@ private fun requestBatteryOptimizationExemption(
 /**
  * Data class to hold scan result with registration status for sorting
  */
+// The property initializers read the device name, which requires
+// BLUETOOTH_CONNECT on API 31+. The scan flow requests that permission
+// before any ScannedDevice is created, so suppress at the class level to
+// cover both the `name` and any future device-derived initializers.
+@SuppressLint("MissingPermission")
 @androidx.compose.runtime.Stable
 private data class ScannedDevice(
     val scanResult: ScanResult,
@@ -732,6 +738,9 @@ fun ConnectDialog(
 ) {
     val isAlreadyRegistered = repository.isRegistered(device.device.address)
     var register by remember { mutableStateOf(!isAlreadyRegistered) }
+    // The dialog is only shown for a device discovered by a permission-gated
+    // scan, so BLUETOOTH_CONNECT is already held here.
+    @SuppressLint("MissingPermission")
     val deviceName = device.device.name ?: stringResource(R.string.unknown)
     
     AlertDialog(

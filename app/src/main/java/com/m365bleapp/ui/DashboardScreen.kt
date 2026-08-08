@@ -167,6 +167,8 @@ fun DashboardScreen(
     var disconnectMessage by remember { mutableStateOf("") }
     // Track user-initiated disconnect to avoid showing alert
     var userInitiatedDisconnect by remember { mutableStateOf(false) }
+    // Resolved with stringResource so the message follows locale changes.
+    val connectionLostMessage = stringResource(R.string.connection_lost)
     
     // Monitor connection state for disconnection
     LaunchedEffect(connState) {
@@ -174,7 +176,7 @@ fun DashboardScreen(
             is ConnectionState.Disconnected -> {
                 // Only show alert for unexpected disconnections, not user-initiated ones
                 if (!userInitiatedDisconnect) {
-                    disconnectMessage = context.getString(R.string.connection_lost)
+                    disconnectMessage = connectionLostMessage
                     showDisconnectAlert = true
                 }
             }

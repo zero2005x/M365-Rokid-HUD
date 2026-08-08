@@ -42,6 +42,12 @@ fun LoggingScreen(
     var isExporting by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var exportResult by remember { mutableStateOf<LogExporter.ExportResult?>(null) }
+
+    // Hoisted resources: context.getString inside a composable/coroutine does
+    // not invalidate on locale change (lint LocalContextGetResourceValueCall).
+    val shareLogsToTitle = stringResource(R.string.share_logs_to)
+    val exportFailedTemplate = stringResource(R.string.export_failed)
+    fun exportFailedMessage(detail: String) = exportFailedTemplate.format(detail)
     
     // Calculate log stats
     val logsCount = logExporter.getLogsCount()
@@ -173,7 +179,7 @@ fun LoggingScreen(
                                         context.startActivity(
                                             Intent.createChooser(
                                                 shareIntent,
-                                                context.getString(R.string.share_logs_to)
+                                                shareLogsToTitle
                                             )
                                         )
                                     } else {
@@ -186,7 +192,7 @@ fun LoggingScreen(
                                 } else {
                                     Toast.makeText(
                                         context,
-                                        context.getString(R.string.export_failed, result.errorMessage ?: "Unknown error"),
+                                        exportFailedMessage(result.errorMessage ?: "Unknown error"),
                                         Toast.LENGTH_LONG
                                     ).show()
                                 }
@@ -195,7 +201,7 @@ fun LoggingScreen(
                             } catch (e: Exception) {
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.export_failed, e.message ?: "Unknown error"),
+                                    exportFailedMessage(e.message ?: "Unknown error"),
                                     Toast.LENGTH_LONG
                                 ).show()
                             } finally {

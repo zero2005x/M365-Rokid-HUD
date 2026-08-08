@@ -195,12 +195,33 @@ jobs:
           ls -la dist
 
       - name: Upload to the GitHub Release
+        # Uses doc/RELEASE_NOTES_<tag>.md as the release body when that file
+        # exists, so notes are reviewed in the repository rather than typed into
+        # the web UI and lost. Falls back to --generate-notes otherwise.
+        #
+        # The body is set with `gh release edit` even when the release already
+        # exists, so re-running this workflow refreshes the notes instead of
+        # leaving whatever was published first.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.stage.outputs.tag }}"
-          gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --generate-notes
+          NOTES="doc/RELEASE_NOTES_${TAG}.md"
+
+          if [ -f "$NOTES" ]; then
+            echo "Using release notes from $NOTES"
+            NOTES_ARG=(--notes-file "$NOTES")
+          else
+            echo "::warning::$NOTES not found, falling back to generated notes"
+            NOTES_ARG=(--generate-notes)
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" "${NOTES_ARG[@]}"
+          else
+            gh release create "$TAG" --title "$TAG" "${NOTES_ARG[@]}"
+          fi
+
           gh release upload "$TAG" dist/* --clobber
 
       - name: Remove keystore

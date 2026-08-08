@@ -46,6 +46,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+      Required to launch Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+      from ScanScreen. Without it that intent throws SecurityException on API
+      23+ and crashed the app straight from the warning banner. The telemetry
+      gateway is a long-running foreground service, which is the documented
+      justification for requesting Doze exemption.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- ============================================ -->
     <!-- Hardware Features                            -->
@@ -54,6 +62,8 @@
 
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
@@ -84,7 +94,7 @@
             
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.m365bleapp.provider"
+            android:authorities="${applicationId}.provider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data

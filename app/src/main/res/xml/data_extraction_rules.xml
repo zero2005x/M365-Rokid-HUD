@@ -1,9 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup / transfer policy (Android 12+).
+
+  The previous version included the whole file domain with no exclusions, so
+  every scooter auth token and every raw BLE traffic log was uploaded to cloud
+  backup and copied on device-to-device transfer.
+
+  Two things must never leave the device:
+    * secret_shared_prefs - EncryptedSharedPreferences holding the per-scooter
+      auth tokens. Its master key lives in the Android Keystore, which is NOT
+      backed up, so restoring these files onto another device produces
+      undecryptable data anyway.
+    * logs/ - TelemetryLogger writes raw BLE frames, including auth exchanges
+      and encrypted UART payloads, as plaintext CSV.
+-->
 <data-extraction-rules>
     <cloud-backup>
         <include domain="file" path="."/>
+        <exclude domain="file" path="logs"/>
+        <exclude domain="sharedpref" path="secret_shared_prefs.xml"/>
     </cloud-backup>
     <device-transfer>
         <include domain="file" path="."/>
+        <exclude domain="file" path="logs"/>
+        <exclude domain="sharedpref" path="secret_shared_prefs.xml"/>
     </device-transfer>
 </data-extraction-rules>

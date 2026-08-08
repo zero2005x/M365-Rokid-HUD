@@ -156,6 +156,7 @@
     <string name="bluetooth_disabled_title">Bluetooth Disabled</string>
     <string name="bluetooth_disabled_message">Please enable Bluetooth to use this app.</string>
     <string name="bluetooth_permission_required">Bluetooth permissions are required</string>
+    <string name="bluetooth_location_required">Location services must be turned on for Bluetooth scanning</string>
     <string name="bluetooth_permission_title">Permission Required</string>
     <string name="bluetooth_permission_message">Bluetooth permissions are required to scan and connect to your scooter.</string>
     <string name="bluetooth_enable">Enable Bluetooth</string>

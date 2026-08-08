@@ -1,3 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup policy for Android 11 and below (android:fullBackupContent).
+  Android 12+ uses res/xml/data_extraction_rules.xml instead; keep the two in
+  sync.
+
+  Excludes the scooter auth tokens and the raw BLE logs - see
+  data_extraction_rules.xml for the rationale.
+-->
 <full-backup-content>
+    <exclude domain="file" path="logs"/>
+    <exclude domain="sharedpref" path="secret_shared_prefs.xml"/>
 </full-backup-content>

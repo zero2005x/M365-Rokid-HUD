@@ -13,6 +13,13 @@ use anyhow::{Context, Result, anyhow};
 const NB_CHUNK_SIZE : usize = 20;
 const MI_CHUNK_SIZE : usize = 18;
 
+/// Per-frame timeout while reading a multi-frame Mi parcel. Without it a lost
+/// frame blocks the caller forever.
+const MI_PARCEL_TIMEOUT : Duration = Duration::from_secs(5);
+
+/// Default timeout used by [`MiProtocol::wait_for_notification`].
+const DEFAULT_NOTIFICATION_TIMEOUT : Duration = Duration::from_secs(10);
+
 /**
  * This structs hides all bluetooth shenanigans under easy to use commands.
  */
@@ -62,6 +69,15 @@ impl MiProtocol {
     }
   }
 
+  /// Resolves a register to its characteristic, or reports an error.
+  ///
+  /// Registers such as `AUTH`/`UART` name services rather than writable
+  /// characteristics, so this is ordinary invalid input and must not panic.
+  fn channel_for(&self, reg : &Registers) -> Result<&Characteristic> {
+    self.reg_to_channel(reg)
+      .ok_or_else(|| anyhow!("Register {:?} does not map to a writable characteristic", reg))
+  }
+
   /**
    * Read next notification
    */
@@ -81,7 +97,7 @@ impl MiProtocol {
   pub async fn wait_for_scooter_to_ack_data(&mut self) -> Result<bool> {
     match self.next_mi_response().await {
       Some(MiCommands::RCV_OK) => Ok(true),
-      Some(state) => Err(anyhow!("Expected state: {:?}, but received: {:?}", MiCommands::RCV_RDY, state)),
+      Some(state) => Err(anyhow!("Expected state: {:?}, but received: {:?}", MiCommands::RCV_OK, state)),
       None => Err(anyhow!("Invalid response received from scooter"))
     }
   }
@@ -116,17 +132,18 @@ impl MiProtocol {
   }
 
   /**
-   * Try to read next notification, If nothing comes in 2 seconds raise error.
+   * Try to read next notification. If nothing comes in
+   * `DEFAULT_NOTIFICATION_TIMEOUT` (10 seconds) raise an error.
    */
   pub async fn wait_for_notification(&mut self) -> Result<ValueNotification> {
-    self.wait_for_notification_with_timeout(Duration::from_secs(10)).await
+    self.wait_for_notification_with_timeout(DEFAULT_NOTIFICATION_TIMEOUT).await
   }
 
   /**
    * Send mi command to register on scooter
    */
   pub async fn write(&self, reg: &Registers, command: MiCommands) -> Result<bool> {
-    let channel = self.reg_to_channel(reg).unwrap();
+    let channel = self.channel_for(reg)?;
     tracing::debug!("-> {:?} -> {:?}", command, &reg);
 
     self.device.write(&channel, &command.to_bytes(), WriteType::WithoutResponse).await
@@ -162,37 +179,53 @@ impl MiProtocol {
   pub async fn read_mi_parcel(&mut self, reg: &Registers) -> Result<Vec<u8>> {
     tracing::debug!("Reading parcel...");
 
-    let mut total_frames : u16 = 0;
     let mut received_data : Vec<u8> = Vec::new();
 
-    if let Some(data) = self.stream.next().await {
-      total_frames = data.value[4] as u16 + 0x100 * data.value[5] as u16;
-      tracing::debug!("Expecting {} frames: {:?}", total_frames, data.value.hex_dump());
+    // The header carries the frame count at offset 4..6. Read it through a
+    // timeout so a silent scooter cannot block the caller forever, and validate
+    // the length before indexing: this data is attacker/fault controlled.
+    let header = self.wait_for_notification_with_timeout(MI_PARCEL_TIMEOUT).await
+      .with_context(|| "Timed out waiting for the Mi parcel header")?;
 
-      self.write(reg, MiCommands::RCV_RDY).await?;
+    if header.value.len() < 6 {
+      return Err(anyhow!(
+        "Mi parcel header is too short: {} bytes (expected at least 6)",
+        header.value.len()
+      ));
     }
 
-    while let Some(data) = self.stream.next().await {
-      let current_frame : u16 = what_frame(&data.value);
-      tracing::debug!("Current frame {}: {:?}", current_frame, data.value.hex_dump());
+    let total_frames : u16 = header.value[4] as u16 + 0x100 * header.value[5] as u16;
+    tracing::debug!("Expecting {} frames", total_frames);
 
-      for i in 2..data.value.len() {
-        received_data.push(data.value[i]);
-      }
+    self.write(reg, MiCommands::RCV_RDY).await?;
+
+    let mut frames_seen : u16 = 0;
+    loop {
+      let data = self.wait_for_notification_with_timeout(MI_PARCEL_TIMEOUT).await
+        .with_context(|| format!(
+          "Timed out after {} of {} Mi parcel frames", frames_seen, total_frames
+        ))?;
+
+      let current_frame = what_frame(&data.value)?;
+      tracing::debug!("Current frame {}", current_frame);
+
+      received_data.extend_from_slice(&data.value[2..]);
+      frames_seen = frames_seen.saturating_add(1);
 
       if current_frame == total_frames {
         break;
       }
     }
 
-    tracing::debug!("All frames received: {:?}", received_data.hex_dump());
+    // Only acknowledge once the whole parcel actually arrived. Acknowledging a
+    // partial parcel desynchronises the Mi protocol on both ends.
     self.write(reg, MiCommands::RCV_OK).await?;
 
     Ok(received_data)
   }
 
   pub async fn write_nb_parcel(&self, reg: &Registers, data: &[u8]) -> Result<bool> {
-    let channel = self.reg_to_channel(reg).unwrap();
+    let channel = self.channel_for(reg)?;
 
     for chunk in data.chunks(NB_CHUNK_SIZE) {
       tracing::debug!("Writing nb chunk to {:?}: {:?}", reg, chunk.hex_dump());
@@ -207,23 +240,34 @@ impl MiProtocol {
    * Send big data parcel to scooter using mi protocol
    */
   pub async fn write_mi_parcel(&self, reg: &Registers, data: &[u8]) -> Result<bool> {
-    let mut buffer : Vec<u8> = Vec::new();
-    let mut chunk_index = 1;
-    let channel = self.reg_to_channel(reg).unwrap();
+    let channel = self.channel_for(reg)?;
 
-    for chunk in data.chunks(MI_CHUNK_SIZE) {
+    // The chunk index is a single byte on the wire, so an oversized parcel
+    // would overflow it: a panic in debug builds, and in release a silent wrap
+    // that corrupts the frame sequence and leaves the receiver waiting for
+    // frames that never arrive.
+    let chunks = (data.len() + MI_CHUNK_SIZE - 1) / MI_CHUNK_SIZE;
+    if chunks > u8::MAX as usize {
+      return Err(anyhow!(
+        "Mi parcel is {} bytes ({} chunks), but only {} chunks can be addressed",
+        data.len(), chunks, u8::MAX
+      ));
+    }
+
+    let mut buffer : Vec<u8> = Vec::with_capacity(2 + MI_CHUNK_SIZE);
+
+    for (i, chunk) in data.chunks(MI_CHUNK_SIZE).enumerate() {
+      // Safe: `chunks` was bounded by u8::MAX above, so i + 1 <= 255.
+      let chunk_index = (i + 1) as u8;
+
       buffer.clear();
       buffer.push(chunk_index);
       buffer.push(0);
-
-      for byte in chunk { // There should be better way of doing this...
-        buffer.push(*byte);
-      }
+      buffer.extend_from_slice(chunk);
 
       tracing::debug!("Writing mi chunk {} to {:?}: {:?}", chunk_index, reg, buffer.hex_dump());
-      self.device.write(&channel, &buffer, WriteType::WithoutResponse).await
+      self.device.write(channel, &buffer, WriteType::WithoutResponse).await
         .with_context(|| format!("Could not write mi chunk: {} for channel: {:?}", chunk_index, channel))?;
-      chunk_index += 1;
     }
 
     Ok(true)
@@ -246,8 +290,18 @@ async fn find_characteristic(device : &Peripheral, service_uuid: Uuid, char_uuid
   Err(anyhow!("Could not find characteristic: {}", char_uuid))
 }
 
-fn what_frame(bytes: &Vec<u8>) -> u16 {
-  bytes[0] as u16 & 0xff + 0x100 * bytes[1] as u16 & 0xff
+/// Reads the little-endian frame counter from the first two bytes of a Mi frame.
+///
+/// The parentheses are load-bearing: `&` binds looser than `+`/`*` in Rust, so
+/// the unparenthesised form collapsed to `bytes[0]` and any frame count above
+/// 255 was misread as its low byte, which made the loop in `read_mi_parcel`
+/// never reach its terminating condition.
+fn what_frame(bytes: &[u8]) -> Result<u16> {
+  if bytes.len() < 2 {
+    return Err(anyhow!("Mi frame is too short to contain a frame counter ({} bytes)", bytes.len()));
+  }
+
+  Ok((bytes[0] as u16 & 0xff) + 0x100 * (bytes[1] as u16 & 0xff))
 }
 
 async fn setup_channels(device : &Peripheral) -> Result<(Characteristic, Characteristic, Characteristic, Characteristic)> {

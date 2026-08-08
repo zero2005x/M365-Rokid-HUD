@@ -73,6 +73,10 @@ impl MiSession {
    */
   pub async fn battery_amperage(&mut self) -> Result<f32> {
     tracing::debug!("Reading battery amperage");
+    // Unit is 10 mA per LSB, the same scale `BatteryInfo::current` uses for the
+    // same physical quantity (see the golden vector in
+    // tests/motor_info_test.rs, where raw 0x0001 == 0.01 A). Dividing by 10
+    // here reported currents 10x too large.
 
     self.send(&ScooterCommand {
       direction: Direction::MasterToBattery,
@@ -84,16 +88,16 @@ impl MiSession {
     let mut payload = self.read(2).await?;
     payload.pop_head()?;
 
-    let amperage = payload.pop_i16()? as f32 / 10.0;
+    let amperage = payload.pop_i16()? as f32 / 100.0;
 
     Ok(amperage)
   }
 
   /**
-   * Return amperage in Ampere
+   * Return the remaining battery charge as a percentage (0-100)
    */
-  pub async fn battery_percentage(&mut self) -> Result<f32> {
-    tracing::debug!("Reading battery amperage");
+  pub async fn battery_percentage(&mut self) -> Result<u16> {
+    tracing::debug!("Reading battery percentage");
 
     self.send(&ScooterCommand {
       direction: Direction::MasterToBattery,
@@ -105,7 +109,9 @@ impl MiSession {
     let mut payload = self.read(2).await?;
     payload.pop_head()?;
 
-    let percent = payload.pop_u16()? as f32;
+    // Returned as u16 to match `BatteryInfo::percent`, which reports the same
+    // value.
+    let percent = payload.pop_u16()?;
 
     Ok(percent)
   }

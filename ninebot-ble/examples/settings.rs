@@ -25,7 +25,8 @@ async fn load_token() -> Result<AuthToken> {
   let mut f = File::open(path).await?;
   let mut buffer : AuthToken = [0; 12];
 
-  f.read(&mut buffer).await?;
+  // read_exact: a short read would silently zero-pad a truncated token file.
+  f.read_exact(&mut buffer).await?;
 
   Ok(buffer)
 }

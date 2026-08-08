@@ -65,7 +65,9 @@ impl RegistrationRequest {
     self.send_did().await?;
     self.perform_auth().await?;
 
-    Ok(self.token.unwrap())
+    self.token
+      .take()
+      .ok_or_else(|| RegistrationError::Other(anyhow!("Auth token was not generated")))
   }
 
   /**
@@ -124,9 +126,10 @@ impl RegistrationRequest {
 
   async fn send_did(&mut self) -> Result<bool> {
     let remote_key_bytes = self.protocol.read_mi_parcel(&Registers::AVDTP).await?;
-    let remote_info = self.remote_info.as_ref().unwrap();
+    let remote_info = self.remote_info.as_ref()
+      .ok_or_else(|| anyhow!("Remote info is not available; read_remote_info must run first"))?;
     let remote_key_bytes = [&[0x04], remote_key_bytes.as_slice()].concat();
-    let (did_ct, token) = mi_crypto::calc_did(&self.my_secret_key, &remote_key_bytes, &remote_info);
+    let (did_ct, token) = mi_crypto::calc_did(&self.my_secret_key, &remote_key_bytes, remote_info)?;
 
     self.token = Some(token);
     self.protocol.write(&Registers::AVDTP, MiCommands::CMD_SEND_DID).await?;
@@ -141,9 +144,9 @@ impl RegistrationRequest {
           tracing::debug!("Mi confirmed receiving did");
           break;
         }
-        _ => {
-          tracing::error!("Scooter did not receive public key");
-          return Err(anyhow!("Scooter did not receive public key"));
+        other => {
+          tracing::error!("Unexpected scooter response while sending DID: {:?}", other);
+          return Err(anyhow!("Unexpected scooter response while sending DID: {:?}", other));
         }
       }
     }
@@ -155,7 +158,8 @@ impl RegistrationRequest {
     self.protocol.write(&Registers::UPNP, MiCommands::CMD_AUTH).await?;
     match self.protocol.next_mi_response().await {
       Some(MiCommands::RCV_AUTH_OK) => {
-        tracing::info!("Registered token: {:?}", self.token.unwrap().hex_dump());
+        // Never log the auth token: it is a long-lived credential for the scooter.
+        tracing::info!("Scooter confirmed registration auth");
       },
 
       Some(error) => {

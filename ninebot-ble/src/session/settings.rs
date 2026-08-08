@@ -44,9 +44,11 @@ impl From<u16> for Kers {
 
 #[derive(Debug, Serialize)]
 pub struct SupplementaryInfo {
-  kers: Kers,
-  is_cruise: bool,
-  tail_light: TailLight
+  // Public: this struct is returned from `MiSession::supplementary_info()`, so
+  // callers outside the crate must be able to read it without serialising it.
+  pub kers: Kers,
+  pub is_cruise: bool,
+  pub tail_light: TailLight
 }
 
 impl TryFrom<Payload> for SupplementaryInfo {

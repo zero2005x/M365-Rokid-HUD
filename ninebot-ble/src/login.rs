@@ -5,14 +5,17 @@ use crate::mi_crypto::{
 use crate::session::MiSession;
 use crate::consts::{MiCommands, Registers};
 use crate::protocol::MiProtocol;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use pretty_hex::*;
 use btleplug::platform::Peripheral;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum LoginError {
-  #[error("Failed at creating session for scooter connection")] //TODO: less retarded error message
+  // Returned when the scooter rejects the login or does not respond during
+  // `confirm()`, and when the handshake state needed to build the session is
+  // missing.
+  #[error("Could not establish an authenticated session with the scooter")]
   LoginFailed,
   #[error("Scooter sent invalid remote key")]
   InvalidDid,
@@ -68,7 +71,8 @@ impl LoginRequest {
     self.confirm().await?;
 
     self.protocol.dispose().await?;
-    let keys = self.keys.as_ref().unwrap();
+    let keys = self.keys.as_ref()
+      .ok_or(LoginError::LoginFailed)?;
     let session = MiSession::new(&self.device, keys).await?;
     Ok(session)
   }
@@ -95,7 +99,14 @@ impl LoginRequest {
   async fn read_remote_info(&mut self) -> Result<bool> {
     tracing::debug!("<- remote_info");
     let remote_info = self.protocol.read_mi_parcel(&Registers::AVDTP).await?;
-    self.remote_info = Some(remote_info.try_into().unwrap());
+
+    // `remote_info` is untrusted data from the scooter: a parcel that is not
+    // exactly 32 bytes must be a recoverable error, not a panic.
+    let remote_info: [u8; 32] = remote_info.try_into()
+      .map_err(|v: Vec<u8>| anyhow!(
+        "Scooter sent remote_info of {} bytes, expected 32", v.len()
+      ))?;
+    self.remote_info = Some(remote_info);
 
     Ok(true)
   }
@@ -103,9 +114,14 @@ impl LoginRequest {
   async fn validate_remote_key_and_send_did(&mut self) -> Result<bool, LoginError> {
     tracing::info!("Validating did");
 
+    // These are only guaranteed to be populated by the fixed call order in
+    // `start()`; report a recoverable error rather than panicking if that
+    // invariant is ever broken by a refactor or a skipped handshake step.
     let rand_key = self.rand_key.as_mut();
-    let remote_key = self.remote_key.as_mut().unwrap();
-    let remote_info = self.remote_info.unwrap();
+    let remote_key = self.remote_key.as_mut()
+      .ok_or(LoginError::LoginFailed)?;
+    let remote_info = self.remote_info
+      .ok_or(LoginError::LoginFailed)?;
 
     let (info, expected_remote_info, keys) = calc_login_did(rand_key, remote_key, &self.auth_token);
     if remote_info == expected_remote_info {

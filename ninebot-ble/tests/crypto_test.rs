@@ -14,8 +14,30 @@ fn it_calculates_did() {
     ];
 
     let (did_ct, token) =
-        mi_crypto::calc_did(&scooter_secret, remote_public_key.as_bytes(), &remote_info);
+        mi_crypto::calc_did(&scooter_secret, remote_public_key.as_bytes(), &remote_info).unwrap();
 
     assert_eq!(24, did_ct.len());
     assert_eq!(12, token.len());
+}
+
+/// `calc_did` consumes data supplied by the scooter, so malformed input must be
+/// reported as an error instead of panicking the caller.
+#[test]
+fn it_rejects_invalid_remote_input() {
+    let scooter_secret = EphemeralSecret::random(&mut OsRng);
+    let remote_secret = EphemeralSecret::random(&mut OsRng);
+    let remote_public_key = EncodedPoint::from(remote_secret.public_key());
+
+    let valid_info = [
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x62, 0x6c, 0x74, 0x2e, 0x33, 0x2e, 0x31, 0x36, 0x33, 0x39,
+        0x34, 0x74, 0x33, 0x67, 0x34, 0x6c, 0x63, 0x30, 0x30,
+    ];
+
+    // Not a valid SEC1 point.
+    assert!(mi_crypto::calc_did(&scooter_secret, &[0x00, 0x01, 0x02], &valid_info).is_err());
+
+    // remote_info shorter than its 4-byte header.
+    assert!(
+        mi_crypto::calc_did(&scooter_secret, remote_public_key.as_bytes(), &[0x01, 0x02]).is_err()
+    );
 }

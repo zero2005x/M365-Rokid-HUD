@@ -24,7 +24,9 @@ async fn load_token() -> Result<AuthToken> {
   let mut f = File::open(path).await?;
   let mut buffer : AuthToken = [0; 12];
 
-  f.read(&mut buffer).await?;
+  // `read` may return fewer bytes than requested: a truncated token file would
+  // silently be zero-padded and accepted as a valid (but wrong) token.
+  f.read_exact(&mut buffer).await?;
 
   Ok(buffer)
 }
@@ -65,7 +67,14 @@ async fn main() -> Result<()>{
   tracing::info!("Logged in with success, reading data...");
 
   loop {
-    let _ = read(&mut session).await;
+    // Do not swallow the error: a dropped BLE link or a dead session would
+    // otherwise be retried forever in silence.
+    if let Err(e) = read(&mut session).await {
+      tracing::error!("Failed to read scooter data: {e}");
+      break;
+    }
     time::sleep(Duration::from_millis(1000)).await;
   }
+
+  Ok(())
 }

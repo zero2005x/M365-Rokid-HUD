@@ -1,5 +1,6 @@
 use core::fmt::Debug;
 use pretty_hex::*;
+use thiserror::Error;
 
 #[derive(Clone)]
 pub enum Direction {
@@ -84,24 +85,47 @@ pub struct ScooterCommand {
   pub payload: Vec<u8>
 }
 
+/// Largest payload that still fits in the single-byte length field.
+///
+/// The length byte encodes `read_write + attribute + payload`, so two bytes of
+/// the budget are already spoken for.
+pub const MAX_PAYLOAD_LEN: usize = u8::MAX as usize - 2;
+
+#[derive(Error, Debug)]
+pub enum CommandError {
+  #[error("Payload is {0} bytes, but the length field can only encode up to {MAX_PAYLOAD_LEN}")]
+  PayloadTooLong(usize),
+}
+
 impl Debug for ScooterCommand {
   fn fmt(&self, form: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-    let message = format!("{:?}", self.as_bytes().hex_dump());
-    form.write_str(&message).unwrap();
-    Ok(())
+    match self.as_bytes() {
+      Ok(bytes) => write!(form, "{:?}", bytes.hex_dump()),
+      Err(err) => write!(form, "<invalid ScooterCommand: {}>", err),
+    }
   }
 }
 
 impl ScooterCommand {
-  pub fn as_bytes(&self) -> Vec<u8> {
-    let mut bytes : Vec<u8> = Vec::new();
-    bytes.push(self.payload.len() as u8 + 2u8);
+  /// Serialises the command into its on-wire representation.
+  ///
+  /// The leading length byte counts `read_write + attribute + payload`. An
+  /// oversized payload is rejected instead of being silently truncated (or
+  /// wrapping around) into a corrupt frame.
+  pub fn as_bytes(&self) -> Result<Vec<u8>, CommandError> {
+    if self.payload.len() > MAX_PAYLOAD_LEN {
+      return Err(CommandError::PayloadTooLong(self.payload.len()));
+    }
+
+    // Cannot overflow: checked against MAX_PAYLOAD_LEN above.
+    let len = self.payload.len() as u8 + 2u8;
+
+    let mut bytes : Vec<u8> = Vec::with_capacity(4 + self.payload.len());
+    bytes.push(len);
     bytes.push(self.direction.value());
     bytes.push(self.read_write.value());
     bytes.push(self.attribute.value());
-    for byte in &self.payload {
-      bytes.push(*byte);
-    }
-    bytes
+    bytes.extend_from_slice(&self.payload);
+    Ok(bytes)
   }
 }

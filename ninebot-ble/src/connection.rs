@@ -16,6 +16,9 @@ const RECONNECT_DELAY_SECS: u64 = 8;
 #[cfg(not(target_os = "windows"))]
 const RECONNECT_DELAY_SECS: u64 = 3;
 
+/// Number of connection attempts made by [`ConnectionHelper::connect`].
+const CONNECT_ATTEMPTS: u32 = 5;
+
 /// Adaptive reconnection delay configuration with exponential backoff.
 /// Implements progressive delay strategy to avoid overwhelming the BLE stack.
 pub struct AdaptiveReconnect {
@@ -138,10 +141,17 @@ impl ConnectionHelper {
     Ok(true)
   }
 
+  /// Connects to the device.
+  ///
+  /// Returns `Ok(true)` only when a *stable* connection was confirmed.
+  /// `Ok(false)` means every attempt was exhausted without one, so callers such
+  /// as [`ConnectionHelper::reconnect`] can distinguish a real failure from
+  /// success instead of treating an unusable link as connected.
   pub async fn connect(&self) -> Result<bool, btleplug::Error> {
     tracing::debug!("Connecting to device.");
-    let mut retries = 5;
-    while retries >= 0 {
+    // `retries >= 0` on a signed counter ran one attempt more than intended.
+    let mut attempts_left: u32 = CONNECT_ATTEMPTS;
+    while attempts_left > 0 {
       if self.is_stable_connected().await? {
         tracing::debug!("Connected to device");
         // Extra stabilization delay for Windows
@@ -166,15 +176,15 @@ impl ConnectionHelper {
             return Ok(true);
           } else {
             tracing::debug!("Connect call succeeded but device is not connected");
-            retries -= 1;
-            if retries > 0 {
+            attempts_left -= 1;
+            if attempts_left > 0 {
               time::sleep(Duration::from_secs(2)).await;
             }
           }
         },
-        Err(err) if retries > 0 => {
-          retries -= 1;
-          tracing::debug!("Retrying connection: {} retries left, reason: {}", retries, err);
+        Err(err) if attempts_left > 1 => {
+          attempts_left -= 1;
+          tracing::debug!("Retrying connection: {} attempts left, reason: {}", attempts_left, err);
           time::sleep(Duration::from_secs(2)).await;
         },
 
@@ -182,7 +192,11 @@ impl ConnectionHelper {
       }
     }
 
-    Ok(true)
+    // Every attempt is spent and no stable connection was ever confirmed.
+    // Reporting success here would make the caller reset its backoff and treat
+    // a dead link as connected.
+    tracing::warn!("Could not establish a stable connection after {} attempts", CONNECT_ATTEMPTS);
+    Ok(false)
   }
 
   pub async fn disconnect(&self) -> Result<bool> {

@@ -5,7 +5,6 @@ use btleplug::platform::{Peripheral};
 use btleplug::api::BDAddr;
 use tokio::io::{BufWriter, AsyncWriteExt};
 use tokio::fs::File;
-use pretty_hex::*;
 use std::env;
 use tracing_subscriber;
 use std::path::Path;
@@ -17,10 +16,37 @@ use ninebot_ble::{
   ConnectionHelper, AuthToken
 };
 
+/// Creates the token file with owner-only permissions where the platform
+/// supports it.
+///
+/// `File::create` would use the default 0o666 & umask (typically 0o644), which
+/// leaves this credential world-readable.
+#[cfg(unix)]
+async fn create_token_file(path: &Path) -> Result<File> {
+  use std::os::unix::fs::OpenOptionsExt;
+
+  let f = tokio::fs::OpenOptions::new()
+    .write(true)
+    .create(true)
+    .truncate(true)
+    .mode(0o600)
+    .open(path)
+    .await?;
+
+  Ok(f)
+}
+
+#[cfg(not(unix))]
+async fn create_token_file(path: &Path) -> Result<File> {
+  Ok(File::create(path).await?)
+}
+
 async fn save_token(token : &AuthToken) -> Result<()> {
   let path = Path::new(".mi-token");
-  tracing::info!("Saving token at {:?} with content {:?}", path, token.hex_dump());
-  let f = File::create(path).await?;
+  // Never log the token itself: it is the credential that grants authenticated
+  // access to the scooter, and logs are frequently collected/shared.
+  tracing::info!("Saving token at {:?}", path);
+  let f = create_token_file(path).await?;
   {
     let mut writer = BufWriter::new(f);
     writer.write(token).await?;
@@ -111,7 +137,11 @@ async fn main() -> Result<()> {
           register(&device).await?;
           break;
         } else {
-          tracing::info!("Found scooter nearby: {} with mac: {}", scooter.name.unwrap(), scooter.addr);
+          tracing::info!(
+            "Found scooter nearby: {} with mac: {}",
+            scooter.name.as_deref().unwrap_or("Unknown"),
+            scooter.addr
+          );
         }
       }
     }

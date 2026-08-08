@@ -114,8 +114,9 @@ mod tests {
             payload: vec![0x01, 0x00]  // 0x0001 little-endian: LSB first
         };
 
-        let bytes = cmd.as_bytes();
+        let bytes = cmd.as_bytes().expect("payload fits in the length field");
         // Expected: Length(4) + Dir(0x20) + Cmd(0x03) + Addr(0x70) + Payload(0x01, 0x00)
+        assert_eq!(bytes.len(), 6); // lock down the full frame length
         assert_eq!(bytes[0], 0x04); // length = payload.len() + 2 = 2 + 2 = 4
         assert_eq!(bytes[1], 0x20); // direction: MasterToMotor
         assert_eq!(bytes[2], 0x03); // read_write: Write
@@ -134,8 +135,9 @@ mod tests {
             payload: vec![0x01, 0x00]  // 0x0001 little-endian: LSB first
         };
 
-        let bytes = cmd.as_bytes();
+        let bytes = cmd.as_bytes().expect("payload fits in the length field");
         // Expected: Length(4) + Dir(0x20) + Cmd(0x03) + Addr(0x71) + Payload(0x01, 0x00)
+        assert_eq!(bytes.len(), 6); // lock down the full frame length
         assert_eq!(bytes[0], 0x04); // length = payload.len() + 2 = 2 + 2 = 4
         assert_eq!(bytes[1], 0x20); // direction: MasterToMotor
         assert_eq!(bytes[2], 0x03); // read_write: Write

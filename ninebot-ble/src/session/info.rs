@@ -7,9 +7,11 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct GeneralInfo {
-  serial: String,
-  pin: String,
-  version: String
+  // Public: returned from `MiSession::general_info()`, so callers outside the
+  // crate must be able to read these without serialising the struct.
+  pub serial: String,
+  pub pin: String,
+  pub version: String
 }
 
 #[derive(Debug, Serialize)]
@@ -33,7 +35,7 @@ pub struct MotorInfo {
     /**
    * Distance is in meters
    */
-  pub trip_distance_m: i16,
+  pub trip_distance_m: u16,
   pub uptime: Duration,
   /**
    * Temperature in celsius
@@ -50,11 +52,17 @@ impl TryFrom<Payload> for MotorInfo {
     payload.pad_bytes(8)?; // ---Var179=¿workmode?=0x0000
 
     let battery_percent = payload.pop_u16()?; // ---Var180=%batt=0x003d=61%
-    let speed_kmh = payload.pop_i16()? as f32 / 1000.0; // ---Var181=¿velocidad metros/h?=0x0000=0km/h
+    // Speed, trip distance and uptime are unsigned counters on the wire, like
+    // the average-speed field next to them. Reading them as i16 made any value
+    // with bit 15 set wrap negative: speeds above 32.8 km/h became negative,
+    // trips over 32.8 km became negative, and `uptime as u64` turned a negative
+    // uptime into a value near u64::MAX (a Duration of billions of years).
+    let speed_kmh = payload.pop_u16()? as f32 / 1000.0; // ---Var181=¿velocidad metros/h?=0x0000=0km/h
     let speed_average_kmh = payload.pop_u16()? as f32 / 1000.0; // ---Var182=¿velocidad prom m/h?=0x4650=18km/h
     let total_distance_m = payload.pop_u32()?; // ---Var183-184=m-total=0x0000088a=2.1km
-    let trip_distance_m = payload.pop_i16()?; // ---Var185=¿?=0x0005=5
-    let uptime_s = payload.pop_i16()?; // ---Var186=¿?=0x027c=636
+    let trip_distance_m = payload.pop_u16()?; // ---Var185=¿?=0x0005=5
+    let uptime_s = payload.pop_u16()?; // ---Var186=¿?=0x027c=636
+    // Temperature is genuinely signed (it can go below 0°C).
     let frame_temperature = payload.pop_i16()? as f32 / 10.0; // 	---Var187=temp*10=0x0118=28°C
 
     Ok(

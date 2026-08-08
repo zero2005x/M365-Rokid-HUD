@@ -86,14 +86,29 @@ impl Debug for MiCommands {
       Self::RCV_LOGIN_ERR => write!(fmt, "RCV_LOGIN_ERR {}", self.to_bytes().hex_dump()),
       Self::CMD_LOGIN => write!(fmt, "CMD_LOGIN {}", self.to_bytes().hex_dump()),
       Self::CMD_SEND_KEY => write!(fmt, "CMD_SEND_KEY {}", self.to_bytes().hex_dump()),
-      Self::CMD_SEND_INFO => write!(fmt, "CMD_SEND_KEY {}", self.to_bytes().hex_dump()),
+      Self::CMD_SEND_INFO => write!(fmt, "CMD_SEND_INFO {}", self.to_bytes().hex_dump()),
     }
   }
+}
+
+/// Mi handshake/auth responses are only ever delivered on the AUTH service's
+/// UPNP and AVDTP characteristics.
+///
+/// Without this check a notification from an unrelated characteristic — most
+/// importantly the UART RX channel, which streams telemetry — whose payload
+/// happens to equal one of the short Mi opcodes would be misclassified as a
+/// protocol response and desynchronise the handshake.
+fn is_mi_response_channel(uuid: Uuid) -> bool {
+  uuid == Registers::UPNP.to_uuid() || uuid == Registers::AVDTP.to_uuid()
 }
 
 impl TryFrom<ValueNotification> for MiCommands {
   type Error = &'static str;
   fn try_from(data: ValueNotification) -> std::result::Result<Self, <Self as std::convert::TryFrom<ValueNotification>>::Error> {
+    if !is_mi_response_channel(data.uuid) {
+      return Err("Notification did not arrive on a Mi auth characteristic")
+    }
+
     if data.value == Self::RCV_RDY.to_bytes() { return Ok(Self::RCV_RDY) }
     if data.value == Self::CMD_SEND_DATA.to_bytes() { return Ok(Self::CMD_SEND_DATA) }
     if data.value == Self::RCV_OK.to_bytes() { return Ok(Self::RCV_OK) }

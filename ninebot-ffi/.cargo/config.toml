@@ -1,5 +1,24 @@
 # Android NDK linker configuration for 16 KB page size support
 # Required by Google Play Store for apps targeting Android 15+
+#
+# WARNING: Cargo gives the RUSTFLAGS environment variable precedence over
+# `target.<triple>.rustflags` from config files. If RUSTFLAGS is set anywhere in
+# the build environment (CI, a Makefile, a cargo-ndk wrapper), every flag below
+# is silently dropped and the resulting .so fails Play's 16 KB page-size
+# requirement with no local warning.
+#
+# Therefore:
+#   1. Do not set RUSTFLAGS for Android builds, or append these flags wherever
+#      it is set.
+#   2. Verify the shipped artifacts rather than trusting this file. For each
+#      packaged .so, every PT_LOAD segment must have p_align 0x4000:
+#        llvm-readelf -l libninebot_ffi.so | grep LOAD
+#      Note this only covers the Rust-produced binary; prebuilt or cc-crate
+#      native code shipped alongside it must be checked the same way.
+#
+# Only the four ABIs listed in app/build.gradle.kts abiFilters are covered here.
+# Adding a new Android target (e.g. riscv64-linux-android) requires adding a
+# matching section below.
 
 [target.aarch64-linux-android]
 rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

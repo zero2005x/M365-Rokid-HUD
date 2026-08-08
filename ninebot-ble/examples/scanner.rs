@@ -17,7 +17,12 @@ async fn main() -> Result<()> {
   while let Some(event) = rx.recv().await {
     match event {
       ScannerEvent::DiscoveredScooter(scooter) => {
-        tracing::info!("Found scooter nearby: {} with mac: {}", scooter.name.unwrap(), scooter.addr);
+        // Scooters are also discovered via service data, so `name` can be None.
+        tracing::info!(
+          "Found scooter nearby: {} with mac: {}",
+          scooter.name.as_deref().unwrap_or("Unknown"),
+          scooter.addr
+        );
         tracing::debug!("All devices: {:?}", scanner.devices().await);
       }
     }

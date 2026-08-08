@@ -1,4 +1,4 @@
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use anyhow::Result;
 use tokio::sync::mpsc;
 use std::collections::HashSet;
@@ -47,7 +47,7 @@ pub enum ScannerEvent {
   DiscoveredScooter(TrackedDevice)
 }
 
-#[derive(Clone, Debug, Hash, Eq)]
+#[derive(Clone, Debug, Eq)]
 pub struct TrackedDevice {
   pub id: PeripheralId,
   pub addr: BDAddr,
@@ -74,6 +74,19 @@ impl TrackedDevice {
 impl PartialEq for TrackedDevice {
   fn eq(&self, other: &Self) -> bool {
     self.addr == other.addr
+  }
+}
+
+/// `Hash` must agree with `PartialEq`: `a == b` implies `hash(a) == hash(b)`.
+///
+/// A derived `Hash` covered every field while `PartialEq` compares only the
+/// address, which broke `HashSet` de-duplication — the same scooter
+/// re-advertising with a different name or service-data flag hashed into a
+/// different bucket, missed the `contains` check, and was inserted (and
+/// announced) again.
+impl Hash for TrackedDevice {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.addr.hash(state);
   }
 }
 
@@ -109,7 +122,13 @@ impl ScooterScanner {
             tracing::info!("Found your scooter");
             return Ok(scooter)
           } else {
-            tracing::info!("Found scooter nearby: {} with mac: {}", scooter.name.unwrap(), scooter.addr);
+            // `name` is optional: scooters are also discovered by service data,
+            // so unwrapping here would panic on a nameless advertisement.
+            tracing::info!(
+              "Found scooter nearby: {} with mac: {}",
+              scooter.name.as_deref().unwrap_or("(unnamed peripheral)"),
+              scooter.addr
+            );
           }
         }
       }
@@ -194,9 +213,17 @@ impl CentralEventsProcessor {
     while let Some(event) = events.next().await {
       match event {
         CentralEvent::DeviceDiscovered(peer_id) => {
-          if let Some(tracked_device) = self.track_device(&peer_id).await? {
-            if tracked_device.is_scooter() {
-              self.tx.send(ScannerEvent::DiscoveredScooter(tracked_device)).await?;
+          // A failure for one peripheral (it vanished mid-scan, the adapter
+          // hiccupped, ...) must not tear down scanning for every other device.
+          match self.track_device(&peer_id).await {
+            Ok(Some(tracked_device)) => {
+              if tracked_device.is_scooter() {
+                self.tx.send(ScannerEvent::DiscoveredScooter(tracked_device)).await?;
+              }
+            },
+            Ok(None) => {},
+            Err(err) => {
+              tracing::warn!("Skipping peripheral {:?}: {}", peer_id, err);
             }
           }
         },
@@ -217,27 +244,45 @@ impl CentralEventsProcessor {
       has_xiaomi_service: false,
     };
 
-    let mut devices = self.devices.write().await;
-
-    if devices.contains(&tracked_device) {
-      tracing::debug!("Already discovered: {}", tracked_device.addr);
-      Ok(None)
-    } else {
-      let props = device.properties().await?.unwrap();
-      tracing::debug!("Props: {:?}", props);
-
-      let name = props.local_name.unwrap_or("(peripheral name unknown)".to_owned());
-      tracing::debug!("Device name: {}", name);
-      tracked_device.name = Some(name);
-
-      let xiaomi_uuid = Uuid::parse_str(XIAOMI_SERVICE_UUID).unwrap();
-      if props.service_data.contains_key(&xiaomi_uuid) || props.services.contains(&xiaomi_uuid) {
-        tracked_device.has_xiaomi_service = true;
+    {
+      // Cheap membership check under a short read lock.
+      if self.devices.read().await.contains(&tracked_device) {
+        tracing::debug!("Already discovered: {}", tracked_device.addr);
+        return Ok(None);
       }
-
-      devices.insert(tracked_device.clone());
-      Ok(Some(tracked_device))
     }
+
+    // Fetch properties *before* taking the write lock: holding an exclusive
+    // lock across Bluetooth I/O blocks every reader of the registry.
+    // A peripheral that stopped advertising yields `None` here; skip it instead
+    // of panicking inside the spawned event processor.
+    let props = match device.properties().await? {
+      Some(props) => props,
+      None => {
+        tracing::debug!("No properties available for {}, skipping", tracked_device.addr);
+        return Ok(None);
+      }
+    };
+
+    let name = props.local_name.unwrap_or_else(|| "(peripheral name unknown)".to_owned());
+    tracing::debug!("Device name: {}", name);
+    tracked_device.name = Some(name);
+
+    let xiaomi_uuid = Uuid::parse_str(XIAOMI_SERVICE_UUID)
+      .expect("XIAOMI_SERVICE_UUID is a valid compile-time constant");
+    if props.service_data.contains_key(&xiaomi_uuid) || props.services.contains(&xiaomi_uuid) {
+      tracked_device.has_xiaomi_service = true;
+    }
+
+    let mut devices = self.devices.write().await;
+    // Re-check: another task may have inserted the same address while the
+    // properties were being fetched.
+    if !devices.insert(tracked_device.clone()) {
+      tracing::debug!("Already discovered (race): {}", tracked_device.addr);
+      return Ok(None);
+    }
+
+    Ok(Some(tracked_device))
   }
 }
 

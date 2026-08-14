@@ -21,6 +21,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -70,19 +73,43 @@ class MainActivity : ComponentActivity() {
     // Permission launcher
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val allGranted = permissions.all { it.value }
-        if (allGranted) {
+    ) { results ->
+        // Only the scan/connect permissions actually gate the service: they
+        // are what FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE is validated
+        // against. Requiring every requested permission would mean a user who
+        // declines the notification prompt gets no HUD at all, which is a far
+        // worse outcome than a HUD with no status notification.
+        //
+        // `!= false` rather than `== true`: a permission that was not part of
+        // this request (because the platform is too old to have it) is absent
+        // from the result map, and absent must not read as denied.
+        val bleGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            listOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ).all { results[it] != false }
+        } else {
+            results[Manifest.permission.ACCESS_FINE_LOCATION] != false
+        }
+
+        if (bleGranted) {
+            if (results[Manifest.permission.POST_NOTIFICATIONS] == false) {
+                Log.w(TAG, "Notification permission denied; HUD service will run without a visible notification")
+            }
             startBleService()
+        } else {
+            Log.e(TAG, "Bluetooth permissions denied; cannot start HUD service")
         }
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         // Keep screen on for HUD
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        
+
+        applyImmersiveMode()
+
         setContent {
             GlassHudTheme {
                 Surface(
@@ -111,6 +138,40 @@ class MainActivity : ComponentActivity() {
         checkPermissionsAndStart()
     }
     
+    /**
+     * Puts the HUD in true full-screen (immersive sticky) mode.
+     *
+     * Why this replaces the old approach: apps targeting Android 15 (API 35)
+     * and above are laid out edge-to-edge and CANNOT opt out — Android 16
+     * deleted `windowOptOutEdgeToEdgeEnforcement`. At the same time
+     * `android:statusBarColor` and `android:navigationBarColor` became no-ops,
+     * so the black bars themes.xml used to paint no longer exist and the
+     * system bars now float over the HUD. On a pair of glasses that means the
+     * speed readout can sit underneath a translucent navigation bar.
+     *
+     * Hiding the bars outright is the right answer for a HUD (there is nothing
+     * on the glasses for the user to tap in the status bar), and it is the one
+     * behaviour the system still honours at target 36. BEHAVIOR_SHOW_
+     * TRANSIENT_BARS_BY_SWIPE keeps them recoverable by swipe rather than
+     * gone forever.
+     */
+    private fun applyImmersiveMode() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Transient bars reappear after a swipe or a permission dialog and do
+        // not re-hide themselves. Without this the HUD permanently loses the
+        // top and bottom strips the first time a dialog is shown.
+        if (hasFocus) applyImmersiveMode()
+    }
+
     override fun onStart() {
         super.onStart()
         // Collectors are normally registered from onServiceConnected. Only
@@ -133,21 +194,49 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun checkPermissionsAndStart() {
-        val permissions = mutableListOf(
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-        
-        // Add foreground service permission for Android 9+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            permissions.add(Manifest.permission.FOREGROUND_SERVICE)
+        val permissions = mutableListOf<String>()
+
+        // The list must match the running platform version, not just the
+        // target. BLUETOOTH_SCAN/BLUETOOTH_CONNECT do not exist below API 31,
+        // so requesting them on Android 9-11 (this module's minSdk is 28)
+        // returned "denied" for permissions the OS has never heard of — every
+        // check failed and the HUD service simply never started. Rokid ships
+        // Android 12, which is why this went unnoticed.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions += Manifest.permission.BLUETOOTH_SCAN
+            permissions += Manifest.permission.BLUETOOTH_CONNECT
+            // No ACCESS_FINE_LOCATION here: BLUETOOTH_SCAN is declared
+            // neverForLocation in the manifest, so the platform does not
+            // require a location grant to scan. Prompting for location on a
+            // pair of glasses — where dismissing a system dialog is genuinely
+            // awkward — for a permission the scan does not need is the worst
+            // of both worlds.
+        } else {
+            // API 28-30: the legacy install-time Bluetooth permissions are
+            // enough to talk to the adapter, but BLE scanning genuinely
+            // returns zero results without a location grant on these releases.
+            permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
-        
+
+        // POST_NOTIFICATIONS became a runtime permission in Android 13 (API 33).
+        // It was declared in the manifest but never requested, so on API 33+ the
+        // foreground-service notification was silently suppressed: the user had
+        // no visible sign the HUD service was running, and an invisible
+        // foreground service is a much easier target for aggressive OEM battery
+        // managers.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        // NOTE: FOREGROUND_SERVICE is deliberately NOT in this list. It is a
+        // normal (install-time) permission, so requestPermissions() cannot
+        // grant it and checkSelfPermission() always reports it granted —
+        // including it was a no-op that made the intent of this block unclear.
+
         val allGranted = permissions.all {
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
-        
+
         if (allGranted) {
             startBleService()
         } else {

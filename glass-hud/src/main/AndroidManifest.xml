@@ -3,10 +3,20 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- BLE Permissions for Central Mode -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!--
+      neverForLocation tells the platform this app does not derive physical
+      location from BLE scan results, which is true: it scans for one specific
+      gateway service UUID advertised by the companion phone. Without the flag
+      the scan is treated as a location request, which is both a stricter
+      runtime grant and a Play Console policy declaration this app does not
+      need. Matches the :app module.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!--
-      minSdk is 29, so this app also runs on Android 10-11 (API 29-30) where
+      minSdk is 28, so this app also runs on Android 9-11 (API 28-30) where
       BLUETOOTH_SCAN/BLUETOOTH_CONNECT do not exist and are ignored. On those
       versions any BLE scan/connect requires the legacy install-time
       permissions below, or the calls throw SecurityException.
@@ -14,9 +24,19 @@
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     
-    <!-- Location for BLE scanning -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Location for BLE scanning on API 28-30 only -->
+    <!--
+      Capped at API 30 for the same reason as the :app module: from API 31 the
+      neverForLocation flag on BLUETOOTH_SCAN above removes the location
+      requirement, and an uncapped location declaration would drag a Play
+      Console location declaration and Data safety disclosure along with it for
+      no functional gain. Rokid glasses run Android 12 (API 31), so on the
+      actual target hardware this permission is never requested at all.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"
+        android:maxSdkVersion="30" />
     
     <!-- Keep screen on for HUD -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -51,6 +71,27 @@
             android:screenOrientation="portrait"
             android:keepScreenOn="true"
             android:theme="@style/Theme.GlassHud">
+            <!--
+              TEMPORARY OPT-OUT — remove once HudScreen is orientation-agnostic.
+
+              Apps targeting Android 16 (API 36) have screenOrientation,
+              resizableActivity, minAspectRatio and maxAspectRatio IGNORED on
+              any display whose smallest width is >= 600dp, along with
+              setRequestedOrientation() at runtime. A HUD that suddenly starts
+              rotating with the wearer's head is a real regression, so this
+              property restores the lock for now.
+
+              Verify whether it is even needed on the target hardware:
+                  adb shell wm size
+                  adb shell dumpsys display | grep -i smallestNominal
+              If the glasses report < 600dp this is a no-op and can be deleted.
+
+              Google intends to remove this escape hatch in a future release —
+              treat it as a deadline, not a fix.
+            -->
+            <property
+                android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+                android:value="true" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

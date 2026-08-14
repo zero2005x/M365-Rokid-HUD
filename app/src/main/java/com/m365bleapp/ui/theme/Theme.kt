@@ -10,7 +10,6 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -103,7 +102,16 @@ fun M365BleAppTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.surface.toArgb()
+            // window.statusBarColor was REMOVED, not forgotten: the setter is
+            // deprecated and is a complete no-op for apps targeting Android 15
+            // (API 35) and above, which this module does (targetSdk 36). Under
+            // enforced edge-to-edge the status bar is transparent and the app's
+            // own content shows through it, so the colour is supplied by the
+            // Compose surface underneath rather than by the window.
+            //
+            // Setting the icon appearance is still meaningful and still works:
+            // it is what keeps the clock and battery icons legible against a
+            // light or dark background.
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }

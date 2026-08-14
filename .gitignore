@@ -63,4 +63,4 @@ google-services.json
 /app/build/reports/
 
 # Rokid Client Secrets
-.lc
+*.lc

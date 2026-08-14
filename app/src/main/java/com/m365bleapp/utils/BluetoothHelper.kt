@@ -50,15 +50,31 @@ object BluetoothHelper {
     }
     
     /**
-     * Get the required Bluetooth permissions based on Android version
+     * Get the required Bluetooth permissions based on Android version.
+     *
+     * ACCESS_FINE_LOCATION is requested on API 30 and below ONLY.
+     *
+     * On Android 12+ the manifest declares BLUETOOTH_SCAN with
+     * usesPermissionFlags="neverForLocation", which is an assertion to the
+     * platform that scan results are not used to derive the user's location —
+     * and in exchange the platform stops requiring a location grant to scan.
+     * Requesting ACCESS_FINE_LOCATION anyway was contradictory: it showed
+     * users a location prompt this app does not need, and a declared location
+     * permission drags a Play Console location-permission declaration (and the
+     * matching Data safety answers) along with it, which is a common source of
+     * review rejections.
+     *
+     * The permission is still genuinely required on API 23-30, where the
+     * platform has no neverForLocation concept and BLE scanning silently
+     * returns zero results without it. Those releases are covered by the
+     * maxSdkVersion="30" declarations in AndroidManifest.xml.
      */
     fun getRequiredPermissions(): List<String> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+
+            // Android 12+ — neverForLocation means no location grant needed.
             listOf(
                 Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT,
-                Manifest.permission.ACCESS_FINE_LOCATION
+                Manifest.permission.BLUETOOTH_CONNECT
             )
         } else {
             // Android 11 and below

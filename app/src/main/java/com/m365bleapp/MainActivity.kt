@@ -2,7 +2,6 @@ package com.m365bleapp
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,19 +17,12 @@ import com.m365bleapp.utils.LocaleHelper
 class MainActivity : ComponentActivity() {
     private lateinit var repository: ScooterRepository
 
-    private val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        listOf(
-            android.Manifest.permission.BLUETOOTH_SCAN,
-            android.Manifest.permission.BLUETOOTH_CONNECT,
-            android.Manifest.permission.ACCESS_FINE_LOCATION
-        )
-    } else {
-        listOf(
-            android.Manifest.permission.ACCESS_FINE_LOCATION,
-            android.Manifest.permission.BLUETOOTH,
-            android.Manifest.permission.BLUETOOTH_ADMIN
-        )
-    }
+    // NOTE: the permission list that used to live here was dead code — nothing
+    // read it, because the actual request flow moved into ScanScreen (see the
+    // comment in onCreate). It was also a third stale copy of the same list,
+    // still asking for ACCESS_FINE_LOCATION on API 31+ where the manifest no
+    // longer declares it. BluetoothHelper.getRequiredPermissions() is now the
+    // single source of truth.
 
     override fun attachBaseContext(newBase: Context) {
         // Apply saved locale before activity is created

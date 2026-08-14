@@ -21,6 +21,39 @@ if (localPropertiesFile.exists()) {
 val isBuildingRelease = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
 
 // ---------------------------------------------------------------------------
+// Rokid CXR-M credentials
+//
+// The Client ID / Secret / AccessKey identify this app to Rokid's auth service
+// and must never reach version control, so they are read from local.properties
+// (or the environment, for CI) and injected as BuildConfig fields.
+//
+// The .lc licence file is a binary blob that ships in assets/. It is bound to
+// the applicationId, so replacing it means re-issuing it from the Rokid
+// developer console.
+// ---------------------------------------------------------------------------
+fun rokidProperty(key: String): String =
+    localProperties.getProperty(key)
+        ?: System.getenv(key)
+        ?: ""
+
+val rokidClientId = rokidProperty("ROKID_CLIENT_ID")
+val rokidClientSecret = rokidProperty("ROKID_CLIENT_SECRET")
+val rokidAccessKey = rokidProperty("ROKID_ACCESS_KEY")
+
+/** Filename of the .lc licence inside src/main/assets. */
+val rokidLicenseAsset = localProperties.getProperty("ROKID_LICENSE_ASSET")
+    ?: "3c51a56e8deb4dce955122e8d1faaa04.lc"
+
+// Fail the build only for releases: a debug build without credentials is still
+// useful (BLE and WiFi transports work), it just cannot reach the glasses over
+// CXR-M.
+if (rokidClientId.isEmpty() || rokidAccessKey.isEmpty()) {
+    val message = "Rokid CXR-M credentials are missing. Set ROKID_CLIENT_ID, " +
+        "ROKID_CLIENT_SECRET and ROKID_ACCESS_KEY in local.properties."
+    if (isBuildingRelease) throw GradleException(message) else logger.warn("WARNING: $message")
+}
+
+// ---------------------------------------------------------------------------
 // Rust JNI (ninebot-ffi) native build
 //
 // The app loads "ninebot_ffi" via System.loadLibrary (see M365Native.kt), but
@@ -168,7 +201,9 @@ android {
 
     defaultConfig {
         applicationId = "com.m365bleapp"
-        minSdk = 29
+        // Rokid CXR-M SDK requires API 28 as its floor. Kept in sync with
+        // glass-hud so both APKs share one support matrix.
+        minSdk = 28
         targetSdk = 36
         versionCode = 6
         versionName = "1.3.1"
@@ -181,6 +216,13 @@ android {
             // Specify supported architectures including 64-bit (arm64-v8a)
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
         }
+
+        // Rokid CXR-M authentication material. Values come from
+        // local.properties; see the block above.
+        buildConfigField("String", "ROKID_CLIENT_ID", "\"$rokidClientId\"")
+        buildConfigField("String", "ROKID_CLIENT_SECRET", "\"$rokidClientSecret\"")
+        buildConfigField("String", "ROKID_ACCESS_KEY", "\"$rokidAccessKey\"")
+        buildConfigField("String", "ROKID_LICENSE_ASSET", "\"$rokidLicenseAsset\"")
         // Support 16 KB memory page size (Google Play requirement)
         packaging {
             jniLibs {
@@ -245,6 +287,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // Required from AGP 8 onward for the buildConfigField entries above.
+        buildConfig = true
     }
     // Kotlin 2.0+ uses compose compiler plugin, no composeOptions needed
     packaging {
@@ -287,4 +331,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     implementation("net.java.dev.jna:jna:5.18.1@aar")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+
+    // Rokid CXR-M SDK — the phone-side half of the Rokid Glasses protocol.
+    // It belongs here rather than in :glass-hud: CXR-M runs on the companion
+    // phone and drives the glasses; the glasses-side counterpart is CXR-S.
+    // Transitive deps (Retrofit, OkHttp, ...) are declared by the SDK.
+    implementation("com.rokid.cxr:client-m:1.0.4")
 }

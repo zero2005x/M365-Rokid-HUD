@@ -6,6 +6,7 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -74,24 +75,57 @@ class BleConnectionService : Service() {
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "Service started")
-        
-        // Start as foreground service with notification
-        startForeground(NOTIFICATION_ID, createNotification("Connecting..."))
+
+        // Validate permissions BEFORE startForeground. From Android 14 (API 34)
+        // the system checks the runtime permission backing a
+        // FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE service at the moment
+        // startForeground is called and throws SecurityException if it is
+        // missing — so checking afterwards is too late.
+        //
+        // This is not hypothetical: the service is START_STICKY, so the system
+        // restarts it with a null intent after a process kill. If the user
+        // revoked Bluetooth access in the meantime, the old ordering crashed
+        // the service on every restart attempt.
+        if (!hasBlePermissions()) {
+            Log.e(TAG, "BLE permissions not granted; cannot run as a connectedDevice foreground service")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // Start as foreground service with notification.
+        // The explicit type argument keeps this in sync with the
+        // android:foregroundServiceType declared in AndroidManifest.xml; the
+        // two-argument overload silently inherits it and hides mismatches.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    createNotification("Connecting..."),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, createNotification("Connecting..."))
+            }
+        } catch (e: Exception) {
+            // Covers SecurityException (permission revoked between the check
+            // above and this call) and ForegroundServiceStartNotAllowedException
+            // (Android 12+ background-start restriction). Stopping is far better
+            // than letting the process crash on the user's glasses.
+            Log.e(TAG, "startForeground failed; stopping service", e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         // Idempotent: onStartCommand also runs on repeat startService calls and
         // on a START_STICKY restart with a null intent. Without this guard each
         // one stacked another connection-state collector and restarted scanning
         // even while already connected.
         if (monitorJob?.isActive != true) {
-            if (hasBlePermissions()) {
-                // @SuppressLint only silences lint: on Android 12+ startScan
-                // throws SecurityException without BLUETOOTH_SCAN/CONNECT and
-                // would kill the service.
-                bleClient?.startScan()
-            } else {
-                Log.w(TAG, "BLE permissions not granted, skipping scan")
-                updateNotification("Bluetooth permission required")
-            }
+            // @SuppressLint only silences lint: on Android 12+ startScan
+            // throws SecurityException without BLUETOOTH_SCAN/CONNECT and
+            // would kill the service. hasBlePermissions() above is what
+            // actually makes this safe.
+            bleClient?.startScan()
 
             // Monitor connection state and update notification
             monitorConnectionState()

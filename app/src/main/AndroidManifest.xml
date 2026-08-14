@@ -3,10 +3,31 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- ============================================ -->
-    <!-- Location Permissions (for Wi-Fi/BT scanning) -->
+    <!-- Location Permissions (legacy BLE scan only)  -->
     <!-- ============================================ -->
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!--
+      maxSdkVersion="30" is deliberate. On API 23-30 the platform has no
+      neverForLocation concept, so a BLE scan without a location grant silently
+      returns zero results — the permission is genuinely required there.
+
+      From API 31 it is not: BLUETOOTH_SCAN below is declared
+      neverForLocation, which asserts this app does not derive location from
+      scan results (true — it scans for one known scooter service UUID) and in
+      exchange the platform drops the location requirement.
+
+      Capping the declaration rather than leaving it open-ended is what
+      actually removes the Play Console location-permission declaration and the
+      matching Data safety disclosure on modern devices. Nothing else in this
+      app uses location: the Rokid CXR-M SDK is a declared dependency with no
+      call sites, and NsdManager service registration does not require it.
+
+      If a location-dependent feature is ever added, raise the cap and restore
+      the Play declaration — do not simply delete the attribute.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
 
     <!-- ============================================ -->
     <!-- Bluetooth Permissions                        -->

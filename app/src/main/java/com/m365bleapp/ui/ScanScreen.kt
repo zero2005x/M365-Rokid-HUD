@@ -169,20 +169,16 @@ fun ScanScreen(
     var hasAutoScrolledToRegistered by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     
-    // Permissions
-    val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        listOf(
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-    } else {
-        listOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.BLUETOOTH,
-            Manifest.permission.BLUETOOTH_ADMIN
-        )
-    }
+    // Permissions.
+    //
+    // Single source of truth: BluetoothHelper.getRequiredPermissions(). This
+    // list used to be duplicated here, in MainActivity and in BluetoothHelper,
+    // and the three copies had already drifted — a permission removed in one
+    // place would silently keep being requested by another, which on API 31+
+    // (where ACCESS_FINE_LOCATION is no longer declared) means the launcher
+    // returns false for it forever and the user is stuck on the permission
+    // error screen.
+    val permissions = BluetoothHelper.getRequiredPermissions()
     
     // Fix: Use state to trigger recomposition when permissions are granted
     val context = LocalContext.current

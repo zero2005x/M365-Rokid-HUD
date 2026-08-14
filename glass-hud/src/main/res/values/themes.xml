@@ -1,11 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+      android:statusBarColor and android:navigationBarColor were REMOVED, not
+      forgotten: both are deprecated and completely ignored for apps targeting
+      Android 15 (API 35) and above, which this module does (targetSdk 36).
+      Leaving them here suggested the bars were being painted black when in
+      fact they were transparent and floating over the HUD.
+
+      The system bars are now hidden outright from MainActivity.applyImmersiveMode(),
+      which is the only mechanism the platform still honours at target 36.
+
+      android:windowFullscreen is kept as a belt-and-braces default for the
+      first frame, before the insets controller runs.
+    -->
     <style name="Theme.GlassHud" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:colorBackground">@android:color/black</item>
-        <item name="android:statusBarColor">@android:color/black</item>
-        <item name="android:navigationBarColor">@android:color/black</item>
     </style>
 </resources>

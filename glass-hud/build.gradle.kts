@@ -25,7 +25,7 @@ android {
 
     defaultConfig {
         applicationId = "com.m365hud.glass"
-        minSdk = 29  // Android 10+ (Rokid runs Android 12)
+        minSdk = 28  // Android 9+ (Rokid runs Android 12); matches :app
         targetSdk = 36
         // Aligned with the phone app so a joint release ships two APKs that
         // report the same versionName. versionCode must strictly increase for
@@ -114,11 +114,13 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    
-    // Rokid CXR-M SDK for official glasses real-time communication
-    // Provides ARTC protocol for low-latency audio/video/data streaming
-    implementation("com.rokid.cxr:client-m:1.0.1-20250812.080117-2")
-    
+
+    // NOTE: the Rokid CXR-M SDK is deliberately NOT a dependency here.
+    // CXR-M is the *phone-side* SDK: it runs on the companion handset and
+    // drives the glasses. This module is the APK that runs ON the glasses, so
+    // it talks to the phone over BLE/WiFi only. If glasses-side Rokid APIs are
+    // ever needed, the correct artifact is the CXR-S SDK.
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")

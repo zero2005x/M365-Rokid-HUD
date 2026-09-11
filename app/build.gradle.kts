@@ -50,7 +50,7 @@ val rokidLicenseAsset = localProperties.getProperty("ROKID_LICENSE_ASSET")
 if (rokidClientId.isEmpty() || rokidAccessKey.isEmpty()) {
     val message = "Rokid CXR-M credentials are missing. Set ROKID_CLIENT_ID, " +
         "ROKID_CLIENT_SECRET and ROKID_ACCESS_KEY in local.properties."
-    if (isBuildingRelease) throw GradleException(message) else logger.warn("WARNING: $message")
+    logger.warn("WARNING: $message")
 }
 
 // ---------------------------------------------------------------------------

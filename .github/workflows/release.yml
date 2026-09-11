@@ -97,14 +97,14 @@ jobs:
             -storepass "${{ secrets.RELEASE_STORE_PASSWORD }}" >/dev/null
           echo "Keystore decoded and readable"
 
-      - name: Build release APKs
+      - name: Build release APKs and AABs
         # chmod is belt-and-braces: gradlew is committed with mode 100755, but
         # the bit is easy to lose again from a Windows checkout, where git's
         # core.filemode defaults to false. Without it the runner fails with
         # "./gradlew: Permission denied" (exit 126).
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon :app:assembleRelease :glass-hud:assembleRelease
+          ./gradlew --no-daemon :app:assembleRelease :glass-hud:assembleRelease :app:bundleRelease :glass-hud:bundleRelease
 
       - name: Verify 16 KB page alignment of the native library
         # Google Play rejects shared libraries whose PT_LOAD segments are not
@@ -191,7 +191,11 @@ jobs:
              "dist/M365-Rokid-HUD-phone-$TAG.apk"
           cp glass-hud/build/outputs/apk/release/glass-hud-release.apk \
              "dist/M365-Rokid-HUD-glasses-$TAG.apk"
-          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          cp app/build/outputs/bundle/release/app-release.aab \
+             "dist/M365-Rokid-HUD-phone-$TAG.aab"
+          cp glass-hud/build/outputs/bundle/release/glass-hud-release.aab \
+             "dist/M365-Rokid-HUD-glasses-$TAG.aab"
+          (cd dist && sha256sum *.apk *.aab > SHA256SUMS.txt)
           ls -la dist
 
       - name: Upload to the GitHub Release

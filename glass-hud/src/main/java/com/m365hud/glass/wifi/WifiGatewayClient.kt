@@ -3,6 +3,7 @@ package com.m365hud.glass.wifi
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.Build
 import android.util.Log
 import com.m365hud.glass.TelemetryData
 import com.m365hud.glass.TimeData
@@ -202,7 +203,12 @@ class WifiGatewayClient(private val context: Context) {
     private fun resolveService(service: NsdServiceInfo) {
         resolveListener = object : NsdManager.ResolveListener {
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                val host = serviceInfo.host?.hostAddress
+                val host = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    serviceInfo.hostAddresses.firstOrNull()?.hostAddress
+                } else {
+                    @Suppress("DEPRECATION")
+                    serviceInfo.host?.hostAddress
+                }
                 val port = serviceInfo.port
                 Log.i(TAG, "Service resolved: $host:$port")
                 
@@ -222,6 +228,7 @@ class WifiGatewayClient(private val context: Context) {
             }
         }
         
+        @Suppress("DEPRECATION")
         nsdManager?.resolveService(service, resolveListener)
     }
     

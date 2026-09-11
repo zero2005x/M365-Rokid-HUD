@@ -87,11 +87,14 @@ object LocaleHelper {
     fun getEffectiveLocale(context: Context): Locale {
         val savedLanguage = getSavedLanguage(context)
         if (savedLanguage != null) {
-            return if (savedLanguage.country.isNotEmpty()) {
-                Locale(savedLanguage.code, savedLanguage.country)
-            } else {
-                Locale(savedLanguage.code)
-            }
+            return Locale.Builder()
+                .setLanguage(savedLanguage.code)
+                .apply {
+                    if (savedLanguage.country.isNotEmpty()) {
+                        setRegion(savedLanguage.country)
+                    }
+                }
+                .build()
         }
         
         // Use system locale if supported, otherwise English

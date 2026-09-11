@@ -63,21 +63,21 @@ private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
 }
 
 /**
- * Create an intent to request battery optimization exemption.
+ * Create an intent to open the system battery optimization settings.
+ *
+ * Using ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS complies with Google Play
+ * policies by allowing the user to voluntarily whitelist the app without
+ * declaring the restricted REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission in the manifest.
  */
 private fun createBatteryOptimizationIntent(context: Context): Intent {
-    return Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-        data = Uri.parse("package:${context.packageName}")
-    }
+    return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
 }
 
 /**
- * Launches the battery-optimization exemption request.
+ * Launches the battery-optimization settings screen.
  *
- * ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS throws SecurityException on
- * API 23+ unless the app holds REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, and
- * ActivityNotFoundException on devices with no handler. Either would crash the
- * app straight from a banner tap, so fall back to the generic settings screen.
+ * Falls back to application details settings if the specific battery optimization
+ * settings intent is not handled on this device/ROM.
  */
 private fun requestBatteryOptimizationExemption(
     context: Context,
@@ -86,14 +86,16 @@ private fun requestBatteryOptimizationExemption(
     try {
         launcher.launch(createBatteryOptimizationIntent(context))
     } catch (e: Exception) {
-        Log.w("ScanScreen", "Direct battery optimization request failed, falling back to settings", e)
+        Log.w("ScanScreen", "Battery optimization settings intent failed, falling back to app details", e)
         try {
             context.startActivity(
-                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
             )
         } catch (e2: Exception) {
-            Log.e("ScanScreen", "Could not open battery optimization settings", e2)
+            Log.e("ScanScreen", "Could not open application settings", e2)
         }
     }
 }

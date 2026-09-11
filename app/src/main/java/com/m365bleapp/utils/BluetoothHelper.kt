@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
@@ -200,16 +201,23 @@ object BluetoothHelper {
      * Only relevant for BLE scanning on API 23-30.
      */
     fun isLocationEnabled(context: Context): Boolean {
-        return try {
-            val locationMode = Settings.Secure.getInt(
-                context.contentResolver,
-                Settings.Secure.LOCATION_MODE,
-                Settings.Secure.LOCATION_MODE_OFF
-            )
-            locationMode != Settings.Secure.LOCATION_MODE_OFF
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not read location mode, assuming enabled", e)
-            true
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            lm?.isLocationEnabled == true
+        } else {
+            try {
+                @Suppress("DEPRECATION")
+                val locationMode = Settings.Secure.getInt(
+                    context.contentResolver,
+                    Settings.Secure.LOCATION_MODE,
+                    Settings.Secure.LOCATION_MODE_OFF
+                )
+                @Suppress("DEPRECATION")
+                (locationMode != Settings.Secure.LOCATION_MODE_OFF)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not read location mode, assuming enabled", e)
+                true
+            }
         }
     }
     

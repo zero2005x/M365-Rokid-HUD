@@ -74,13 +74,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!--
-      Required to launch Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
-      from ScanScreen. Without it that intent throws SecurityException on API
-      23+ and crashed the app straight from the warning banner. The telemetry
-      gateway is a long-running foreground service, which is the documented
-      justification for requesting Doze exemption.
+      Battery optimization guidance is handled via Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+      without requiring the restricted REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission, ensuring
+      full compliance with Google Play store policies and avoiding rejection risk.
     -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- ============================================ -->
     <!-- Hardware Features                            -->

@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci-build-and-test:
+    name: Build, Test & Sonar Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Create local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      - name: Run Unit Tests
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon test -PskipRustBuild
+
+      - name: Assemble Debug APKs
+        run: |
+          ./gradlew --no-daemon :app:assembleDebug :glass-hud:assembleDebug -PskipRustBuild
+
+      - name: Verify 16 KB page alignment of native libraries
+        shell: python3 {0}
+        run: |
+          import glob, struct, sys
+
+          def pt_load_aligns(path):
+              d = open(path, 'rb').read()
+              if d[:4] != b'\x7fELF':
+                  raise SystemExit(f'{path} is not an ELF file')
+              is64 = d[4] == 2
+              if is64:
+                  phoff = struct.unpack_from('<Q', d, 32)[0]
+                  entsize, num = struct.unpack_from('<HH', d, 54)
+              else:
+                  phoff = struct.unpack_from('<I', d, 28)[0]
+                  entsize, num = struct.unpack_from('<HH', d, 42)
+              aligns = []
+              for i in range(num):
+                  o = phoff + i * entsize
+                  if struct.unpack_from('<I', d, o)[0] != 1:   # PT_LOAD
+                      continue
+                  aligns.append(struct.unpack_from('<Q', d, o + 48)[0] if is64
+                                else struct.unpack_from('<I', d, o + 28)[0])
+              return aligns
+
+          libs = sorted(glob.glob('app/src/main/jniLibs/*/libninebot_ffi.so'))
+          if not libs:
+              print('::error::no libninebot_ffi.so found under app/src/main/jniLibs')
+              sys.exit(1)
+
+          failed = False
+          for so in libs:
+              aligns = pt_load_aligns(so)
+              bad = [a for a in aligns if a < 0x4000]
+              print(f"{so}: {[hex(a) for a in aligns]}")
+              if not aligns:
+                  print(f'::error::{so} has no PT_LOAD segments')
+                  failed = True
+              elif bad:
+                  print(f'::error::{so} has PT_LOAD align {[hex(a) for a in bad]}, need >= 0x4000')
+                  failed = True
+          sys.exit(1 if failed else 0)
+
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

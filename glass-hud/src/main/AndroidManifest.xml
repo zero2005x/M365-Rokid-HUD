@@ -48,21 +48,19 @@
     <!-- Post notifications for foreground service -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
-    <!-- Request ignore battery optimizations to prevent app from being killed -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-
     <!-- BLE Feature -->
     <uses-feature 
         android:name="android.hardware.bluetooth_le" 
         android:required="true" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.GlassHud"
+        android:enableOnBackInvokedCallback="true"
         tools:targetApi="31">
         
         <activity

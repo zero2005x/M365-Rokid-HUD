@@ -191,15 +191,13 @@ class GatewayService : Service() {
     }
     
     /**
-     * Create an intent to request battery optimization exemption.
+     * Create an intent to open the battery optimization settings.
      * The caller should start this intent from an Activity.
      */
     fun createBatteryOptimizationIntent(): Intent? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (!isIgnoringBatteryOptimizations()) {
-                return Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
+                return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
             }
         }
         return null

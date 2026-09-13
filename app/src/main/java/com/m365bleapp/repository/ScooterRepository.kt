@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.m365bleapp.repository
 
 import android.Manifest
@@ -15,6 +17,9 @@ import androidx.security.crypto.MasterKey
 import com.m365bleapp.R
 import com.m365bleapp.ble.BleManager
 import com.m365bleapp.ffi.M365Native
+import com.m365bleapp.pairing.*
+import com.m365bleapp.ffi.ProfileDescriptor
+import com.m365bleapp.vehicle.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -142,6 +147,139 @@ class ScooterRepository private constructor(private val context: Context) {
     private var sessionPtr: Long = 0
 
     private val connectionLock = Any()
+    private var connectionJob: Job? = null
+    @Volatile private var vehicleConnection: VehicleConnection? = null
+    private val vehiclePreferences = context.getSharedPreferences("vehicle_options", Context.MODE_PRIVATE)
+    private val _experimentalModels = MutableStateFlow(vehiclePreferences.getBoolean("experimental", false))
+    val experimentalModels = _experimentalModels.asStateFlow()
+    fun setExperimentalModels(enabled: Boolean) {
+        vehiclePreferences.edit().putBoolean("experimental", enabled).apply()
+        _experimentalModels.value = enabled
+    }
+    private val _profiles = MutableStateFlow<List<ProfileDescriptor>>(emptyList())
+    val profiles = _profiles.asStateFlow()
+    private val _activeProfile = MutableStateFlow<ProfileDescriptor?>(null)
+    val activeProfile = _activeProfile.asStateFlow()
+    private val _verificationPrompt = MutableStateFlow<ProfileDescriptor?>(null)
+    val verificationPrompt = _verificationPrompt.asStateFlow()
+    @Volatile private var verificationReply: CompletableDeferred<Boolean>? = null
+    fun confirmUnverified(accept: Boolean) { verificationReply?.complete(accept) }
+    private suspend fun acceptProfile(result: DetectionResult, mac: String) {
+        check(result.accepted) { result.message }
+        val profile = native.availableProfilesSafe().single { it.modelId == result.modelId }
+        if (!profile.verified && !vehiclePreferences.getBoolean(mac + "/verified_prompt/" + profile.modelId, false)) {
+            val reply = CompletableDeferred<Boolean>()
+            verificationReply = reply; _verificationPrompt.value = profile
+            try {
+                check(withTimeout(120_000) { reply.await() }) { "已取消未驗證車款連線" }
+                vehiclePreferences.edit().putBoolean(mac + "/verified_prompt/" + profile.modelId, true).apply()
+            } finally { verificationReply = null; _verificationPrompt.value = null }
+        }
+        _activeProfile.value = profile
+    }
+
+    private fun createVehicleConnection(handle: Long, encrypted: Boolean): VehicleConnection =
+        VehicleConnection(native, handle, encrypted,
+            send = { bytes ->
+                val gatt = checkNotNull(activeGatt) { "藍牙已斷線" }
+                for (chunk in bytes.asList().chunked(20)) {
+                    check(bleManager.write(gatt, UART_SERVICE, UART_TX, chunk.toByteArray(), true)) { "車輛資料傳送失敗" }
+                }
+            }, receive = { uartRxChannel.receive() })
+
+    private suspend fun connectVehicle(mac: String, name: String, expected: Int, plaintext: Boolean, probePlain: Boolean) {
+        var connection: VehicleConnection? = null
+        var detected: DetectionResult? = null
+        if (plaintext || probePlain) {
+            val gatt = checkNotNull(activeGatt)
+            check(bleManager.enableNotifications(gatt, UART_SERVICE, UART_RX) { }) { "無法訂閱車輛資料" }
+            val candidate = createVehicleConnection(native.openVehicleSafe(0), false)
+            vehicleConnection = candidate
+            try {
+                _connectionState.value = ConnectionState.Handshaking("正在以唯讀查詢辨識舊版車輛")
+                detected = candidate.identify(expected, _experimentalModels.value)
+                connection = candidate
+            } catch (timeout: TimeoutCancellationException) {
+                candidate.close(); vehicleConnection = null
+                if (plaintext) throw timeout
+                currentCoroutineContext().ensureActive()
+                while (uartRxChannel.tryReceive().isSuccess) { }
+            }
+        }
+        if (connection == null) {
+            performNinebotPairing(mac, name)
+            val handle = checkNotNull(pairingCoordinator).transferSession(native::openVehicleSafe)
+            pairingCoordinator = null
+            connection = createVehicleConnection(handle, true)
+            vehicleConnection = connection
+            _connectionState.value = ConnectionState.Handshaking("正在讀取車輛識別暫存器")
+            detected = connection.identify(expected, _experimentalModels.value)
+        }
+        acceptProfile(checkNotNull(detected), mac)
+        updateNormalizedTelemetry(connection.telemetry())
+        _connectionState.value = ConnectionState.Ready
+        while (currentCoroutineContext().isActive) {
+            delay(if ((_motorInfo.value?.speed ?: 0.0) > SPEED_THRESHOLD_KMH) POLL_INTERVAL_MOVING_MS else POLL_INTERVAL_IDLE_MS)
+            updateNormalizedTelemetry(connection.telemetry())
+        }
+    }
+    private fun updateNormalizedTelemetry(values: DoubleArray) {
+        _motorInfo.value = MotorInfo(speed = values[1], battery = values[0].toInt(), temp = values[6], mileage = values[3] / 1000.0,
+            avgSpeed = values[2], tripSeconds = values[5].toInt(), tripMeters = values[4].toInt())
+    }
+    private suspend fun controlVehicle(feature: Int, value: Int): Result<Unit> = runCatching {
+        check(_connectionState.value == ConnectionState.Ready) { "車輛尚未就緒" }
+        checkNotNull(vehicleConnection).control(feature, value)
+        if (feature == 0) _isLocked.value = value == 1
+        if (feature == 1) _isLightOn.value = value == 1
+    }
+    suspend fun setRideMode(mode: Int): Result<Unit> = controlVehicle(2, mode)
+    @Volatile private var pairingCoordinator: PairingCoordinator? = null
+    @Volatile private var serialReply: CompletableDeferred<Unit>? = null
+    private val _pairingDevice = MutableStateFlow<String?>(null)
+    val pairingDevice = _pairingDevice.asStateFlow()
+
+    fun submitPairingSerial(serial: String): Boolean {
+        val accepted = pairingCoordinator?.submitSerial(serial) == true
+        if (accepted) { _pairingDevice.value = null; serialReply?.complete(Unit) }
+        return accepted
+    }
+
+    private suspend fun performNinebotPairing(mac: String, name: String) {
+        val gatt = checkNotNull(activeGatt)
+        check(bleManager.enableNotifications(gatt, UART_SERVICE, UART_RX) { }) { "無法訂閱車輛資料" }
+        val coordinator = PairingCoordinator(NativePairingAdapter(native), EncryptedPairingStore(context), mac, name)
+        pairingCoordinator = coordinator
+        try {
+            PairingTransport(coordinator,
+                send = { bytes ->
+                    for (chunk in bytes.asList().chunked(20)) {
+                        check(bleManager.write(gatt, UART_SERVICE, UART_TX, chunk.toByteArray(), false)) { "配對資料傳送失敗" }
+                        delay(20)
+                    }
+                },
+                receive = { uartRxChannel.receive() },
+                requestSerial = {
+                    val reply = CompletableDeferred<Unit>()
+                    serialReply = reply
+                    _pairingDevice.value = name
+                    try { reply.await() } finally { _pairingDevice.value = null; serialReply = null }
+                },
+                onStage = { stage ->
+                    _connectionState.value = ConnectionState.Handshaking(when (stage) {
+                        PairingStage.SerialRequired -> "請輸入車身序號"
+                        PairingStage.AwaitingButton -> "請按一下車輛電源鍵確認配對"
+                        PairingStage.Paired -> "配對完成，正在辨識車款"
+                        else -> "正在與車輛配對"
+                    })
+                },
+            ).pair()
+        } catch (failure: Throwable) {
+            coordinator.close()
+            pairingCoordinator = null
+            throw failure
+        }
+    }
     
     // Single channel for all incoming data for now.
     // In strict implementation we might separate them, but sequential flow allows this.
@@ -174,6 +312,7 @@ class ScooterRepository private constructor(private val context: Context) {
                 // Load native library asynchronously
                 if (M365Native.loadLibraryAsync()) {
                     native.initSafe()  // Call instance init after library is loaded
+                    _profiles.value = native.availableProfilesSafe()
                     val elapsed = System.currentTimeMillis() - startTime
                     Log.i("ScooterRepo", "Native library initialized in ${elapsed}ms")
                 } else {
@@ -204,10 +343,11 @@ class ScooterRepository private constructor(private val context: Context) {
             .onCompletion { _isScanning.value = false }
     }
 
-    fun connect(mac: String, register: Boolean = false) {
+    fun connect(mac: String, register: Boolean = false, expectedModel: Int = -1, useEncrypted: Boolean = false, plaintext: Boolean = false) {
+        if (connectionJob?.isActive == true || activeGatt != null) return
         // Normalize MAC address to uppercase to ensure consistent token lookup
         val normalizedMac = mac.uppercase()
-        scope.launch(Dispatchers.IO) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
+        connectionJob = scope.launch(Dispatchers.IO) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
             _connectionState.value = ConnectionState.Connecting
             try {
                 // Every BLE call below (getDevice, connect, requestMtu,
@@ -236,7 +376,7 @@ class ScooterRepository private constructor(private val context: Context) {
                 }
 
                 val gatt = bleManager.connect(device) { uuid, data ->
-                    Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
+                    if (_connectionState.value == ConnectionState.Ready) Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
                     
                     // Log BLE receive to CSV
                     val charName = when (uuid) {
@@ -245,7 +385,7 @@ class ScooterRepository private constructor(private val context: Context) {
                         BleManager.AUTH_UPNP -> "AUTH_UPNP"
                         else -> uuid.toString().takeLast(8)
                     }
-                    logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
+                    if (_connectionState.value == ConnectionState.Ready) logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
                     
                     // trySend fails silently when the bounded channel is full.
                     // Dropping an AUTH frame causes a spurious handshake
@@ -280,6 +420,12 @@ class ScooterRepository private constructor(private val context: Context) {
                 }
                 gatt.requestMtu(512)
                 delay(200)
+
+                if (useEncrypted || plaintext || gatt.getService(AUTH_SERVICE)?.getCharacteristic(AUTH_UPNP) == null) {
+                    check(_experimentalModels.value) { "請先啟用「實驗性車款」再連線新車款" }
+                    connectVehicle(normalizedMac, device.name ?: error("車輛未提供配對所需的藍牙名稱"), expectedModel, plaintext, probePlain = !useEncrypted && !plaintext)
+                    return@launch
+                }
 
                 // Enable Notifications on Handshake chars
                 Log.d("ScooterRepo", "Enabling AUTH UPNP")
@@ -317,6 +463,21 @@ class ScooterRepository private constructor(private val context: Context) {
                 val uartOk = bleManager.enableNotifications(gatt, UART_SERVICE, UART_RX) { }
                 Log.d("ScooterRepo", "UART RX Status: $uartOk")
                 
+                _connectionState.value = ConnectionState.Handshaking("正在讀取車輛識別暫存器")
+                val serialRequest = buildPacket(0x20, 1, 0x10, byteArrayOf(14))
+                writeUartEncrypted(native.encryptSafe(sessionPtr, serialRequest, 0))
+                val serialFrame = native.decryptSafe(sessionPtr, readEncryptedFrame())
+                check(serialFrame.size >= 17 && serialFrame[0] == 0x23.toByte() && serialFrame[1] == 1.toByte() && serialFrame[2] == 0x10.toByte()) { "無法讀取車輛識別暫存器" }
+                val detected = DetectionResult.decode(native.resolveIdentificationSafe(serialFrame.copyOfRange(3, 17), expectedModel, _experimentalModels.value))
+                if (detected.accepted && native.availableProfilesSafe().single { it.modelId == detected.modelId }.cryptoStrategy == 2) {
+                    // 登入後才確認為新一代車款時，以全新連線切換加密策略。
+                    disconnect()
+                    connectionJob = null
+                    connect(normalizedMac, expectedModel = detected.modelId, useEncrypted = true)
+                    return@launch
+                }
+                acceptProfile(detected, normalizedMac)
+                check(_activeProfile.value?.cryptoStrategy == 1) { "請選擇此車款的加密配對設定後重新連線" }
                 _connectionState.value = ConnectionState.Ready
                 // Beep to confirm connection (Optional but nice)
                 beep()
@@ -327,6 +488,11 @@ class ScooterRepository private constructor(private val context: Context) {
                 
                 startTelemetryLoop()
 
+            } catch (timeout: TimeoutCancellationException) {
+                disconnect()
+                _connectionState.value = ConnectionState.Error("車輛連線逾時，請確認電源、序號與配對按鍵後重試")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 Log.e("ScooterRepo", "Connection error", e)
                 // Clean up first: disconnect() sets state to Disconnected, so
@@ -679,17 +845,14 @@ class ScooterRepository private constructor(private val context: Context) {
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
     suspend fun lock(): Result<Unit> = withContext(Dispatchers.IO) {
+        if (vehicleConnection != null) return@withContext controlVehicle(0, 1)
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
             Log.d("ScooterRepo", "Locking scooter motor")
-            val packet = buildPacket(
-                dest = 0x20.toByte(),    // Master to Motor
-                rw = 0x03.toByte(),      // Write
-                attr = 0x70.toByte(),    // Lock address
-                payload = byteArrayOf(0x01, 0x00)  // Value 0x0001 (little-endian: LSB first)
-            )
+            val packet = native.profileControlSafe(checkNotNull(_activeProfile.value).modelId, 0, 1)
+            check(packet.isNotEmpty()) { "此車款未定義這項控制" }
             sendCommand(packet, "Lock Motor")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -706,17 +869,14 @@ class ScooterRepository private constructor(private val context: Context) {
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
     suspend fun unlock(): Result<Unit> = withContext(Dispatchers.IO) {
+        if (vehicleConnection != null) return@withContext controlVehicle(0, 0)
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
             Log.d("ScooterRepo", "Unlocking scooter motor")
-            val packet = buildPacket(
-                dest = 0x20.toByte(),    // Master to Motor
-                rw = 0x03.toByte(),      // Write
-                attr = 0x71.toByte(),    // Unlock address
-                payload = byteArrayOf(0x01, 0x00)  // Value 0x0001 (little-endian: LSB first)
-            )
+            val packet = native.profileControlSafe(checkNotNull(_activeProfile.value).modelId, 0, 0)
+            check(packet.isNotEmpty()) { "此車款未定義這項控制" }
             sendCommand(packet, "Unlock Motor")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -747,13 +907,8 @@ class ScooterRepository private constructor(private val context: Context) {
         }
         try {
             Log.d("ScooterRepo", "Turning tail light on (0x7D = 0x0002)")
-            val packet = buildPacket(
-                dest = 0x20.toByte(),    // Master to Motor
-                rw = 0x03.toByte(),      // Write
-                attr = 0x7D.toByte(),    // TailLight address
-                payload = byteArrayOf(0x02, 0x00)  // Value 0x0002 (little-endian: LSB first)
-            )
-            Log.d("ScooterRepo", "Tail light packet: ${packet.toHex()}")
+            val packet = native.profileControlSafe(checkNotNull(_activeProfile.value).modelId, 1, 1)
+            check(packet.isNotEmpty()) { "此車款未定義這項控制" }
             sendCommand(packet, "Tail Light On")
             
             // Wait for scooter to process the command
@@ -782,13 +937,8 @@ class ScooterRepository private constructor(private val context: Context) {
         }
         try {
             Log.d("ScooterRepo", "Turning tail light off (0x7D = 0x0000)")
-            val packet = buildPacket(
-                dest = 0x20.toByte(),    // Master to Motor
-                rw = 0x03.toByte(),      // Write
-                attr = 0x7D.toByte(),    // TailLight address
-                payload = byteArrayOf(0x00, 0x00)  // Value 0x0000 = Off
-            )
-            Log.d("ScooterRepo", "Tail light packet: ${packet.toHex()}")
+            val packet = native.profileControlSafe(checkNotNull(_activeProfile.value).modelId, 1, 0)
+            check(packet.isNotEmpty()) { "此車款未定義這項控制" }
             sendCommand(packet, "Tail Light Off")
             
             // Wait for scooter to process the command
@@ -810,6 +960,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * @param on true to turn on, false to turn off
      */
     suspend fun setLight(on: Boolean): Result<Unit> {
+        if (vehicleConnection != null) return controlVehicle(1, if (on) 1 else 0)
         return if (on) lightOn() else lightOff()
     }
     
@@ -864,6 +1015,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * Encrypts the packet and sends it via UART
      */
     private suspend fun sendCommand(packet: ByteArray, commandName: String = "Command") {
+        check(_connectionState.value == ConnectionState.Ready && _activeProfile.value != null) { "車輛尚未辨識或未就緒" }
         val counter = 0L  // Always use counter=0 (scooter doesn't track)
         val encrypted = native.encryptSafe(sessionPtr, packet, counter)
         Log.d("ScooterRepo", "Command Encrypted (${encrypted.size} bytes): ${encrypted.toHex()}")
@@ -1194,37 +1346,15 @@ class ScooterRepository private constructor(private val context: Context) {
             return
         }
         
-        // Debug: dump all u16 values at each offset
-        val bb = ByteBuffer.wrap(data).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        for (i in 0 until minOf(data.size - 1, 24) step 2) {
-            val v = bb.getShort(i).toInt() and 0xFFFF
-            Log.d("ScooterRepo", "  offset $i: 0x${v.toString(16)} = $v")
-        }
-        
-        // Try the standard offsets first
-        val batteryPercent = bb.getShort(8).toInt() and 0xFFFF
-        val speedRaw = bb.getShort(10)
-        val avgSpeedRaw = bb.getShort(12).toInt() and 0xFFFF
-        val totalDistanceM = bb.getInt(14)
-        var tempRaw = 0
-        if (data.size >= 24) {
-            tempRaw = bb.getShort(22).toInt()
-        }
-        
-        val speedKmh = speedRaw.toFloat() / 1000.0f
-        val avgSpeedKmh = avgSpeedRaw.toFloat() / 1000.0f
-        val tempC = tempRaw.toFloat() / 10.0f
-        val totalDistanceKm = totalDistanceM / 1000.0
-        
-        Log.d("ScooterRepo", "Parsed (standard offsets): Battery=$batteryPercent%, Speed=$speedKmh km/h, AvgSpeed=$avgSpeedKmh km/h, TotalDist=$totalDistanceKm km, Temp=$tempC°C")
-        
-        // Also try single-byte battery at offset 7 (observed value 0x4F = 79)
-        val batteryAlt = data[7].toUByte().toInt()
-        Log.d("ScooterRepo", "Alt battery (byte 7): $batteryAlt%")
-        
-        // Use the better battery value
-        val finalBattery = if (batteryPercent in 1..100) batteryPercent else batteryAlt
-        
+        val model = _activeProfile.value?.modelId ?: return
+        val values = native.decodeLegacyMotorInfoSafe(model, data)
+        if (values.size != 7) return
+        val finalBattery = values[0].toInt()
+        val speedKmh = values[1]
+        val avgSpeedKmh = values[2]
+        val totalDistanceKm = values[3] / 1000.0
+        val tempC = values[6]
+
         // Preserve existing trip/remaining values
         val existing = _motorInfo.value
         val info = MotorInfo(
@@ -1317,6 +1447,18 @@ class ScooterRepository private constructor(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     private fun releaseConnection(closeGatt: Boolean = true) {
+        vehicleConnection?.close()
+        vehicleConnection = null
+        verificationReply?.cancel()
+        verificationReply = null
+        _verificationPrompt.value = null
+        _activeProfile.value = null
+        connectionJob?.cancel()
+        serialReply?.cancel()
+        serialReply = null
+        _pairingDevice.value = null
+        pairingCoordinator?.close()
+        pairingCoordinator = null
         val (gatt, ptr) = synchronized(connectionLock) {
             val g = activeGatt
             val p = sessionPtr

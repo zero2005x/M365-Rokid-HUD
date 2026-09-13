@@ -20,11 +20,13 @@
         <include domain="sharedpref" path="."/>
         <exclude domain="file" path="logs"/>
         <exclude domain="sharedpref" path="secret_shared_prefs.xml"/>
+        <exclude domain="sharedpref" path="vehicle_pairing.xml"/>
     </cloud-backup>
     <device-transfer>
         <include domain="file" path="."/>
         <include domain="sharedpref" path="."/>
         <exclude domain="file" path="logs"/>
         <exclude domain="sharedpref" path="secret_shared_prefs.xml"/>
+        <exclude domain="sharedpref" path="vehicle_pairing.xml"/>
     </device-transfer>
 </data-extraction-rules>

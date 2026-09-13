@@ -34,7 +34,21 @@ jobs:
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
+      - name: Build host JNI for integration tests
+        run: |
+          rustup toolchain install stable --profile minimal
+          cargo +stable build --manifest-path ninebot-ffi/Cargo.toml
+
+      - name: Rebuild Android JNI from source
+        run: |
+          rustup target add armv7-linux-androideabi aarch64-linux-android i686-linux-android x86_64-linux-android
+          cargo install cargo-ndk --locked
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          make -C ninebot-ble
+
       - name: Run Unit Tests
+        env:
+          M365_NATIVE_TEST_LIBRARY: ${{ github.workspace }}/ninebot-ffi/target/debug/libninebot_ffi.so
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon test -PskipRustBuild
@@ -42,6 +56,9 @@ jobs:
       - name: Assemble Debug APKs
         run: |
           ./gradlew --no-daemon :app:assembleDebug :glass-hud:assembleDebug -PskipRustBuild
+
+      - name: Android lint
+        run: ./gradlew --no-daemon lintDebug -PskipRustBuild
 
       - name: Verify 16 KB page alignment of native libraries
         shell: python3 {0}
@@ -87,7 +104,22 @@ jobs:
           sys.exit(1 if failed else 0)
 
       - name: SonarQube Scan
-        continue-on-error: true
         uses: sonarsource/sonarqube-scan-action@v6
+        with:
+          args: -Dsonar.qualitygate.wait=true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  rust-tests:
+    name: Rust protocol and FFI tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test protocol and FFI
+        run: |
+          rustup toolchain install stable --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +stable test --manifest-path ninebot-ble/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +stable test --manifest-path ninebot-ffi/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

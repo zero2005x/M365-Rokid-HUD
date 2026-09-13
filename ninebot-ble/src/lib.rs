@@ -3,6 +3,9 @@ extern crate uuid;
 // 宣告模組
 pub mod mi_crypto;
 pub mod protocol;
+pub mod profile;
+pub mod ninebot_crypto;
+pub mod pairing;
 pub mod consts;
 pub mod login;
 pub mod scanner;
@@ -35,3 +38,5 @@ pub use connection::ConnectionHelper;
 // It has been removed rather than resurrected. If a JNI surface is needed here
 // again, build it on `ninebot-ffi`, take the auth token from the caller, and
 // use `tokio::sync::Mutex` for state that is held across await points.
+
+pub mod vehicle;

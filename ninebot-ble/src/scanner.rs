@@ -12,11 +12,7 @@ use uuid::Uuid;
 
 type Devices = Arc<RwLock<HashSet<TrackedDevice>>>;
 
-/**
- * All xiaomi scooters start with name MIScooter and random numbers after tha
- */
-const XIAOMI_SCOOTER_NAME : &str = "MIScooter";
-const XIAOMI_SERVICE_UUID : &str = "0000fe95-0000-1000-8000-00805f9b34fb";
+use crate::profile::ProfileRegistry;
 
 #[derive(Error, Debug)]
 pub enum ScannerError {
@@ -65,7 +61,8 @@ impl TrackedDevice {
     }
 
     if let Some(name) = &self.name {
-      return name.starts_with(XIAOMI_SCOOTER_NAME);
+      return ProfileRegistry::available().iter().any(|profile|
+        profile.ble_filter().name_prefixes.iter().any(|prefix| name.starts_with(prefix)));
     }
     return false;
   }
@@ -268,11 +265,12 @@ impl CentralEventsProcessor {
     tracing::debug!("Device name: {}", name);
     tracked_device.name = Some(name);
 
-    let xiaomi_uuid = Uuid::parse_str(XIAOMI_SERVICE_UUID)
-      .expect("XIAOMI_SERVICE_UUID is a valid compile-time constant");
-    if props.service_data.contains_key(&xiaomi_uuid) || props.services.contains(&xiaomi_uuid) {
-      tracked_device.has_xiaomi_service = true;
-    }
+    // 保留舊欄位供相容呼叫端使用；候選服務由已註冊車款提供。
+    tracked_device.has_xiaomi_service = ProfileRegistry::available().iter().any(|profile| {
+      Uuid::parse_str(profile.ble_filter().service).map(|service|
+        props.service_data.contains_key(&service) || props.services.contains(&service)
+      ).unwrap_or(false)
+    });
 
     let mut devices = self.devices.write().await;
     // Re-check: another task may have inserted the same address while the

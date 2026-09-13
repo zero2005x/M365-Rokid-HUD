@@ -20,6 +20,24 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 3. Call instance methods: native.init(), native.prepareHandshake(), etc.
  */
 class M365Native {
+    private external fun decodeLegacyMotorInfo(modelId: Int, data: ByteArray): DoubleArray
+    private external fun profileControl(modelId: Int, feature: Int, value: Int): ByteArray
+    fun decodeLegacyMotorInfoSafe(modelId: Int, data: ByteArray): DoubleArray { ensureLoaded(); return decodeLegacyMotorInfo(modelId, data) }
+    fun profileControlSafe(modelId: Int, feature: Int, value: Int): ByteArray { ensureLoaded(); return profileControl(modelId, feature, value) }
+
+    private external fun openVehicle(pairingHandle: Long): Long
+    private external fun vehicleRequest(handle: Long, action: Int, feature: Int, value: Int): ByteArray
+    private external fun vehicleReceive(handle: Long, bytes: ByteArray): ByteArray
+    private external fun vehicleResolve(handle: Long, expected: Int, experimental: Boolean): ByteArray
+    private external fun resolveIdentification(serial: ByteArray, expected: Int, experimental: Boolean): ByteArray
+    private external fun freeVehicle(handle: Long)
+    fun openVehicleSafe(pairingHandle: Long): Long { ensureLoaded(); return openVehicle(pairingHandle) }
+    fun vehicleRequestSafe(handle: Long, action: Int, feature: Int = 0, value: Int = 0): ByteArray { ensureLoaded(); return vehicleRequest(handle, action, feature, value) }
+    fun vehicleReceiveSafe(handle: Long, bytes: ByteArray): ByteArray { ensureLoaded(); return vehicleReceive(handle, bytes) }
+    fun vehicleResolveSafe(handle: Long, expected: Int, experimental: Boolean): ByteArray { ensureLoaded(); return vehicleResolve(handle, expected, experimental) }
+    fun resolveIdentificationSafe(serial: ByteArray, expected: Int, experimental: Boolean): ByteArray { ensureLoaded(); return resolveIdentification(serial, expected, experimental) }
+    fun freeVehicleSafe(handle: Long) { if (handle != 0L) { ensureLoaded(); freeVehicle(handle) } }
+
     companion object {
         private const val TAG = "M365Native"
         private val isLoaded = AtomicBoolean(false)
@@ -117,6 +135,49 @@ class M365Native {
 
     /** Initialize library (logger etc) */
     private external fun init()
+
+    /** 車款描述及正規化遙測；保留既有 JNI 方法簽章。 */
+    private external fun beginPairing(name: String, appKey: ByteArray): Long
+    private external fun pairingNext(handle: Long): ByteArray
+    private external fun pairingReceive(handle: Long, frame: ByteArray): Int
+    private external fun pairingSetSerial(handle: Long, serial: String): Boolean
+    private external fun freePairing(handle: Long)
+
+    fun beginPairingSafe(name: String, appKey: ByteArray): Long {
+        ensureLoaded()
+        return beginPairing(name, appKey)
+    }
+    fun pairingNextSafe(handle: Long): ByteArray {
+        ensureLoaded()
+        return pairingNext(handle)
+    }
+    fun pairingReceiveSafe(handle: Long, frame: ByteArray): Int {
+        ensureLoaded()
+        return pairingReceive(handle, frame)
+    }
+    fun pairingSetSerialSafe(handle: Long, serial: String): Boolean {
+        ensureLoaded()
+        return pairingSetSerial(handle, serial)
+    }
+    fun freePairingSafe(handle: Long) {
+        if (handle == 0L) return
+        ensureLoaded()
+        freePairing(handle)
+    }
+
+    private external fun availableProfiles(): ByteArray
+    private external fun decodeMotorInfo(modelId: Int, data: ByteArray): DoubleArray
+
+    fun availableProfilesSafe(): List<ProfileDescriptor> {
+        ensureLoaded()
+        return ProfileDescriptor.decode(availableProfiles())
+    }
+
+    fun decodeMotorInfoSafe(modelId: Int, data: ByteArray): DoubleArray {
+        ensureLoaded()
+        return decodeMotorInfo(modelId, data)
+    }
+
 
     /** Returns [8 bytes Handle][Public Key Bytes...] */
     private external fun prepareHandshake(): ByteArray

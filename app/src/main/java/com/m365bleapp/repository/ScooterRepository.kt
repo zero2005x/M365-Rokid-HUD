@@ -350,6 +350,10 @@ class ScooterRepository private constructor(private val context: Context) {
         connectionJob = scope.launch @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
             _connectionState.value = ConnectionState.Connecting
             try {
+                // 在工作入口確認權限，涵蓋連線與錯誤清理的呼叫點。
+                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    throw SecurityException(getString(R.string.bluetooth_permission_required))
+                }
                 connectSession(normalizedMac, register, expectedModel, useEncrypted, plaintext)
             } catch (timeout: TimeoutCancellationException) {
                 disconnect()

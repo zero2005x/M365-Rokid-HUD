@@ -4,7 +4,13 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.os.Build
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import com.m365bleapp.vehicle.modelName
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -16,6 +22,21 @@ import com.m365bleapp.repository.ScooterRepository
 fun NavHostContainer(repository: ScooterRepository) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    val unverified by repository.verificationPrompt.collectAsState()
+    unverified?.let { profile ->
+        AlertDialog(onDismissRequest = { repository.confirmUnverified(false) },
+            title = { Text("未驗證車款") },
+            text = { Text(modelName(profile.modelId) + " 已完成文件與單元測試，尚未經實車驗證。部分控制可能未提供，請確認後再連線。") },
+            confirmButton = { TextButton(onClick = { repository.confirmUnverified(true) }) { Text("使用實驗性車款") } },
+            dismissButton = { TextButton(onClick = { repository.confirmUnverified(false) }) { Text("取消") } })
+    }
+    val pairingDevice by repository.pairingDevice.collectAsState()
+    pairingDevice?.let { name ->
+        PairingSerialDialog(name, repository::submitPairingSerial, onCancel = {
+            @SuppressLint("MissingPermission")
+            repository.disconnect()
+        })
+    }
 
     NavHost(navController = navController, startDestination = "scan") {
         composable("scan") {

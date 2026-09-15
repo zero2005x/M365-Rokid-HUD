@@ -17,6 +17,12 @@ pub struct Payload {
 // I - unsigned int
 
 impl Payload {
+  /// 還原線路順序，交由車款解碼器解析。
+  pub fn into_bytes(mut self) -> Vec<u8> {
+    self.bytes.reverse();
+    self.bytes
+  }
+
   pub fn pad_byte(&mut self) -> Result<u8> {
     if let Some(byte) = self.bytes.pop() {
       Ok(byte)

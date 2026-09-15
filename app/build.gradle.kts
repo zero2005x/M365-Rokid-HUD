@@ -109,6 +109,11 @@ val buildRustJni = tasks.register<Exec>("buildRustJni") {
     // Re-run only when the crate actually changes.
     inputs.dir(rustCrateDir.resolve("src")).withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.file(rustCrateDir.resolve("Cargo.toml"))
+    // FFI 直接共用車款核心，變更時必須重建原生程式庫。
+    inputs.file(rootProject.file("ninebot-ble/src/profile.rs"))
+    inputs.file(rootProject.file("ninebot-ble/src/ninebot_crypto.rs"))
+    inputs.file(rootProject.file("ninebot-ble/src/pairing.rs"))
+    inputs.file(rootProject.file("ninebot-ble/src/vehicle.rs"))
     outputs.dir(jniLibsDir)
 
     val ndkDir = resolveNdkDir()

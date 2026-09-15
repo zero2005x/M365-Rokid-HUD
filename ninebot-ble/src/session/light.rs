@@ -13,6 +13,7 @@
 //! (Off, OnBrake, Always), see the `set_tail_light` method in `settings.rs`.
 
 use super::MiSession;
+#[cfg(test)]
 use super::commands::{ScooterCommand, Direction, ReadWrite, Attribute};
 
 use anyhow::Result;
@@ -34,15 +35,7 @@ impl MiSession {
     pub async fn light_on(&mut self) -> Result<()> {
         tracing::debug!("Turning tail light on");
 
-        // Payload: [0x02, 0x00] - Write value 0x0002 (little-endian: LSB first) for "Always" mode
-        let payload = vec![0x02, 0x00];
-
-        self.send(&ScooterCommand {
-            direction: Direction::MasterToMotor,
-            read_write: ReadWrite::Write,
-            attribute: Attribute::TailLight,
-            payload
-        }).await?;
+        self.send_control(self.profile().command_set().light_on).await?;
 
         Ok(())
     }
@@ -63,15 +56,7 @@ impl MiSession {
     pub async fn light_off(&mut self) -> Result<()> {
         tracing::debug!("Turning tail light off");
 
-        // Payload: [0x00, 0x00] - Write value 0x0000 (little-endian) for "Off" mode
-        let payload = vec![0x00, 0x00];
-
-        self.send(&ScooterCommand {
-            direction: Direction::MasterToMotor,
-            read_write: ReadWrite::Write,
-            attribute: Attribute::TailLight,
-            payload
-        }).await?;
+        self.send_control(self.profile().command_set().light_off).await?;
 
         Ok(())
     }

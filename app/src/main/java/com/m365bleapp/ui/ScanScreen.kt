@@ -38,6 +38,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.m365bleapp.R
+import com.m365bleapp.vehicle.modelName
+import com.m365bleapp.vehicle.profileDisplayName
+import com.m365bleapp.ffi.ProfileDescriptor
 import com.m365bleapp.ble.BleManager
 import com.m365bleapp.gateway.GatewayService
 import com.m365bleapp.repository.ConnectionState
@@ -303,7 +306,7 @@ fun ScanScreen(
                         existing.name != advertisedName) {
                         val scannedDevice = ScannedDevice(res, isReg)
                         // Log scooter discovery
-                        if (scannedDevice.isScooter) {
+                        if (scannedDevice.isScooter || repository.experimentalModels.value) {
                             Log.i("ScanScreen", "Found scooter: $advertisedName ($mac)")
                         }
                         devicesMap[mac] = scannedDevice
@@ -320,6 +323,7 @@ fun ScanScreen(
     
     // Connection State Observation
     val connState by repository.connectionState.collectAsState()
+    val experimental by repository.experimentalModels.collectAsState()
     
     LaunchedEffect(connState) {
         if (connState is ConnectionState.Ready) {
@@ -335,11 +339,11 @@ fun ScanScreen(
             repository = repository,
             device = selectedDevice!!.scanResult,
             onDismiss = { selectedDevice = null },
-            onConnect = { register ->
+            onConnect = { register, expected, encrypted, plain ->
                 val deviceToConnect = selectedDevice
                 if (deviceToConnect != null) {
                     // Connect is now non-blocking and runs on Repository scope
-                    repository.connect(deviceToConnect.scanResult.device.address, register)
+                    repository.connect(deviceToConnect.scanResult.device.address, register, expected, encrypted, plain)
                 }
                 selectedDevice = null
             }
@@ -400,6 +404,11 @@ fun ScanScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("實驗性車款", Modifier.weight(1f))
+                Switch(checked = experimental, onCheckedChange = repository::setExperimentalModels)
+            }
+            if (experimental) Text("顯示附近所有藍牙裝置；連線後讀取序號辨識車款。", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
             if (showPermissionError) {
                 Text(stringResource(R.string.scan_bluetooth_permission_required), color = MaterialTheme.colorScheme.error)
             }
@@ -732,10 +741,14 @@ fun ConnectDialog(
     repository: ScooterRepository,
     device: ScanResult,
     onDismiss: () -> Unit,
-    onConnect: (Boolean) -> Unit
+    onConnect: (Boolean, Int, Boolean, Boolean) -> Unit
 ) {
     val isAlreadyRegistered = repository.isRegistered(device.device.address)
     var register by remember { mutableStateOf(!isAlreadyRegistered) }
+    val experimental by repository.experimentalModels.collectAsState()
+    val profiles by repository.profiles.collectAsState()
+    var expected by remember { mutableStateOf(-1) }
+    var protocol by remember { mutableStateOf(0) }
     // The dialog is only shown for a device discovered by a permission-gated
     // scan, so BLUETOOTH_CONNECT is already held here.
     @SuppressLint("MissingPermission")
@@ -747,6 +760,10 @@ fun ConnectDialog(
         text = {
             Column {
                 Text(stringResource(R.string.dialog_address, device.device.address))
+                if (experimental) {
+                    ProfilePicker(profiles, expected, onExpected = { expected = it }, onProtocol = { protocol = it })
+                    ProtocolPicker(protocol, onProtocol = { protocol = it })
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = register, onCheckedChange = { register = it })
@@ -762,7 +779,7 @@ fun ConnectDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onConnect(register) }) {
+            Button(onClick = { onConnect(register, expected, protocol == 1, protocol == 2) }) {
                 Text(stringResource(R.string.connect))
             }
         },
@@ -775,3 +792,38 @@ fun ConnectDialog(
 }
 
 
+
+@Composable
+private fun ProfilePicker(
+    profiles: List<ProfileDescriptor>,
+    expected: Int,
+    onExpected: (Int) -> Unit,
+    onProtocol: (Int) -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    val label = if (expected == -1) "自動辨識車款" else "手動設定（仍核對序號）：" + modelName(expected)
+    Box {
+        TextButton(onClick = { menu = true }) { Text(label) }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("自動辨識") }, onClick = { onExpected(-1); menu = false })
+            profiles.forEach { profile ->
+                DropdownMenuItem(text = { Text(profileDisplayName(profile)) }, onClick = {
+                    onExpected(profile.modelId)
+                    onProtocol(if (profile.cryptoStrategy == 2) 1 else 0)
+                    menu = false
+                })
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProtocolPicker(protocol: Int, onProtocol: (Int) -> Unit) {
+    Text("連線方式（偵測邊界情況可手動覆寫）", style = MaterialTheme.typography.bodySmall)
+    listOf("自動選擇", "新款加密配對", "舊版明文（僅 ESx）").forEachIndexed { index, name ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = protocol == index, onClick = { onProtocol(index) })
+            Text(name)
+        }
+    }
+}

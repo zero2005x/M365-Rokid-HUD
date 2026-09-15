@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.m365bleapp.R
 import com.m365bleapp.vehicle.modelName
+import com.m365bleapp.vehicle.profileDisplayName
+import com.m365bleapp.ffi.ProfileDescriptor
 import com.m365bleapp.ble.BleManager
 import com.m365bleapp.gateway.GatewayService
 import com.m365bleapp.repository.ConnectionState
@@ -747,7 +749,6 @@ fun ConnectDialog(
     val profiles by repository.profiles.collectAsState()
     var expected by remember { mutableStateOf(-1) }
     var protocol by remember { mutableStateOf(0) }
-    var menu by remember { mutableStateOf(false) }
     // The dialog is only shown for a device discovered by a permission-gated
     // scan, so BLUETOOTH_CONNECT is already held here.
     @SuppressLint("MissingPermission")
@@ -760,23 +761,8 @@ fun ConnectDialog(
             Column {
                 Text(stringResource(R.string.dialog_address, device.device.address))
                 if (experimental) {
-                    Box {
-                        TextButton(onClick = { menu = true }) { Text(if (expected == -1) "自動辨識車款" else "手動設定（仍核對序號）：" + modelName(expected)) }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text("自動辨識") }, onClick = { expected = -1; menu = false })
-                            profiles.forEach { profile ->
-                                DropdownMenuItem(text = { Text(modelName(profile.modelId) + if (profile.verified) "" else " · 未驗證車款") },
-                                    onClick = { expected = profile.modelId; protocol = if (profile.cryptoStrategy == 2) 1 else 0; menu = false })
-                            }
-                        }
-                    }
-                    Text("連線方式（偵測邊界情況可手動覆寫）", style = MaterialTheme.typography.bodySmall)
-                    listOf("自動選擇", "新款加密配對", "舊版明文（僅 ESx）").forEachIndexed { index, name ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = protocol == index, onClick = { protocol = index })
-                            Text(name)
-                        }
-                    }
+                    ProfilePicker(profiles, expected, onExpected = { expected = it }, onProtocol = { protocol = it })
+                    ProtocolPicker(protocol, onProtocol = { protocol = it })
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -806,3 +792,38 @@ fun ConnectDialog(
 }
 
 
+
+@Composable
+private fun ProfilePicker(
+    profiles: List<ProfileDescriptor>,
+    expected: Int,
+    onExpected: (Int) -> Unit,
+    onProtocol: (Int) -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    val label = if (expected == -1) "自動辨識車款" else "手動設定（仍核對序號）：" + modelName(expected)
+    Box {
+        TextButton(onClick = { menu = true }) { Text(label) }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("自動辨識") }, onClick = { onExpected(-1); menu = false })
+            profiles.forEach { profile ->
+                DropdownMenuItem(text = { Text(profileDisplayName(profile)) }, onClick = {
+                    onExpected(profile.modelId)
+                    onProtocol(if (profile.cryptoStrategy == 2) 1 else 0)
+                    menu = false
+                })
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProtocolPicker(protocol: Int, onProtocol: (Int) -> Unit) {
+    Text("連線方式（偵測邊界情況可手動覆寫）", style = MaterialTheme.typography.bodySmall)
+    listOf("自動選擇", "新款加密配對", "舊版明文（僅 ESx）").forEachIndexed { index, name ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = protocol == index, onClick = { onProtocol(index) })
+            Text(name)
+        }
+    }
+}

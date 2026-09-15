@@ -47,19 +47,7 @@ class PairingTransport(
                             check(coordinator.stage == PairingStage.AwaitingButton) { "序號尚未確認" }
                         }
                         PairingStage.AwaitingChallenge, PairingStage.AwaitingButton, PairingStage.AwaitingConfirmation -> {
-                            val before = coordinator.stage
-                            send(coordinator.nextFrame())
-                            val frame = withTimeoutOrNull(responseTimeoutMs) {
-                                var complete = buffer.next()
-                                while (complete == null) { buffer.append(receive()); complete = buffer.next() }
-                                complete
-                            }
-                            if (frame != null) {
-                                check(coordinator.receive(frame) != PairingStage.Failed) { "配對回覆驗證失敗，請重新連線" }
-                            } else if (before == PairingStage.AwaitingChallenge) {
-                                error("車輛未回覆配對挑戰，請確認韌體與藍牙連線")
-                            }
-                            if (coordinator.stage == before) delay(retryDelayMs)
+                            exchangeFrame(buffer)
                         }
                         else -> error("配對已中止，請重新連線")
                     }
@@ -70,5 +58,26 @@ class PairingTransport(
             coordinator.close()
             throw failure
         } finally { buffer.clear() }
+    }
+
+    private suspend fun exchangeFrame(buffer: NinebotFrameBuffer) {
+        val before = coordinator.stage
+        send(coordinator.nextFrame())
+        val frame = withTimeoutOrNull(responseTimeoutMs) { receiveFrame(buffer) }
+        if (frame != null) {
+            check(coordinator.receive(frame) != PairingStage.Failed) { "配對回覆驗證失敗，請重新連線" }
+        } else if (before == PairingStage.AwaitingChallenge) {
+            error("車輛未回覆配對挑戰，請確認韌體與藍牙連線")
+        }
+        if (coordinator.stage == before) delay(retryDelayMs)
+    }
+
+    private suspend fun receiveFrame(buffer: NinebotFrameBuffer): ByteArray {
+        var complete = buffer.next()
+        while (complete == null) {
+            buffer.append(receive())
+            complete = buffer.next()
+        }
+        return complete
     }
 }

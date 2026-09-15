@@ -1,6 +1,7 @@
 package com.m365bleapp.pairing
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -72,5 +73,40 @@ class PairingTransportTest {
         } catch (_: CancellationException) { }
         assertEquals(PairingStage.Closed, coordinator.stage)
         assertEquals(1, native.freed); assertEquals(0, store.writes)
+    }
+
+    @Test fun unansweredChallengeClosesSessionWithoutSaving() = runBlocking {
+        val native = Native(); val store = Store()
+        val coordinator = PairingCoordinator(native, store, "00:11:22:33:44:55", "NBSCOOTER")
+        var sends = 0
+        try {
+            PairingTransport(coordinator, { sends++ }, { awaitCancellation() }, {}, {}, responseTimeoutMs = 20).pair()
+            fail("沒有挑戰回覆時應中止配對")
+        } catch (failure: IllegalStateException) {
+            assertTrue(failure.message.orEmpty().contains("未回覆配對挑戰"))
+        }
+        assertEquals(1, sends)
+        assertEquals(PairingStage.Closed, coordinator.stage)
+        assertEquals(1, native.freed)
+        assertEquals(0, store.writes)
+    }
+
+    @Test fun retriesButtonRequestAfterTimeoutThenCompletesPairing() = runBlocking {
+        val native = Native(); val store = Store()
+        val coordinator = PairingCoordinator(native, store, "00:11:22:33:44:55", "NBSCOOTER")
+        val incoming = Channel<ByteArray>(Channel.UNLIMITED)
+        var sends = 0
+        PairingTransport(coordinator, send = {
+            sends++
+            // 第一次按鍵請求無回覆，下一次重試才收到確認。
+            if (sends != 2) incoming.send(frame())
+        }, receive = { incoming.receive() }, requestSerial = {
+            assertTrue(coordinator.submitSerial("N4GSD123456789"))
+        }, onStage = {}, responseTimeoutMs = 20, retryDelayMs = 1).pair()
+        assertEquals(4, sends)
+        assertEquals(PairingStage.Paired, coordinator.stage)
+        assertEquals(1, store.writes)
+        coordinator.close()
+        assertEquals(1, native.freed)
     }
 }

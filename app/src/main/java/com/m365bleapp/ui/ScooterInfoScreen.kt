@@ -46,7 +46,7 @@ fun ScooterInfoScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            profile?.let { Text(com.m365bleapp.vehicle.modelName(it.modelId) + if (it.verified) "" else " · 未驗證車款") }
+            profile?.let { Text(com.m365bleapp.vehicle.profileDisplayName(it)) }
             // Speed Section
             InfoCard(title = stringResource(R.string.info_speed_section)) {
                 InfoRow(label = stringResource(R.string.info_current_speed), value = "${"%.1f".format(motorInfo?.speed ?: 0.0)} ${stringResource(R.string.unit_kmh)}")

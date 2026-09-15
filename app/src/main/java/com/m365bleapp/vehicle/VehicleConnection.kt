@@ -10,6 +10,9 @@ import java.io.Closeable
 
 fun modelName(id: Int): String = listOf("Xiaomi M365", "Xiaomi M365 Pro", "Xiaomi Pro 2", "Xiaomi 1S", "Ninebot Max G30", "Ninebot ESx").getOrNull(id) ?: "未知車款"
 
+fun profileDisplayName(profile: ProfileDescriptor): String =
+    modelName(profile.modelId) + if (profile.verified) "" else " · 未驗證車款"
+
 data class DetectionResult(val outcome: Int, val modelId: Int, val expectedId: Int, val capabilities: Int) {
     val accepted: Boolean get() = outcome == 1 || outcome == 3
     val message: String get() = when (outcome) {

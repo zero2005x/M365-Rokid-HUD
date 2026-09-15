@@ -347,147 +347,10 @@ class ScooterRepository private constructor(private val context: Context) {
         if (connectionJob?.isActive == true || activeGatt != null) return
         // Normalize MAC address to uppercase to ensure consistent token lookup
         val normalizedMac = mac.uppercase()
-        connectionJob = scope.launch(Dispatchers.IO) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
+        connectionJob = scope.launch @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
             _connectionState.value = ConnectionState.Connecting
             try {
-                // Every BLE call below (getDevice, connect, requestMtu,
-                // enableNotifications, requestPriority) throws SecurityException
-                // on Android 12+ without this permission. The @RequiresPermission
-                // annotation is compile-time only, so check it for real and fail
-                // with a clear message instead of an opaque crash.
-                if (ActivityCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.BLUETOOTH_CONNECT
-                    ) != PackageManager.PERMISSION_GRANTED
-                ) {
-                    throw SecurityException(getString(R.string.bluetooth_permission_required))
-                }
-
-                val device = bleManager.getDevice(normalizedMac)
-                
-                // Clear old data from channels
-                while(controlChannel.tryReceive().isSuccess) {}
-                while(uartRxChannel.tryReceive().isSuccess) {}
-                
-                // Set up disconnection callback to detect scooter power-off
-                bleManager.setOnDisconnectCallback {
-                    Log.w("ScooterRepo", "BLE disconnection detected - scooter may have powered off")
-                    handleUnexpectedDisconnection()
-                }
-
-                val gatt = bleManager.connect(device) { uuid, data ->
-                    if (_connectionState.value == ConnectionState.Ready) Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
-                    
-                    // Log BLE receive to CSV
-                    val charName = when (uuid) {
-                        BleManager.UART_RX -> "UART_RX"
-                        BleManager.AUTH_AVDTP -> "AUTH_AVDTP"
-                        BleManager.AUTH_UPNP -> "AUTH_UPNP"
-                        else -> uuid.toString().takeLast(8)
-                    }
-                    if (_connectionState.value == ConnectionState.Ready) logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
-                    
-                    // trySend fails silently when the bounded channel is full.
-                    // Dropping an AUTH frame causes a spurious handshake
-                    // timeout, and dropping telemetry loses a sample, so at
-                    // least make the loss visible instead of invisible.
-                    val delivered = if (uuid == BleManager.UART_RX) {
-                        uartRxChannel.trySend(data).isSuccess
-                    } else {
-                        controlChannel.trySend(data).isSuccess
-                    }
-                    if (!delivered) {
-                        Log.w("ScooterRepo", "Dropped ${data.size}-byte notification from $charName: channel full")
-                    }
-                } 
-                if (gatt == null) throw Exception(getString(R.string.error_gatt_failed))
-                activeGatt = gatt
-                
-                // Request high priority for faster handshake
-                Log.d("ScooterRepo", "Requesting High Connection Priority")
-                bleManager.requestPriority(gatt, BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-                
-                // Request MTU for larger packets (Optional but helps)
-                // Permission is already verified at the top of connect(); this
-                // re-check is belt-and-braces for the lint annotation.
-                Log.d("ScooterRepo", "Requesting MTU 512")
-                if (androidx.core.app.ActivityCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.BLUETOOTH_CONNECT
-                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                ) {
-                    Log.w("ScooterRepo", "Missing BLUETOOTH_CONNECT permission")
-                }
-                gatt.requestMtu(512)
-                delay(200)
-
-                if (useEncrypted || plaintext || gatt.getService(AUTH_SERVICE)?.getCharacteristic(AUTH_UPNP) == null) {
-                    check(_experimentalModels.value) { "請先啟用「實驗性車款」再連線新車款" }
-                    connectVehicle(normalizedMac, device.name ?: error("車輛未提供配對所需的藍牙名稱"), expectedModel, plaintext, probePlain = !useEncrypted && !plaintext)
-                    return@launch
-                }
-
-                // Enable Notifications on Handshake chars
-                Log.d("ScooterRepo", "Enabling AUTH UPNP")
-                bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_UPNP) { }
-                // delay(300) removed
-                
-                Log.d("ScooterRepo", "Enabling AUTH AVDTP")
-                bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_AVDTP) { }
-                // delay(500) removed
-
-                _connectionState.value = ConnectionState.Handshaking(getString(R.string.connecting))
-
-                if (register) {
-                    performRegistration()
-                    // Registration successful. Chain to Login immediately for seamless experience.
-                    Log.d("ScooterRepo", "Registration complete. Proceeding to Login.")
-                    _connectionState.value = ConnectionState.Handshaking(getString(R.string.state_logging_in))
-                    
-                    // Retrieve the token we just saved
-                    val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
-                        ?: throw Exception(getString(R.string.error_token_missing))
-                    
-                    // Give scooter a moment to persist the new token and reset auth state
-                    delay(1000)
-                    
-                    performLogin(tokenStr.hexToBytes())
-                } else {
-                    val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
-                    Log.d("ScooterRepo", "Token retrieved: ${tokenStr != null}")
-                    if (tokenStr == null) throw Exception(getString(R.string.error_no_token))
-                    performLogin(tokenStr.hexToBytes())
-                }
-                
-                Log.d("ScooterRepo", "Enabling UART RX...")
-                val uartOk = bleManager.enableNotifications(gatt, UART_SERVICE, UART_RX) { }
-                Log.d("ScooterRepo", "UART RX Status: $uartOk")
-                
-                _connectionState.value = ConnectionState.Handshaking("正在讀取車輛識別暫存器")
-                val serialRequest = buildPacket(0x20, 1, 0x10, byteArrayOf(14))
-                writeUartEncrypted(native.encryptSafe(sessionPtr, serialRequest, 0))
-                val serialFrame = native.decryptSafe(sessionPtr, readEncryptedFrame())
-                check(serialFrame.size >= 17 && serialFrame[0] == 0x23.toByte() && serialFrame[1] == 1.toByte() && serialFrame[2] == 0x10.toByte()) { "無法讀取車輛識別暫存器" }
-                val detected = DetectionResult.decode(native.resolveIdentificationSafe(serialFrame.copyOfRange(3, 17), expectedModel, _experimentalModels.value))
-                if (detected.accepted && native.availableProfilesSafe().single { it.modelId == detected.modelId }.cryptoStrategy == 2) {
-                    // 登入後才確認為新一代車款時，以全新連線切換加密策略。
-                    disconnect()
-                    connectionJob = null
-                    connect(normalizedMac, expectedModel = detected.modelId, useEncrypted = true)
-                    return@launch
-                }
-                acceptProfile(detected, normalizedMac)
-                check(_activeProfile.value?.cryptoStrategy == 1) { "請選擇此車款的加密配對設定後重新連線" }
-                _connectionState.value = ConnectionState.Ready
-                // Beep to confirm connection (Optional but nice)
-                beep()
-                
-                // Read initial states (light, etc.) to sync UI with scooter
-                delay(500)  // Wait for connection to stabilize
-                readInitialStates()
-                
-                startTelemetryLoop()
-
+                connectSession(normalizedMac, register, expectedModel, useEncrypted, plaintext)
             } catch (timeout: TimeoutCancellationException) {
                 disconnect()
                 _connectionState.value = ConnectionState.Error("車輛連線逾時，請確認電源、序號與配對按鍵後重試")
@@ -501,6 +364,164 @@ class ScooterRepository private constructor(private val context: Context) {
                 _connectionState.value = ConnectionState.Error(e.message ?: getString(R.string.state_unknown_error))
             }
         }
+    }
+
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    private suspend fun connectSession(normalizedMac: String, register: Boolean, expectedModel: Int, useEncrypted: Boolean, plaintext: Boolean) {
+        val gatt = openGatt(normalizedMac)
+        if (useEncrypted || plaintext || gatt.getService(AUTH_SERVICE)?.getCharacteristic(AUTH_UPNP) == null) {
+            check(_experimentalModels.value) { "請先啟用「實驗性車款」再連線新車款" }
+            connectVehicle(normalizedMac, gatt.device.name ?: error("車輛未提供配對所需的藍牙名稱"), expectedModel, plaintext, probePlain = !useEncrypted && !plaintext)
+            return
+        }
+
+        loginLegacy(gatt, normalizedMac, register)
+        val detected = readLegacyIdentification(expectedModel)
+        if (detected.accepted && native.availableProfilesSafe().single { it.modelId == detected.modelId }.cryptoStrategy == 2) {
+            // 登入後才確認為新一代車款時，以全新連線切換加密策略。
+            disconnect()
+            connectionJob = null
+            connect(normalizedMac, expectedModel = detected.modelId, useEncrypted = true)
+            return
+        }
+        acceptProfile(detected, normalizedMac)
+        check(_activeProfile.value?.cryptoStrategy == 1) { "請選擇此車款的加密配對設定後重新連線" }
+        _connectionState.value = ConnectionState.Ready
+        // Beep to confirm connection (Optional but nice)
+        beep()
+
+        // Read initial states (light, etc.) to sync UI with scooter
+        delay(500)  // Wait for connection to stabilize
+        readInitialStates()
+
+        startTelemetryLoop()
+
+    }
+
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    private suspend fun openGatt(normalizedMac: String): BluetoothGatt {
+        // Every BLE call below (getDevice, connect, requestMtu,
+        // enableNotifications, requestPriority) throws SecurityException
+        // on Android 12+ without this permission. The @RequiresPermission
+        // annotation is compile-time only, so check it for real and fail
+        // with a clear message instead of an opaque crash.
+        if (ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            throw SecurityException(getString(R.string.bluetooth_permission_required))
+        }
+
+        val device = bleManager.getDevice(normalizedMac)
+
+        // Clear old data from channels
+        while(controlChannel.tryReceive().isSuccess) {}
+        while(uartRxChannel.tryReceive().isSuccess) {}
+
+        // Set up disconnection callback to detect scooter power-off
+        bleManager.setOnDisconnectCallback {
+            Log.w("ScooterRepo", "BLE disconnection detected - scooter may have powered off")
+            handleUnexpectedDisconnection()
+        }
+
+        val gatt = bleManager.connect(device, ::handleNotification)
+        if (gatt == null) throw Exception(getString(R.string.error_gatt_failed))
+        activeGatt = gatt
+
+        // Request high priority for faster handshake
+        Log.d("ScooterRepo", "Requesting High Connection Priority")
+        bleManager.requestPriority(gatt, BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+
+        // Request MTU for larger packets (Optional but helps)
+        // Permission is already verified at the top of connect(); this
+        // re-check is belt-and-braces for the lint annotation.
+        Log.d("ScooterRepo", "Requesting MTU 512")
+        if (androidx.core.app.ActivityCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.BLUETOOTH_CONNECT
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w("ScooterRepo", "Missing BLUETOOTH_CONNECT permission")
+        }
+        gatt.requestMtu(512)
+        delay(200)
+
+        return gatt
+    }
+
+    private fun handleNotification(uuid: UUID, data: ByteArray) {
+        if (_connectionState.value == ConnectionState.Ready) Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
+
+        // Log BLE receive to CSV
+        val charName = when (uuid) {
+            BleManager.UART_RX -> "UART_RX"
+            BleManager.AUTH_AVDTP -> "AUTH_AVDTP"
+            BleManager.AUTH_UPNP -> "AUTH_UPNP"
+            else -> uuid.toString().takeLast(8)
+        }
+        if (_connectionState.value == ConnectionState.Ready) logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
+
+        // trySend fails silently when the bounded channel is full.
+        // Dropping an AUTH frame causes a spurious handshake
+        // timeout, and dropping telemetry loses a sample, so at
+        // least make the loss visible instead of invisible.
+        val delivered = if (uuid == BleManager.UART_RX) {
+            uartRxChannel.trySend(data).isSuccess
+        } else {
+            controlChannel.trySend(data).isSuccess
+        }
+        if (!delivered) {
+            Log.w("ScooterRepo", "Dropped ${data.size}-byte notification from $charName: channel full")
+        }
+    }
+
+    private suspend fun loginLegacy(gatt: BluetoothGatt, normalizedMac: String, register: Boolean) {
+        // Enable Notifications on Handshake chars
+        Log.d("ScooterRepo", "Enabling AUTH UPNP")
+        bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_UPNP) { }
+        // delay(300) removed
+
+        Log.d("ScooterRepo", "Enabling AUTH AVDTP")
+        bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_AVDTP) { }
+        // delay(500) removed
+
+        _connectionState.value = ConnectionState.Handshaking(getString(R.string.connecting))
+
+        if (register) {
+            performRegistration()
+            // Registration successful. Chain to Login immediately for seamless experience.
+            Log.d("ScooterRepo", "Registration complete. Proceeding to Login.")
+            _connectionState.value = ConnectionState.Handshaking(getString(R.string.state_logging_in))
+
+            // Retrieve the token we just saved
+            val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
+                ?: throw Exception(getString(R.string.error_token_missing))
+
+            // Give scooter a moment to persist the new token and reset auth state
+            delay(1000)
+
+            performLogin(tokenStr.hexToBytes())
+        } else {
+            val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
+            Log.d("ScooterRepo", "Token retrieved: ${tokenStr != null}")
+            if (tokenStr == null) throw Exception(getString(R.string.error_no_token))
+            performLogin(tokenStr.hexToBytes())
+        }
+
+        Log.d("ScooterRepo", "Enabling UART RX...")
+        val uartOk = bleManager.enableNotifications(gatt, UART_SERVICE, UART_RX) { }
+        Log.d("ScooterRepo", "UART RX Status: $uartOk")
+
+    }
+
+    private suspend fun readLegacyIdentification(expectedModel: Int): DetectionResult {
+        _connectionState.value = ConnectionState.Handshaking("正在讀取車輛識別暫存器")
+        val serialRequest = buildPacket(0x20, 1, 0x10, byteArrayOf(14))
+        writeUartEncrypted(native.encryptSafe(sessionPtr, serialRequest, 0))
+        val serialFrame = native.decryptSafe(sessionPtr, readEncryptedFrame())
+        check(serialFrame.size >= 17 && serialFrame[0] == 0x23.toByte() && serialFrame[1] == 1.toByte() && serialFrame[2] == 0x10.toByte()) { "無法讀取車輛識別暫存器" }
+        return DetectionResult.decode(native.resolveIdentificationSafe(serialFrame.copyOfRange(3, 17), expectedModel, _experimentalModels.value))
     }
 
     private suspend fun performRegistration() {

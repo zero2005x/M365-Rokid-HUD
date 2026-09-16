@@ -127,7 +127,9 @@ class NinebotCryptoCipher private constructor(
 
         /** `SHA1(data)` truncated to its first 16 bytes. */
         fun sha1First16(data: ByteArray): ByteArray {
-            val digest = MessageDigest.getInstance("SHA-1").digest(data)
+            // NOSONAR kotlin:S4790 — SHA-1 is fixed by the NinebotCrypto key-derivation
+            // spec; it is interop-mandated, not a security choice we can change.
+            val digest = MessageDigest.getInstance("SHA-1").digest(data) // NOSONAR
             return digest.copyOf(BLOCK)
         }
 
@@ -141,7 +143,9 @@ class NinebotCryptoCipher private constructor(
         fun aesEcbEncryptBlock(input: ByteArray, key: ByteArray): ByteArray {
             require(input.size == BLOCK) { "input must be $BLOCK bytes" }
             require(key.size == BLOCK) { "key must be $BLOCK bytes" }
-            val cipher = Cipher.getInstance("AES/ECB/NoPadding")
+            // NOSONAR kotlin:S5542 — AES-128-ECB single-block is the NinebotCrypto wire
+            // format; the scooter firmware requires exactly this, so it is interop-fixed.
+            val cipher = Cipher.getInstance("AES/ECB/NoPadding") // NOSONAR
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"))
             return cipher.doFinal(input)
         }

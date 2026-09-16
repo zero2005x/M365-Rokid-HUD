@@ -10,7 +10,6 @@
 //! - Command Type: Write (0x03)
 
 use super::MiSession;
-#[cfg(test)]
 use super::commands::{ScooterCommand, Direction, ReadWrite, Attribute};
 
 use anyhow::Result;
@@ -33,7 +32,15 @@ impl MiSession {
     pub async fn lock(&mut self) -> Result<()> {
         tracing::debug!("Locking scooter motor");
 
-        self.send_control(self.profile().command_set().lock).await?;
+        // Payload: [0x01, 0x00] - Write value 0x0001 (little-endian: LSB first)
+        let payload = vec![0x01, 0x00];
+
+        self.send(&ScooterCommand {
+            direction: Direction::MasterToMotor,
+            read_write: ReadWrite::Write,
+            attribute: Attribute::Lock,
+            payload
+        }).await?;
 
         Ok(())
     }
@@ -55,7 +62,15 @@ impl MiSession {
     pub async fn unlock(&mut self) -> Result<()> {
         tracing::debug!("Unlocking scooter motor");
 
-        self.send_control(self.profile().command_set().unlock).await?;
+        // Payload: [0x01, 0x00] - Write value 0x0001 (little-endian: LSB first)
+        let payload = vec![0x01, 0x00];
+
+        self.send(&ScooterCommand {
+            direction: Direction::MasterToMotor,
+            read_write: ReadWrite::Write,
+            attribute: Attribute::Unlock,
+            payload
+        }).await?;
 
         Ok(())
     }

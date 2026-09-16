@@ -41,7 +41,6 @@ ble = ["dep:btleplug", "dep:jni", "dep:android_logger", "dep:once_cell", "dep:ch
 write-ops = ["ble"]
 
 [dependencies]
-zeroize = "1.8"
 # --- transport only (see the `ble` feature) ---
 btleplug = { version = "0.11", features = ["serde"], optional = true }
 jni = { version = "0.19", optional = true }
@@ -116,7 +115,7 @@ required-features = ["ble"]
 
 [[example]]
 name = "settings"
-required-features = ["write-ops"]
+required-features = ["ble"]
 
 [[example]]
 name = "speed"

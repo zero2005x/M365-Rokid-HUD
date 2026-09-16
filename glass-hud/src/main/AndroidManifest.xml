@@ -41,9 +41,6 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"
         android:maxSdkVersion="30" />
     
-    <!-- 監聽網路狀態以選擇 HUD 連線路徑。 -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
     <!-- Keep screen on for HUD -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     

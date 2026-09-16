@@ -20,7 +20,6 @@
 /glass-hud/local.properties
 
 # Kotlin
-.kotlin/
 *.class
 *.jar
 # ...but the Gradle wrapper jar MUST be committed, otherwise ./gradlew fails on

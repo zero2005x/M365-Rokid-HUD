@@ -50,7 +50,6 @@ fun ScooterInfoScreen(
     onBack: () -> Unit
 ) {
     val motorInfo by repository.motorInfo.collectAsState()
-    val profile by repository.activeProfile.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val snapshotStore = remember { VehicleSnapshotStore.getInstance(context) }
     val snapshot by snapshotStore.snapshot.collectAsState()
@@ -78,7 +77,7 @@ fun ScooterInfoScreen(
     val overrideStore = remember { ModelOverrideStore.getInstance(context) }
     val modelOverride by overrideStore.override.collectAsState()
     val identification = ScooterModelRegistry.resolve(snapshot.modelNameOrNull(), modelOverride)
-    val caps = if (profile != null) repository.currentCapabilities() else identification.model.capabilities
+    val caps = identification.model.capabilities
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -109,7 +108,6 @@ fun ScooterInfoScreen(
                 .padding(horizontal = Dimens.gutter),
             verticalArrangement = Arrangement.spacedBy(Dimens.space12)
         ) {
-            profile?.let { Text(com.m365bleapp.vehicle.profileDisplayName(it)) }
             // Say up front where these numbers came from.
             DataAgeBanner(
                 isLive = isLive,

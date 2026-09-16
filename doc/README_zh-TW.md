@@ -280,10 +280,3 @@ cargo ndk -t arm64-v8a -t armeabi-v7a -o ../app/src/main/jniLibs build --release
 ---
 
 **免責聲明**：本專案僅供教育用途。使用風險自負。作者不對您的滑板車的任何損壞或違反製造商保固承擔責任。
-
-
-## 實驗性多車款
-
-掃描頁可開啟「實驗性車款」，加入 Xiaomi Pro／Pro 2／1S、Ninebot Max G30 與 ESx。新增車款均標示「未驗證車款」，首次使用須確認；未定義控制會停用。連線後讀取車端序號辨識，手動選擇車款也不可繞過核對。
-
-新款配對會提示輸入 14 位車身序號及按下車輛電源鍵。序號和配對資料按裝置加密保存。舊版 ESx 可使用明文設定；5AAB-only 韌體與未列出車款仍拒絕連線。完整能力、韌體限制、測試及來源請見 [多車款狀態](MULTI_SCOOTER_STATUS.md)；序號讀取請見 [ST-Link 指南](STLINK_SERIAL_GUIDE.md)。

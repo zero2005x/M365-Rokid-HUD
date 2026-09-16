@@ -183,6 +183,16 @@ class MainActivity : ComponentActivity() {
         if (hasFocus) applyImmersiveMode()
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Collectors are normally registered from onServiceConnected. Only
+        // re-register if this Activity restarted while already bound; the
+        // observeJob guard means this can never stack duplicates.
+        if (serviceBound && observeJob?.isActive != true) {
+            observeServiceState()
+        }
+    }
+    
     override fun onDestroy() {
         super.onDestroy()
         observeJob?.cancel()
@@ -261,7 +271,19 @@ class MainActivity : ComponentActivity() {
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
     
-    /** 服務綁定時註冊一次；repeatOnLifecycle 負責停止／恢復收集，重新綁定時取消舊工作。 */
+    /**
+     * Collects the client's state flows into the Compose state holders.
+     *
+     * Uses [lifecycleScope] + [repeatOnLifecycle] rather than `MainScope()`.
+     * `MainScope()` created a brand-new scope per call that was never
+     * cancelled, so each of these collectors ran forever while capturing this
+     * Activity — leaking the Activity (and the bound service/BLE client) across
+     * every stop/start and configuration change. Because this method is called
+     * from both onServiceConnected and onStart, those leaked collectors also
+     * accumulated, so every emission triggered N redundant state writes.
+     *
+     * [observeJob] guarantees only one set of collectors is ever active.
+     */
     private fun observeServiceState() {
         val client = bleService?.getConnectionManager() ?: return
 

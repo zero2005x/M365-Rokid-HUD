@@ -131,11 +131,6 @@ fun SettingsScreen(
             BatteryOptimizationRow(context)
 
             // --- Advanced ---
-            val experimental by repository.experimentalModels.collectAsState()
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("實驗性車款", modifier = Modifier.weight(1f))
-                androidx.compose.material3.Switch(checked = experimental, onCheckedChange = repository::setExperimentalModels)
-            }
             SettingsSection(stringResource(R.string.settings_section_advanced))
             SettingsRow(
                 icon = "🌐",
@@ -148,6 +143,13 @@ fun SettingsScreen(
                 subtitle = stringResource(R.string.log_enable_logging),
                 onClick = onOpenLogging
             )
+
+            // --- Testing ---
+            // Deliberately last and clearly labelled. Without a scooter there is
+            // no other way to put a value on the glasses, so this is the only
+            // end-to-end check available off-hardware.
+            SettingsSection(stringResource(R.string.demo_section))
+            DemoRideRow(repository)
             // "Experimental models" and "protocol" both belong here per the
             // objective, and they belong together: the override decides which
             // register layout the app tries, and the protocol line reports what
@@ -244,6 +246,52 @@ private fun GatewayRow(context: Context) {
                 com.m365bleapp.gateway.GatewayService.start(context)
             }
             enabled = !enabled
+        }
+    )
+}
+
+/**
+ * Demo-ride toggle: feeds synthetic telemetry with no scooter attached.
+ *
+ * ## Why this is offered in the UI rather than hidden
+ *
+ * A phone cannot impersonate a scooter over BLE, so off-hardware there is no
+ * other way to get a value onto the glasses. This is the only end-to-end check of
+ * the display path available without a scooter.
+ *
+ * ## What it does not do
+ *
+ * It bypasses the frame codec, the crypto session and every register parser, so
+ * a good demo run proves the display chain and nothing about the protocol. The
+ * subtitle says so on screen, and the generated samples are marked `DEMO` in the
+ * logs, so a demo reading is never mistaken for live telemetry.
+ *
+ * State is read from the repository on each recomposition rather than remembered
+ * locally, because the demo also stops through `disconnect()`; a remembered flag
+ * would then disagree with reality.
+ */
+@Composable
+private fun DemoRideRow(repository: ScooterRepository) {
+    val running = repository.isDemoRunning
+
+    SettingsRow(
+        icon = "🧪",
+        title = stringResource(R.string.demo_title),
+        subtitle = if (running) {
+            stringResource(R.string.demo_running)
+        } else {
+            stringResource(R.string.demo_hint)
+        },
+        trailing = {
+            androidx.compose.material3.Switch(
+                checked = running,
+                onCheckedChange = { want ->
+                    if (want) repository.startDemo() else repository.stopDemo()
+                }
+            )
+        },
+        onClick = {
+            if (running) repository.stopDemo() else repository.startDemo()
         }
     )
 }
@@ -377,7 +425,7 @@ private fun ModelOverrideSettingsRow(context: Context) {
 private fun ProtocolSettingsRow(repository: ScooterRepository) {
     // Resolved here rather than passed in, so the row is self-contained.
     val context = LocalContext.current
-    val profile by repository.activeGattProfile.collectAsState()
+    val profile by repository.activeProfile.collectAsState()
     val protocol by repository.detectedProtocol.collectAsState()
 
     val summary = buildString {

@@ -1,5 +1,3 @@
-> 2026-09-16 Windows/Kali integration: see [current build and integration notes](WINDOWS_WSL_BUILD.md). Earlier handoff and protocol-only status claims below are historical where superseded.
-
 # Model Support Matrix | 車型支援對照表
 
 > **Status**: living reference. Confidence markers follow

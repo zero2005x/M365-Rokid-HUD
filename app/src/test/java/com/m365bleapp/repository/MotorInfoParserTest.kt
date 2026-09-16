@@ -5,21 +5,6 @@ import org.junit.Test
 
 /** Synthetic regression fixtures for current behavior, not hardware evidence. */
 class MotorInfoParserTest {
-    companion object {
-        @org.junit.BeforeClass @JvmStatic fun loadNative() {
-            val path = System.getenv("M365_NATIVE_TEST_LIBRARY")
-            org.junit.Assume.assumeTrue("Host JNI library required", !path.isNullOrEmpty())
-            System.load(checkNotNull(path))
-        }
-    }
-    private fun parseMotorInfo(data: ByteArray, existing: MotorInfo? = null): MotorInfo? =
-        MotorInfoParser.parse(data, existing) { bytes ->
-            val method = com.m365bleapp.ffi.M365Native::class.java.getDeclaredMethod(
-                "decodeLegacyMotorInfo", Int::class.javaPrimitiveType, ByteArray::class.java)
-            method.isAccessible = true
-            method.invoke(com.m365bleapp.ffi.M365Native(), 0, bytes) as DoubleArray
-        }
-
     // Pairwise-distinct fields make incorrect offsets visible. Odometer 100000
     // exceeds 16 bits; average speed 40000 exercises unsigned decoding.
     private fun packet(): ByteArray = byteArrayOf(
@@ -34,7 +19,7 @@ class MotorInfoParserTest {
 
     @Test
     fun `decodes production offsets and signedness`() {
-        val result = parseMotorInfo(packet())!!
+        val result = MotorInfoParser.parse(packet())!!
         assertEquals(25.3, result.speed, 0.00001)
         assertEquals(40.0, result.avgSpeed, 0.00001)
         assertEquals(100.0, result.mileage, 0.00001)
@@ -45,14 +30,14 @@ class MotorInfoParserTest {
     @Test
     fun `rejects every payload shorter than 22 bytes`() {
         for (length in 0 until 22) {
-            assertNull("length=$length", parseMotorInfo(packet().copyOf(length)))
+            assertNull("length=$length", MotorInfoParser.parse(packet().copyOf(length)))
         }
     }
 
     @Test
     fun `accepts missing temperature without reading past packet`() {
         for (length in 22..23) {
-            val result = parseMotorInfo(packet().copyOf(length))!!
+            val result = MotorInfoParser.parse(packet().copyOf(length))!!
             assertEquals(0.0, result.temp, 0.0)
             assertEquals(100.0, result.mileage, 0.0)
         }
@@ -62,7 +47,7 @@ class MotorInfoParserTest {
     fun `preserves separately polled trip and range`() {
         val existing = MotorInfo(speed = 1.0, battery = 50, temp = 20.0, mileage = 2.0,
             tripSeconds = 600, tripMeters = 2500, remainingKm = 12.5)
-        val result = parseMotorInfo(packet(), existing)!!
+        val result = MotorInfoParser.parse(packet(), existing)!!
         assertEquals(600, result.tripSeconds)
         assertEquals(2500, result.tripMeters)
         assertEquals(12.5, result.remainingKm, 0.0)
@@ -70,7 +55,7 @@ class MotorInfoParserTest {
 
     @Test
     fun `defaults trip and range before separate poll`() {
-        val result = parseMotorInfo(packet())!!
+        val result = MotorInfoParser.parse(packet())!!
         assertEquals(0, result.tripSeconds)
         assertEquals(0, result.tripMeters)
         assertEquals(0.0, result.remainingKm, 0.0)
@@ -82,12 +67,12 @@ class MotorInfoParserTest {
             val data = packet()
             data[8] = battery.toByte()
             data[9] = (battery ushr 8).toByte()
-            assertEquals(79, parseMotorInfo(data)!!.battery)
+            assertEquals(79, MotorInfoParser.parse(data)!!.battery)
         }
         for (battery in listOf(1, 100)) {
             val data = packet()
             data[8] = battery.toByte()
-            assertEquals(battery, parseMotorInfo(data)!!.battery)
+            assertEquals(battery, MotorInfoParser.parse(data)!!.battery)
         }
     }
 
@@ -96,7 +81,7 @@ class MotorInfoParserTest {
         val data = packet() + byteArrayOf(99, 98)
         data[10] = 0x18
         data[11] = 0xFC.toByte() // -1000
-        assertEquals(-1.0, parseMotorInfo(data)!!.speed, 0.0)
-        assertEquals(-5.0, parseMotorInfo(data)!!.temp, 0.0)
+        assertEquals(-1.0, MotorInfoParser.parse(data)!!.speed, 0.0)
+        assertEquals(-5.0, MotorInfoParser.parse(data)!!.temp, 0.0)
     }
 }

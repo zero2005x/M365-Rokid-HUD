@@ -1,4 +1,203 @@
-> 2026-09-16 Windows/Kali integration: see [current build and integration notes](WINDOWS_WSL_BUILD.md). Earlier handoff and protocol-only status claims below are historical where superseded.
+## Live phone deployment — 2026-09-16 (WSL2 Kali, real hardware attached)
+
+**This is the first time any build from this repository has run on real hardware.**
+The phone APK (v1.4.0, versionCode 7) was installed on the user's own phone and
+started successfully.
+
+- Device: `21091116UG` (Redmi, `pissarropro_global`), Android 13 / API 33,
+  `arm64-v8a`, serial `eeaas88ts4kn6l8t`, attached over USB to **Windows**.
+- Installed over the pre-existing v1.3.1 (versionCode 6) **in place**:
+  `firstInstallTime` unchanged, `shared_prefs/` and `databases/` intact, and the
+  BLUETOOTH_CONNECT / ACCESS_FINE_LOCATION grants were preserved.
+- Smoke test: `am start -n com.m365bleapp/.MainActivity` → process alive,
+  window focused, no `FATAL EXCEPTION` in logcat. Nothing further than startup
+  was exercised: no scooter, no BLE connection, no glasses, no WiFi HUD link.
+  The WiFi HUD acceptance list above is still entirely unverified.
+
+### Debug APKs cannot be installed over the user's build
+
+The user's installed app is signed with their personal release key, not with a
+debug key:
+
+| APK | Signer |
+| --- | --- |
+| installed v1.3.1 | `CN=Liang-Ting Lin, OU=TKU, O=CSIE` — SHA-256 `7ca3a3f7…01e30b` |
+| freshly built `app-debug.apk` | `CN=Android Debug` — SHA-256 `8dc960e9…afe5ec6` |
+
+`adb install -r` of the debug APK therefore fails with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, and the usual workaround (uninstall first)
+would destroy the user's saved scooter pairings and preferences. The APK that
+was installed instead keeps the *tested* debug runtime behaviour and only
+replaces the signature:
+
+```bash
+source env.sh && source .secrets/release-signing.env   # alias m365key in
+BT=$(ls -d $ANDROID_HOME/build-tools/*/ | tail -1)      # Documents/codebase/release.jks
+cd artifacts
+"${BT}zipalign" -f -p 4 ../repo/app/build/outputs/apk/debug/app-debug.apk m365-1.4.0-aligned.apk
+"${BT}apksigner" sign --ks "$RELEASE_STORE_FILE" --ks-key-alias "$RELEASE_KEY_ALIAS" \
+  --ks-pass env:RELEASE_STORE_PASSWORD --key-pass env:RELEASE_KEY_PASSWORD \
+  --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+  --out m365-1.4.0-releasekey.apk m365-1.4.0-aligned.apk
+```
+
+Then `adb push` to `/data/local/tmp/` and `pm install -r -t` from there. Note the
+re-signed APK verifies under the **v3 scheme only**; v1/v2 are reported false by
+`apksigner verify`. It was accepted on API 33, but if a future device or a Play
+upload rejects it, sign a real `release` build instead (release signing is now
+possible: the credentials exist at
+`C:\Users\liangtinglin\Documents\codebase\RokidAIAssistant\local.properties`).
+
+## First end-to-end hardware run — 2026-09-16 (phone + Rokid glasses, no scooter)
+
+Both apps were installed on real hardware and the phone → glasses gateway path was
+verified end to end. **No scooter was available**, so every telemetry value is the
+no-data value (speed 0.0, scooter battery 0%, "Scooter Offline") — the *transport*
+is verified, the *protocol* is not.
+
+| | Phone | Glasses |
+| --- | --- | --- |
+| Device | `21091116UG` / `pissarropro_global` | `RG-glasses` (Rokid), `1901092544022855` |
+| Android | 13 / API 33 | 12 / API 32 |
+| Display | 1080x2400 | 480x640 @ 240dpi (≈320dp wide) |
+| App | `com.m365bleapp` 1.4.0 (7) | `com.m365hud.glass` 1.4.0 (5) |
+| Update | in place over 1.3.1 (6), data kept | in place over 1.3.1 (4) |
+| Signer | release key, v3 scheme | release key, v3 scheme |
+
+Verified by observation (logcat + screenshots in `artifacts/`):
+
+1. Both apps launch on their real device with no `FATAL EXCEPTION`, and both render
+   their real Compose UI at the device's native resolution.
+2. Glasses → phone over WiFi: the glasses joined the phone's hotspot
+   (`Irealme6pro`, 10.74.255.38 vs 10.74.255.52), 0% packet loss over 3 pings.
+3. `GatewayService` foreground service (notification id 1001) starts and BLE
+   advertising runs: `dumpsys bluetooth_manager` lists an ongoing LOW_LATENCY /
+   POWER_HIGH advertise from `com.m365bleapp`.
+4. Glasses discover it by service UUID — `Found Gateway via UUID filter:
+   name=Redmi Note 11 Pro+ 5G, addr=4C:E0:DB:7D:4E:D5, RSSI=-80` → connected,
+   GATT cache refreshed, `Services discovered`.
+5. Telemetry flows at 1 Hz. Glasses: `Telemetry: speed=0.0, battery=0%` each
+   second. Phone: `LATENCY STATS: 5 updates in 5.064s = 1.0 updates/sec,
+   subscribers: 1`. Phone UI shows "眼鏡已連接 ✓".
+6. The glasses HUD renders live data: clock, phone battery 64%, glasses battery
+   100%, signal indicator, scooter 0%, 0.0 km/h, 🔴 Scooter Offline.
+7. Display preferences propagate live: enabling Controller Temperature and
+   Remaining Range on the phone (Glasses Display screen) made `0°C` and `~0.0 km`
+   appear on the glasses within seconds. Reverted to the default mask afterwards.
+
+### Regression found: the glasses blacklist the phone permanently
+
+`BleClient.failedDevices` is an in-memory set that is only cleared when the glasses
+*service* restarts (`BleClient.kt:631`). The unfiltered scan falls back to matching
+by device name, and that fallback matches `Redmi`/`Xiaomi` — so if the glasses are
+started while the phone's gateway is still **off**, the glasses connect to the
+phone by name, fail service discovery, and blacklist the phone's address forever:
+
+```
+16:59:43 Found potential Gateway device (by name): Redmi Note 11 Pro+ 5G (...) - will attempt connection
+16:59:45 onConnectionStateChange: status=GATT_SUCCESS, newState=CONNECTED
+16:59:45 Failed devices list: [4C:E0:DB:7D:4E:D5]
+17:06:24 <user enables the gateway; the phone now advertises the service UUID>
+17:07:27 Skipping previously failed device: 4C:E0:DB:7D:4E:D5   (repeated, 1/sec, forever)
+```
+
+Forcing the glasses app to restart clears the set, and the very next UUID-filtered
+scan finds and connects within a second. So the workaround is "start the phone
+gateway first, or restart the glasses app", and the code fix is to expire
+blacklist entries (or not blacklist on the name-match path at all).
+
+Suggested, not yet done: clear `failedDevices` on every scan start with a
+timestamp/TTL per entry, and stop matching bare `Redmi`/`Xiaomi` names.
+
+### Unverified / open after this run
+
+- No scooter: no BLE link to an M365/Ninebot, no real telemetry decoding, no
+  protocol-support confidence promoted. Everything in §0.1 still stands.
+- WiFi HUD transport (`_m365hud._tcp.` / TCP) was not exercised: the phone's
+  Dashboard toggle was not reachable (it lives behind the Dashboard screen, which
+  needs a scooter) and the tested path used BLE only. The phone hotspot was used
+  for the IP-level connectivity check, not for the HUD transport.
+- Transport switching (WiFi preferred, BLE fallback), telemetry staleness after
+  ~3s, and service restart behaviour were not tested.
+- On the 480x640 glasses the bottom status line ("Scooter Offline") is clipped at
+  the panel edge when extra field rows are enabled — cosmetic, but real.
+
+### Talking to the phone from WSL2
+
+The Linux adb (37.0.1) sees no devices — USB belongs to Windows and no `usbipd`
+forwarding is set up. Use the Windows adb through the wrapper `../wadb`:
+
+- The Linux SDK path `/mnt/c/…/adb.exe` **is** runnable from WSL via interop.
+- It must not be launched with a `\\wsl.localhost\…` working directory: it then
+  reports an **empty device list and still exits 0**. `wadb` changes to
+  `/mnt/c/Users/liangtinglin` first.
+- Do not route it through `cmd.exe /c`: cmd re-parses the rebuilt command line
+  and mangles quoted arguments, e.g. `pull` failed with
+  `failed to stat remote object '"/data/app/…"'` (literal quotes in the path).
+- Windows adb does not resolve `/home/kali/...` paths; pass `$(wslpath -w file)`
+  for `push`, and a Windows path (or `adb pull` to a Windows path) for `pull`.
+- Writes from this sandbox to `/mnt/c` are **denied** (workspace-write policy),
+  which is why the APK is built, signed and kept inside the workspace and only
+  `adb push` moves it to the device.
+
+Artifacts (gitignored, not committed): `artifacts/m365-1.4.0-aligned.apk`,
+`artifacts/m365-1.4.0-releasekey.apk`, and `../.secrets/release-signing.env`
+(mode 0600). The glasses APK `glass-hud-debug.apk` was **not** installed — the
+Rokid glasses have not been attached yet.
+
+## Hardware-free testing: demo ride mode — 2026-09-16 (verified on device)
+
+**This is the first time the HUD display path has been exercised end to end on real
+hardware.** It was done with no scooter, using a new demo mode.
+
+### The problem it solves
+
+A phone's BLE stack cannot impersonate a scooter peripheral, so with no scooter
+attached there is no way to put a value on screen: the dashboard sat at 0 and the
+glasses showed `Scooter Offline`. Every previous on-device run therefore stopped at
+"both apps launch".
+
+### What was added
+
+| Piece | File | Purpose |
+| --- | --- | --- |
+| `DemoRideSource` | `protocol/DemoRideSource.kt` | Pure, seeded ride simulation → `MotorInfo` |
+| `startDemo` / `stopDemo` / `isDemoRunning` | `repository/ScooterRepository.kt` | Feeds synthetic samples into `_motorInfo` |
+| `DemoRideRow` | `ui/SettingsScreen.kt` | Toggle under a new **Testing** section |
+| strings | `values/strings.xml`, `values-zh-rTW/strings.xml` | Labelled so it is never mistaken for live data |
+
+`_motorInfo` is the single source for the phone UI, the BLE gateway **and** the WiFi
+gateway, so one demo run covers the whole display chain including the glasses.
+
+### Verified on hardware (23:53–23:56, 2026-09-16)
+
+- Phone: `Settings → Testing → 示範騎乘（無滑板車）` → `DEMO: ride started (seed=376839)`.
+- Phone dashboard rendered live values: `22.0 km/h`, scooter `91 %`, phone `70 %`.
+- Gateway: `GatewayService: MotorInfo received: speed=22.0, battery=91` and
+  `Speed changed: 22.1 -> 8.1 km/h` — the multi-phase drive cycle is visibly cycling.
+- Glasses connected and rendered the demo telemetry: `22.1 km/h`, `91 %`, `100 %`,
+  and **`Scooter Offline` disappeared**, which is what proves `motorInfo` is non-null
+  through the whole path.
+- Phone reported `subscribers: 1`; glasses logged `Telemetry: speed=…, battery=91%`
+  continuously at ~1 Hz.
+
+### What the demo does NOT prove
+
+It bypasses `FrameCodec`, the crypto session and every register parser. A clean demo
+run proves the **display** path and says nothing about whether real scooter frames
+decode. Samples carry the `DEMO` marker in logs and the toggle subtitle says
+"Simulated telemetry — not a real scooter" on screen.
+
+### Also landed in this round
+
+- `PlaintextRegisterSession` (`protocol/`) — the first real consumer of `FrameCodec`,
+  which had 375 lines, 19 tests and **zero call sites**. It implements the plaintext
+  P1 (`55 AA`, Xiaomi) and P2 (`5A A5`, Ninebot) framings the crypto path never needed
+  because Rust builds that envelope internally.
+- `BmsTelemetryParser` (`protocol/`) — `0x31` pack status, `0x40` ten cell voltages,
+  `0x35` temperatures, `0x30` charging bit, design capacity, charge counts, health.
+
+Unit tests: **163 passed, 0 failed** (was 107 at the start of this work).
 
 ## WiFi HUD / JNI continuation — 2026-09-16
 

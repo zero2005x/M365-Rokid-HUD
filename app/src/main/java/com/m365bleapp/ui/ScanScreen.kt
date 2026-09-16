@@ -38,9 +38,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.m365bleapp.vehicle.modelName
-import com.m365bleapp.vehicle.profileDisplayName
-import com.m365bleapp.ffi.ProfileDescriptor
 import com.m365bleapp.R
 import com.m365bleapp.ble.BleManager
 import com.m365bleapp.gateway.GatewayService
@@ -379,11 +376,11 @@ fun ScanScreen(
             repository = repository,
             device = selectedDevice!!.scanResult,
             onDismiss = { selectedDevice = null },
-            onConnect = { register, expected, encrypted, plain ->
+            onConnect = { register ->
                 val deviceToConnect = selectedDevice
                 if (deviceToConnect != null) {
                     // Connect is now non-blocking and runs on Repository scope
-                    repository.connect(deviceToConnect.scanResult.device.address, register, expected, encrypted, plain)
+                    repository.connect(deviceToConnect.scanResult.device.address, register)
                 }
                 selectedDevice = null
             }
@@ -801,7 +798,7 @@ fun ConnectDialog(
     repository: ScooterRepository,
     device: ScanResult,
     onDismiss: () -> Unit,
-    onConnect: (Boolean, Int, Boolean, Boolean) -> Unit
+    onConnect: (Boolean) -> Unit
 ) {
     // Registration is decided here, not asked.
     //
@@ -814,11 +811,6 @@ fun ConnectDialog(
     // Kept as a recallable value so the confirm button reads from state rather
     // than recomputing storage on every recomposition.
     val register = !isAlreadyRegistered
-    val experimental by repository.experimentalModels.collectAsState()
-    val profiles by repository.profiles.collectAsState()
-    var expected by remember { mutableStateOf(-1) }
-    var protocol by remember { mutableStateOf(0) }
-    var showAdvanced by remember { mutableStateOf(false) }
 
     // The dialog is only shown for a device discovered by a permission-gated
     // scan, so BLUETOOTH_CONNECT is already held here.
@@ -830,13 +822,6 @@ fun ConnectDialog(
         title = { Text(deviceName) },
         text = {
             Column {
-                if (experimental) {
-                    TextButton(onClick = { showAdvanced = !showAdvanced }) { Text("進階連線選項") }
-                    if (showAdvanced) {
-                        ProfilePicker(profiles, expected, onExpected = { expected = it }, onProtocol = { protocol = it })
-                        ProtocolPicker(protocol, onProtocol = { protocol = it })
-                    }
-                }
                 Text(
                     text = if (isAlreadyRegistered) {
                         stringResource(R.string.dialog_connect_known)
@@ -858,7 +843,7 @@ fun ConnectDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onConnect(register, expected, protocol == 1, protocol == 2) }) {
+            Button(onClick = { onConnect(register) }) {
                 Text(stringResource(R.string.connect))
             }
         },
@@ -964,41 +949,6 @@ fun ModelOverrideRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun ProfilePicker(
-    profiles: List<ProfileDescriptor>,
-    expected: Int,
-    onExpected: (Int) -> Unit,
-    onProtocol: (Int) -> Unit,
-) {
-    var menu by remember { mutableStateOf(false) }
-    val label = if (expected == -1) "自動辨識車款" else "手動設定（仍核對序號）：" + modelName(expected)
-    Box {
-        TextButton(onClick = { menu = true }) { Text(label) }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(text = { Text("自動辨識") }, onClick = { onExpected(-1); menu = false })
-            profiles.forEach { profile ->
-                DropdownMenuItem(text = { Text(profileDisplayName(profile)) }, onClick = {
-                    onExpected(profile.modelId)
-                    onProtocol(if (profile.cryptoStrategy == 2) 1 else 0)
-                    menu = false
-                })
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProtocolPicker(protocol: Int, onProtocol: (Int) -> Unit) {
-    Text("連線方式（偵測邊界情況可手動覆寫）", style = MaterialTheme.typography.bodySmall)
-    listOf("自動選擇", "新款加密配對", "舊版明文（僅 ESx）").forEachIndexed { index, name ->
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = protocol == index, onClick = { onProtocol(index) })
-            Text(name)
         }
     }
 }

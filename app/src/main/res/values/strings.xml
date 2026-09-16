@@ -62,6 +62,12 @@
     <string name="gateway_notification_text">Broadcasting telemetry to Rokid Glasses</string>
     <string name="glasses_connected">Glasses Connected ✓</string>
     <string name="glasses_connect_hint">Turn on to let glasses connect first</string>
+
+    <!-- Demo ride (hardware-free testing) -->
+    <string name="demo_section">Testing</string>
+    <string name="demo_title">Demo ride (no scooter)</string>
+    <string name="demo_running">Simulated telemetry — not a real scooter</string>
+    <string name="demo_hint">Feed fake telemetry to test the HUD without a scooter</string>
     
     <!-- WiFi Gateway -->
     <string name="wifi_gateway_title">WiFi Gateway</string>

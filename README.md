@@ -1,5 +1,3 @@
-> 2026-09-16 Windows/Kali integration: see [current build and integration notes](doc/WINDOWS_WSL_BUILD.md). Earlier handoff and protocol-only status claims below are historical where superseded.
-
 # M365 Rokid HUD
 
 <p align="center">

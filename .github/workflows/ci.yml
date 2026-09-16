@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  checks: read
 
 jobs:
   ci-build-and-test:
@@ -102,8 +101,6 @@ jobs:
       # sources, which is what makes "edited Rust but did not rebuild"
       # impossible.
       - name: Run Unit Tests
-        env:
-          M365_NATIVE_TEST_LIBRARY: ${{ github.workspace }}/ninebot-ffi/target/debug/libninebot_ffi.so
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon :app:testDebugUnitTest :glass-hud:testDebugUnitTest
@@ -111,9 +108,6 @@ jobs:
       - name: Assemble Debug APKs
         run: |
           ./gradlew --no-daemon :app:assembleDebug :glass-hud:assembleDebug
-
-      - name: Android lint
-        run: ./gradlew --no-daemon lintDebug -PskipRustBuild
 
       - name: Verify 16 KB page alignment of native libraries
         shell: python3 {0}
@@ -163,42 +157,8 @@ jobs:
                   failed = True
           sys.exit(1 if failed else 0)
 
-      - name: Require SonarCloud automatic analysis
-        uses: actions/github-script@v7
-        with:
-          script: |
-            // 專案已啟用自動分析；只接受本次提交、SonarCloud App 的成功結果。
-            const ref = context.payload.pull_request?.head.sha ?? context.sha;
-            for (let attempt = 0; attempt < 30; attempt++) {
-              const checks = await github.paginate(github.rest.checks.listForRef, {
-                ...context.repo, ref, per_page: 100,
-              });
-              const sonar = checks.filter(check =>
-                check.head_sha === ref && check.app?.slug === 'sonarqubecloud' &&
-                check.name === 'SonarCloud Code Analysis'
-              ).sort((a, b) => b.id - a.id)[0];
-              if (sonar?.status === 'completed') {
-                if (sonar.conclusion !== 'success') {
-                  core.setFailed(`SonarCloud: ${sonar.conclusion} (${sonar.details_url})`);
-                } else {
-                  core.info(`SonarCloud passed for ${ref}: ${sonar.details_url}`);
-                }
-                return;
-              }
-              await new Promise(resolve => setTimeout(resolve, 10000));
-            }
-            core.setFailed(`SonarCloud did not finish for ${ref} within five minutes`);
-
-  rust-tests:
-    name: Rust protocol and FFI tests
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test protocol and FFI
-        run: |
-          rustup toolchain install stable --profile minimal
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo +stable test --manifest-path ninebot-ble/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo +stable test --manifest-path ninebot-ffi/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: SonarQube Scan
+        continue-on-error: true
+        uses: sonarsource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

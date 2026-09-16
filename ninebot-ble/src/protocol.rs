@@ -50,11 +50,7 @@ pub struct MiProtocol {
 
 impl MiProtocol {
   pub async fn new(device: &Peripheral) -> Result<Self> {
-    Self::with_profile(device, &crate::profile::M365Profile).await
-  }
-
-  pub async fn with_profile(device: &Peripheral, profile: &dyn crate::profile::ScooterProfile) -> Result<Self> {
-    let (avdtp, upnp, tx, rx) = setup_channels(device, profile.service_uuids()).await?;
+    let (avdtp, upnp, tx, rx) = setup_channels(&device).await?;
     let stream : Pin<Box<dyn Stream<Item = ValueNotification> + Send>> = device.notifications().await
       .with_context(|| format!("Could not load notifications stream"))?;
     let device = device.clone();
@@ -406,8 +402,7 @@ fn what_frame(bytes: &[u8]) -> Result<u16> {
   Ok((bytes[0] as u16 & 0xff) + 0x100 * (bytes[1] as u16 & 0xff))
 }
 
-async fn setup_channels(device : &Peripheral, uuids: crate::profile::BleUuids) -> Result<(Characteristic, Characteristic, Characteristic, Characteristic)> {
-  let auth = uuids.auth.ok_or_else(|| anyhow!("Profile has no Xiaomi authentication service"))?;
+async fn setup_channels(device : &Peripheral) -> Result<(Characteristic, Characteristic, Characteristic, Characteristic)> {
   let mut retries = 5;
   loop {
     // Windows BLE: verify connection is stable before discovering services
@@ -453,13 +448,13 @@ async fn setup_channels(device : &Peripheral, uuids: crate::profile::BleUuids) -
 
   // Auth channels
   tracing::debug!("Setting up AUTH channels");
-  let avdtp = find_characteristic(device, Uuid::parse_str(auth.service)?, Uuid::parse_str(auth.data)?).await?;
-  let upnp = find_characteristic(device, Uuid::parse_str(auth.service)?, Uuid::parse_str(auth.control)?).await?;
+  let avdtp = find_characteristic(device, Registers::AUTH.to_uuid(), Registers::AVDTP.to_uuid()).await?;
+  let upnp = find_characteristic(device, Registers::AUTH.to_uuid(), Registers::UPNP.to_uuid()).await?;
 
   // UART channels
   tracing::debug!("Setting up UART channels");
-  let tx = find_characteristic(device, Uuid::parse_str(uuids.service)?, Uuid::parse_str(uuids.tx)?).await?;
-  let rx = find_characteristic(device, Uuid::parse_str(uuids.service)?, Uuid::parse_str(uuids.rx)?).await?;
+  let tx = find_characteristic(device, Registers::UART.to_uuid(), Registers::TX.to_uuid()).await?;
+  let rx = find_characteristic(device, Registers::UART.to_uuid(), Registers::RX.to_uuid()).await?;
 
   tracing::debug!("Enabling notify for AVDTP");
   device.subscribe(&avdtp).await

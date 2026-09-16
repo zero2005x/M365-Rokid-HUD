@@ -51,7 +51,6 @@ fun DashboardScreen(
 ) {
     val context = LocalContext.current
     val motorInfo by repository.motorInfo.collectAsState()
-    val activeProfile by repository.activeProfile.collectAsState()
     val connState by repository.connectionState.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -363,21 +362,6 @@ fun DashboardScreen(
             
             Spacer(modifier = Modifier.height(24.dp))
             
-            activeProfile?.let { profile ->
-                Text(com.m365bleapp.vehicle.modelName(profile.modelId) + if (profile.verified) "" else " · 未驗證車款")
-                if (!profile.supportsLock) Text("此車款尚未定義鎖定控制，已停用。")
-                if (!profile.supportsLight) Text("此車款尚未定義車燈控制，已停用。")
-                if (!profile.supportsRideMode) Text("此車款尚未定義騎乘模式切換。")
-                if (profile.supportsRideMode) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("標準", "節能", "運動").forEachIndexed { mode, label ->
-                            TextButton(onClick = { coroutineScope.launch {
-                                repository.setRideMode(mode).onFailure { snackbarHostState.showSnackbar(it.message ?: "模式切換失敗") }
-                            } }) { Text(label) }
-                        }
-                    }
-                }
-            }
             // Which controls this scooter actually supports.
             //
             // Capability-driven, not "does it look like an M365". A scooter with
@@ -450,7 +434,7 @@ fun DashboardScreen(
                                     isLockLoading = false
                                 }
                             },
-                            enabled = activeProfile?.supportsLock == true && !isLockLoading && !isLocked,
+                            enabled = !isLockLoading && !isLocked,
                             colors = ButtonDefaults.outlinedButtonColors(
                                 contentColor = MaterialTheme.colorScheme.error
                             )
@@ -477,7 +461,7 @@ fun DashboardScreen(
                                     isLockLoading = false
                                 }
                             },
-                            enabled = activeProfile?.supportsLock == true && !isLockLoading && isLocked
+                            enabled = !isLockLoading && isLocked
                         ) {
                             if (isLockLoading && isLocked) {
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
@@ -538,7 +522,6 @@ fun DashboardScreen(
                     } else {
                         Switch(
                             checked = isLightOn,
-                            enabled = activeProfile?.supportsLight == true,
                             onCheckedChange = { newState ->
                                 isLightLoading = true
                                 coroutineScope.launch {

@@ -3,6 +3,30 @@
 A comprehensive guide to Bluetooth Low Energy (BLE) communication with Xiaomi/Ninebot M365 electric scooters.
 本指南詳細說明如何透過藍牙低功耗（BLE）與小米/Ninebot M365 電動滑板車進行通訊。
 
+> ### 📌 Scope | 適用範圍
+>
+> **This guide documents ONE of three protocol families this app knows about.**
+> It covers the Xiaomi Mi authentication path (`fe95` + ECDH + AES-CCM), which is
+> what the M365 family uses and the only path that currently produces telemetry.
+>
+> **本指南只涵蓋三種協議家族中的一種**，即 Xiaomi Mi 認證路徑，也是目前唯一能產生
+> 遙測資料的路徑。
+>
+> | Family | Document |
+> | --- | --- |
+> | Xiaomi Mi auth | **this document** |
+> | Ninebot legacy (`5AA5` + chained AES) | [`NINEBOT_LEGACY_PROTOCOL.md`](NINEBOT_LEGACY_PROTOCOL.md) |
+> | Encryption2 (current generation) | [`PROTOCOL_FAMILIES.md`](PROTOCOL_FAMILIES.md) |
+>
+> Which scooters are actually supported, and how far each can be trusted, is in
+> [`MODEL_SUPPORT.md`](MODEL_SUPPORT.md). **Recognition is not readability**: this
+> app identifies scooter families it cannot yet read, and withholds readings
+> rather than guessing them.
+>
+> 哪些車型真正支援、可信度到哪裡，請見 [`MODEL_SUPPORT.md`](MODEL_SUPPORT.md)。
+> **「認得出來」不等於「讀得到」**：本 App 會辨識出尚無法讀取的車型，並選擇不顯示
+> 讀數，而不是猜測。
+
 ---
 
 ## Table of Contents | 目錄
@@ -75,8 +99,8 @@ Used for registration and login handshakes.
 │   客戶端    │                              │   滑板車    │
 └──────┬──────┘                              └──────┬──────┘
        │                                            │
-       │  1. BLE Scan (filter: "MIScooter")         │
-       │     BLE 掃描（篩選："MIScooter"）          │
+       │  1. BLE Scan (XIAOMI_SCOOTER_MATCH)        │
+       │     BLE 掃描（見 identity.rs 單一來源）    │
        │◄──────────────────────────────────────────►│
        │                                            │
        │  2. GATT Connect | GATT 連接               │
@@ -107,8 +131,17 @@ Used for registration and login handshakes.
 
 1. **Scan for Devices | 掃描裝置**
 
-   - Filter by device name starting with "MIScooter" | 篩選名稱以 "MIScooter" 開頭的裝置
-   - Advertisement contains UUID: `6e400001-b5a3-f393-e0a9-e50e24dcca9e` | 廣播包含此 UUID
+   - The identity rule lives in ONE place: `ninebot-ble/src/identity.rs`,
+     constant `XIAOMI_SCOOTER_MATCH`. A device matches when its advertised name
+     starts with that rule's `name_prefix`, **or** its advertisement/service list
+     contains its `service_uuid`. Either signal alone suffices.
+     | 識別規則只有一處：`ninebot-ble/src/identity.rs` 的 `XIAOMI_SCOOTER_MATCH`。
+     名稱前綴或 service UUID **任一**符合即視為滑板車。
+   - ⚠️ This identifies a LINEAGE, not a model and not a protocol. The prefix
+     covers M365 / Pro / Pro2 / 1S / Lite / Mi 3 alike, and a service list is not
+     a protocol discriminator in general.
+     | 這只識別「血統」，不是型號、也不是協議。名稱前綴涵蓋整個 Xiaomi 家族，
+     而 service 清單在一般情況下無法區分協議。
 
 2. **GATT Connection | GATT 連接**
 

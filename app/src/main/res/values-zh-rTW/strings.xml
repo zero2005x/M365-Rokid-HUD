@@ -60,6 +60,12 @@
     <string name="gateway_notification_text">正在向 Rokid 眼鏡廣播遙測資料</string>
     <string name="glasses_connected">眼鏡已連接 ✓</string>
     <string name="glasses_connect_hint">先開啟讓眼鏡連接</string>
+
+    <!-- Demo ride (hardware-free testing) -->
+    <string name="demo_section">測試</string>
+    <string name="demo_title">示範騎乘（無滑板車）</string>
+    <string name="demo_running">模擬遙測中 —— 不是真實滑板車</string>
+    <string name="demo_hint">沒有滑板車時，用假資料測試 HUD 顯示</string>
     
     <!-- WiFi Gateway -->
     <string name="wifi_gateway_title">WiFi 閘道</string>

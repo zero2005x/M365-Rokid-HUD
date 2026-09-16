@@ -31,6 +31,8 @@ import com.m365bleapp.R
 import com.m365bleapp.gateway.GatewayService
 import com.m365bleapp.gateway.wifi.WifiGatewayServer
 import com.m365bleapp.gateway.wifi.WifiGatewayService
+import com.m365bleapp.protocol.ModelOverrideStore
+import com.m365bleapp.protocol.ScooterModelRegistry
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
 import com.m365bleapp.utils.BluetoothHelper
@@ -360,6 +362,22 @@ fun DashboardScreen(
             
             Spacer(modifier = Modifier.height(24.dp))
             
+            // Which controls this scooter actually supports.
+            //
+            // Capability-driven, not "does it look like an M365". A scooter with
+            // no verified lock register must not be shown a lock button: the
+            // button would send a write to an address that means something else
+            // on that model — or nothing — and a motor lock is safety-relevant
+            // while the vehicle may be moving. Hiding the control is both the
+            // honest and the safe option.
+            //
+            // Resolved by the repository, which is the one place that knows the
+            // connected scooter's advertised name and the rider's override.
+            // Resolving it here from a null name would treat every scooter as
+            // unidentified and hide these controls from M365 owners.
+            val capabilities = repository.currentCapabilities()
+
+            if (capabilities.motorLock) {
             // ========== Motor Lock/Unlock Control ==========
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -454,9 +472,11 @@ fun DashboardScreen(
                     }
                 }
             }
-            
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
+            if (capabilities.tailLight) {
             // ========== Tail Light Control ==========
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -521,6 +541,7 @@ fun DashboardScreen(
                         )
                     }
                 }
+            }
             }
             
             Spacer(modifier = Modifier.height(12.dp))

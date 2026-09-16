@@ -14,6 +14,7 @@ jobs:
   ci-build-and-test:
     name: Build, Test & Sonar Analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -21,27 +22,92 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 17
+      # Match the JDK used for local build verification.
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Create local.properties
+      # ---------------------------------------------------------------------
+      # Rust toolchain
+      #
+      # Required, not optional. `System.loadLibrary("ninebot_ffi")` is called by
+      # the app (M365Native.kt), so an APK without libninebot_ffi.so throws
+      # UnsatisfiedLinkError and no BLE handshake, login or telemetry decryption
+      # can work. This job therefore builds the native library rather than
+      # skipping it.
+      #
+      # This replaces an earlier `-PskipRustBuild` that made the job
+      # self-contradictory: it skipped the Rust build and then ran an ELF check
+      # requiring the very artifacts the skip prevented. Because
+      # `app/src/main/jniLibs/` is gitignored (the .so files are generated, not
+      # committed), a fresh checkout has none, so that step could only fail.
+      # ---------------------------------------------------------------------
+      - name: Install Rust with Android targets
         run: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          rustup toolchain install stable --profile minimal
+          rustup override set stable
+          rustup target add --toolchain stable \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            i686-linux-android \
+            x86_64-linux-android
 
+      # Keyed on both crates: ninebot-ffi depends on ninebot-ble by path, so a
+      # change to ninebot-ble's crypto changes the compiled output. Hashing only
+      # the ffi crate would restore a stale target/ directory after a
+      # ninebot-ble edit.
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-ndk
+            ninebot-ffi/target
+            ninebot-ble/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('ninebot-ffi/Cargo.toml', 'ninebot-ffi/src/**', 'ninebot-ble/Cargo.toml', 'ninebot-ble/src/**') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install cargo-ndk
+        run: command -v cargo-ndk >/dev/null || cargo install cargo-ndk --locked
+
+      - name: Configure Android SDK
+        shell: bash
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+            echo "::error::Android SDK directory is unavailable"
+            exit 1
+          fi
+          printf 'sdk.dir=%s\n' "$SDK" > local.properties
+
+      - name: Test Rust protocol core
+        run: cargo test --manifest-path ninebot-ble/Cargo.toml --no-default-features
+
+      - name: Test Rust JNI crate
+        run: |
+          cargo test --manifest-path ninebot-ffi/Cargo.toml
+          bash ninebot-ffi/tests/run-jni-tests.sh
+
+      # Debug unit tests pull in `preBuild` -> verifyRustJniLibs -> copyRustJniLibs ->
+      # buildRustJni, so this step both runs the unit tests and builds, copies
+      # and freshness-checks the native libraries. verifyRustJniLibs fails the
+      # build if the .so is missing or does not match a content hash of the Rust
+      # sources, which is what makes "edited Rust but did not rebuild"
+      # impossible.
       - name: Run Unit Tests
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon test -PskipRustBuild
+          ./gradlew --no-daemon :app:testDebugUnitTest :glass-hud:testDebugUnitTest
 
       - name: Assemble Debug APKs
         run: |
-          ./gradlew --no-daemon :app:assembleDebug :glass-hud:assembleDebug -PskipRustBuild
+          ./gradlew --no-daemon :app:assembleDebug :glass-hud:assembleDebug
 
       - name: Verify 16 KB page alignment of native libraries
         shell: python3 {0}
@@ -69,6 +135,11 @@ jobs:
               return aligns
 
           libs = sorted(glob.glob('app/src/main/jniLibs/*/libninebot_ffi.so'))
+          expected_abis = {'arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'}
+          found_abis = {so.split('/')[-2] for so in libs}
+          if found_abis != expected_abis:
+              print(f'::error::Expected {sorted(expected_abis)}, found {sorted(found_abis)}')
+              sys.exit(1)
           if not libs:
               print('::error::no libninebot_ffi.so found under app/src/main/jniLibs')
               sys.exit(1)

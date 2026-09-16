@@ -1,5 +1,11 @@
-use super::{MiSession, Payload};
+// The `MiSession` methods below drive a real radio; the types and decoders
+// above are pure protocol and stay available without the `ble` feature.
+#[cfg(feature = "ble")]
+use super::{MiSession};
+#[cfg(feature = "ble")]
 use super::commands::{ScooterCommand, Direction, Attribute, ReadWrite};
+
+use super::Payload;
 
 use anyhow::Result;
 use serde::Serialize;
@@ -46,6 +52,7 @@ impl TryFrom<Payload> for BatteryInfo {
   }
 }
 
+#[cfg(feature = "ble")]
 impl MiSession {
   /**
    * Battery voltage in volts

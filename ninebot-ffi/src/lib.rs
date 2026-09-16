@@ -258,10 +258,81 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_freeSession(
     _class: JClass,
     ptr: jlong,
 ) {
+    release_session(ptr);
+}
+
+fn release_session(ptr: jlong) {
     if ptr == 0 {
         return;
     }
     if let Ok(mut sessions) = sessions().lock() {
         sessions.remove(&ptr);
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session() -> i64 {
+        let keys = mi_crypto::LoginKeychain {
+            app: mi_crypto::EncryptionKey { key: [1; 16], iv: [2; 4] },
+            dev: mi_crypto::EncryptionKey { key: [3; 16], iv: [4; 4] },
+        };
+        let handle = next_handle();
+        sessions().lock().unwrap().insert(handle, Arc::new(SessionState { keys }));
+        handle
+    }
+
+    #[test]
+    fn zero_and_forged_handles_are_rejected() {
+        assert!(session_for(0).is_none());
+        assert!(session_for(-1).is_none());
+        release_session(0);
+        release_session(-1);
+    }
+
+    #[test]
+    fn released_handle_stays_invalid_after_new_session() {
+        let old = session();
+        release_session(old);
+        release_session(old);
+        let new = session();
+        assert_ne!(old, new);
+        assert!(session_for(old).is_none());
+        assert!(session_for(new).is_some());
+        release_session(new);
+    }
+
+    #[test]
+    fn in_flight_session_survives_concurrent_release() {
+        let handle = session();
+        let in_flight = session_for(handle).unwrap();
+        std::thread::spawn(move || release_session(handle)).join().unwrap();
+        assert!(session_for(handle).is_none());
+        let frame = mi_crypto::encrypt_uart(&in_flight.keys.app, &[1, 2, 3], 42, Some([0; 4])).unwrap();
+        assert_eq!(mi_crypto::decrypt_uart(&in_flight.keys.app, &frame).unwrap(), [2, 3, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn freeing_one_session_does_not_remove_another() {
+        let a = session();
+        let b = session();
+        release_session(a);
+        assert!(session_for(b).is_some());
+        release_session(b);
+    }
+
+    #[test]
+    fn handle_allocation_is_unique_across_threads() {
+        let threads: Vec<_> = (0..8).map(|_| std::thread::spawn(|| {
+            (0..100).map(|_| next_handle()).collect::<Vec<_>>()
+        })).collect();
+        let mut handles: Vec<_> = threads.into_iter().flat_map(|t| t.join().unwrap()).collect();
+        assert!(handles.iter().all(|h| *h > 0));
+        handles.sort_unstable();
+        handles.dedup();
+        assert_eq!(handles.len(), 800);
     }
 }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Mirrors `SurfaceBase` in ui/theme/Color.kt.
+
+      Used as the activity window background so the launch window is already
+      black before the first Compose frame is drawn. Without it Android shows
+      the theme's default (light) window background for a frame or two, which
+      reads as a white flash on every cold start.
+
+      Keep this value in sync with `SurfaceBase`. Compose cannot be referenced
+      from XML, so the value is necessarily duplicated here.
+    -->
+    <color name="window_background">#FF000000</color>
+</resources>

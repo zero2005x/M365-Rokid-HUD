@@ -4,6 +4,129 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
+ * Which telemetry fields the HUD renders.
+ *
+ * This is a MIRROR of `DisplayField` in the phone app
+ * (`app/.../gateway/M365HudGattProfile.kt`). The bit assignments are a wire
+ * contract shared between the two APKs — **never renumber an existing bit**.
+ * A field that is retired keeps its bit reserved so an older glasses build and
+ * a newer phone can never disagree about what a bit means.
+ *
+ * Bits this build does not recognise are ignored when rendering. That is what
+ * makes a future phone-side addition backward compatible: the phone sets a bit
+ * we do not know, and we simply do not draw it.
+ */
+object DisplayField {
+    /** Current speed. The hero element; almost always on. */
+    const val SPEED = 1 shl 0
+
+    /** Scooter battery percentage. */
+    const val SCOOTER_BATTERY = 1 shl 1
+
+    /** Phone battery percentage. */
+    const val PHONE_BATTERY = 1 shl 2
+
+    /** Our own battery percentage. */
+    const val GLASSES_BATTERY = 1 shl 3
+
+    /** Clock (HH:mm). */
+    const val TIME = 1 shl 4
+
+    /** BLE link quality indicator (the signal / stale icon). */
+    const val SIGNAL_QUALITY = 1 shl 5
+
+    /** Controller / frame temperature. */
+    const val TEMPERATURE = 1 shl 6
+
+    /** Total odometer. */
+    const val TOTAL_MILEAGE = 1 shl 7
+
+    /** Remaining range estimate. */
+    const val REMAINING_RANGE = 1 shl 8
+
+    /** Average speed. */
+    const val AVG_SPEED = 1 shl 9
+
+    /** Trip distance. */
+    const val TRIP_DISTANCE = 1 shl 10
+
+    /** Trip time. */
+    const val TRIP_TIME = 1 shl 11
+
+    /**
+     * The layout used when no preference has ever been received.
+     *
+     * Matches the hard-coded layout this feature replaced (time, phone battery,
+     * glasses battery, speed, scooter battery, signal) so that pairing an
+     * updated glasses with an older phone — or simply connecting before the
+     * first preference arrives — produces no visible change.
+     */
+    const val DEFAULT_MASK = SPEED or SCOOTER_BATTERY or PHONE_BATTERY or
+        GLASSES_BATTERY or TIME or SIGNAL_QUALITY
+}
+
+/**
+ * Parsed display preferences pushed by the phone.
+ *
+ * Wire format (7 bytes, little-endian) — must match
+ * `M365HudGattProfile.DISPLAY_PREFS_*` on the phone:
+ *
+ *   Byte 0:    Version (u8)
+ *   Byte 1-4:  Field bitmask (u32 LE)
+ *   Byte 5:    Text scale percent (u8), 100 = normal
+ *   Byte 6:    Reserved (u8), must be 0
+ */
+data class DisplayPrefs(
+    val mask: Int = DisplayField.DEFAULT_MASK,
+    val textScalePercent: Int = 100
+) {
+    /** True when the rider wants this field drawn. */
+    fun shows(field: Int): Boolean = (mask and field) != 0
+
+    companion object {
+        /** Version this build understands. */
+        const val VERSION = 1
+
+        /** Payload size this build understands. */
+        const val SIZE = 7
+
+        /** Accepted text-scale range; values outside are clamped, not rejected. */
+        const val MIN_SCALE = 80
+        const val MAX_SCALE = 140
+
+        /**
+         * Defaults, used when the phone app predates this feature.
+         *
+         * Note the deliberate ordering: an unrecognised version or a short
+         * frame returns defaults rather than throwing. The HUD must never go
+         * blank because of a protocol mismatch — a blank windshield is worse
+         * than a wrong one.
+         */
+        fun fromBytes(bytes: ByteArray): DisplayPrefs {
+            if (bytes.size < SIZE) {
+                return DisplayPrefs()
+            }
+            if ((bytes[0].toInt() and 0xFF) != VERSION) {
+                return DisplayPrefs()
+            }
+
+            val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            val rawMask = buffer.getInt(1)
+
+            // A zero mask is indistinguishable from "no preference known" (an
+            // all-zero flash page, a truncated write). Showing nothing is never
+            // what a rider wants, so fall back to the default layout.
+            val mask = if (rawMask == 0) DisplayField.DEFAULT_MASK else rawMask
+
+            val rawScale = bytes[5].toInt() and 0xFF
+            val scale = rawScale.coerceIn(MIN_SCALE, MAX_SCALE)
+
+            return DisplayPrefs(mask = mask, textScalePercent = scale)
+        }
+    }
+}
+
+/**
  * Data class holding parsed telemetry from the phone Gateway
  */
 data class TelemetryData(

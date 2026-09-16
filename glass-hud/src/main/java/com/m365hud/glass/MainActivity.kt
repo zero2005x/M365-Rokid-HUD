@@ -51,6 +51,15 @@ class MainActivity : ComponentActivity() {
     private val timeDataState = mutableStateOf(TimeData())
     private val signalStrengthState = mutableStateOf(BleClient.SignalStrength.Good)
     private val isTelemetryFreshState = mutableStateOf(true)
+
+    /**
+     * Which fields to render, as chosen on the phone.
+     *
+     * Starts at [DisplayPrefs] defaults (the historical layout) and is replaced
+     * as soon as the phone pushes its selection over the display-prefs
+     * characteristic, so the HUD is never blank while waiting.
+     */
+    private val displayPrefsState = mutableStateOf(DisplayPrefs())
     
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -121,6 +130,7 @@ class MainActivity : ComponentActivity() {
                     val currentTimeData by timeDataState
                     val currentSignalStrength by signalStrengthState
                     val currentIsTelemetryFresh by isTelemetryFreshState
+                    val currentDisplayPrefs by displayPrefsState
                     
                     HudScreen(
                         telemetry = currentTelemetry,
@@ -128,6 +138,7 @@ class MainActivity : ComponentActivity() {
                         connectionState = currentConnectionState,
                         signalStrength = currentSignalStrength,
                         isTelemetryFresh = currentIsTelemetryFresh,
+                        displayPrefs = currentDisplayPrefs,
                         onRetryClick = { retryConnection() }
                     )
                 }
@@ -274,35 +285,18 @@ class MainActivity : ComponentActivity() {
      * [observeJob] guarantees only one set of collectors is ever active.
      */
     private fun observeServiceState() {
-        val client = bleService?.getBleClient() ?: return
+        val client = bleService?.getConnectionManager() ?: return
 
         observeJob?.cancel()
         observeJob = lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch {
-                    client.connectionState.collect { state ->
-                        connectionState.value = state
-                    }
-                }
-                launch {
-                    client.telemetry.collect { data ->
-                        telemetryState.value = data
-                    }
-                }
-                launch {
-                    client.timeData.collect { data ->
-                        timeDataState.value = data
-                    }
-                }
-                launch {
-                    client.signalStrength.collect { strength ->
-                        signalStrengthState.value = strength
-                    }
-                }
-                launch {
-                    client.isTelemetryFresh.collect { fresh ->
-                        isTelemetryFreshState.value = fresh
-                    }
+                client.hudState.collect { snapshot ->
+                    connectionState.value = snapshot.connection
+                    telemetryState.value = snapshot.telemetry
+                    timeDataState.value = snapshot.time
+                    signalStrengthState.value = snapshot.signal
+                    isTelemetryFreshState.value = snapshot.fresh
+                    displayPrefsState.value = snapshot.preferences
                 }
             }
         }

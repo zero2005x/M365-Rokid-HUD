@@ -1,3 +1,4 @@
+use crate::identity::XIAOMI_SCOOTER_MATCH;
 use std::hash::{Hash, Hasher};
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -11,12 +12,6 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 type Devices = Arc<RwLock<HashSet<TrackedDevice>>>;
-
-/**
- * All xiaomi scooters start with name MIScooter and random numbers after tha
- */
-const XIAOMI_SCOOTER_NAME : &str = "MIScooter";
-const XIAOMI_SERVICE_UUID : &str = "0000fe95-0000-1000-8000-00805f9b34fb";
 
 #[derive(Error, Debug)]
 pub enum ScannerError {
@@ -60,14 +55,15 @@ impl TrackedDevice {
    * Check if current device is possible the scooter
    */
   pub fn is_scooter(&self) -> bool {
+    // Delegates so the rule lives in exactly one place; `has_xiaomi_service` is
+    // precomputed during the scan because the properties call is expensive.
     if self.has_xiaomi_service {
       return true;
     }
-
-    if let Some(name) = &self.name {
-      return name.starts_with(XIAOMI_SCOOTER_NAME);
+    match &self.name {
+      Some(name) => name.starts_with(XIAOMI_SCOOTER_MATCH.name_prefix),
+      None => false,
     }
-    return false;
   }
 }
 
@@ -268,8 +264,8 @@ impl CentralEventsProcessor {
     tracing::debug!("Device name: {}", name);
     tracked_device.name = Some(name);
 
-    let xiaomi_uuid = Uuid::parse_str(XIAOMI_SERVICE_UUID)
-      .expect("XIAOMI_SERVICE_UUID is a valid compile-time constant");
+    let xiaomi_uuid = Uuid::parse_str(XIAOMI_SCOOTER_MATCH.service_uuid)
+      .expect("the identity spec carries a valid compile-time UUID");
     if props.service_data.contains_key(&xiaomi_uuid) || props.services.contains(&xiaomi_uuid) {
       tracked_device.has_xiaomi_service = true;
     }
@@ -295,3 +291,4 @@ async fn find_central(manager: &Manager) -> Result<Adapter, ScannerError> {
     Err(ScannerError::MissingCentral)
   }
 }
+

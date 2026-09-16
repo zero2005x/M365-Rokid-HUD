@@ -19,7 +19,21 @@ object GattProfile {
     
     // Glasses Battery Characteristic (Write only - we write our battery level to phone)
     val GLASSES_BATTERY_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
-    
+
+    /**
+     * Display Preferences Characteristic (Read + Notify).
+     *
+     * The phone tells us WHICH telemetry fields to render. Read + Notify so we
+     * get the current value both ways: reading once on connect restores the
+     * rider's choice after a reconnect without the phone doing anything, and
+     * the notification delivers changes live while the rider edits them.
+     *
+     * Absence of this characteristic is NOT an error — it only means the phone
+     * app predates the feature. In that case we keep the historical layout; see
+     * `DisplayPrefs.DEFAULT_MASK`.
+     */
+    val DISPLAY_PREFS_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567895")
+
     // Client Characteristic Configuration Descriptor
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     

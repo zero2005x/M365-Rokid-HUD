@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.util.Log
+import com.m365bleapp.gateway.DisplayPrefsStore
 import com.m365bleapp.gateway.M365HudGattProfile
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,6 +49,22 @@ class WifiGatewayServer(private val context: Context) {
         const val MSG_TYPE_COMMAND: Byte = 0x03
         const val MSG_TYPE_HEARTBEAT: Byte = 0x04
         const val MSG_TYPE_GLASSES_BATTERY: Byte = 0x05
+
+        /**
+         * HUD display preferences.
+         *
+         * Mirrors the BLE `DISPLAY_PREFS_CHAR_UUID` characteristic so a glasses
+         * build behaves identically over either transport. Payload is the same
+         * [M365HudGattProfile.DISPLAY_PREFS_SIZE]-byte layout, so the glasses
+         * parser is shared rather than duplicated.
+         *
+         * A separate message type rather than extra bytes in the telemetry
+         * frame: telemetry is sent continuously and has a CRC covering a fixed
+         * range, so changing its shape would break every glasses build already
+         * in the field. The two transports therefore stay in step by sharing the
+         * *payload* while each keeps its own envelope.
+         */
+        const val MSG_TYPE_DISPLAY_PREFS: Byte = 0x06
         
         // Telemetry data size (same as BLE)
         const val TELEMETRY_DATA_SIZE = 20
@@ -196,7 +213,14 @@ class WifiGatewayServer(private val context: Context) {
                 val connection = ClientConnection(clientSocket, clientId)
                 connectedClients[clientId] = connection
                 _connectedDeviceCount.value = connectedClients.size
-                
+
+                // Push the current HUD field selection immediately, matching the
+                // BLE path where the phone notifies on subscription. Without
+                // this a reconnecting glasses would show its default layout
+                // until the rider next opened the display settings, even though
+                // the phone already knows better.
+                sendDisplayPrefsTo(connection)
+
                 // Handle client in separate coroutine
                 scope.launch {
                     handleClient(connection)
@@ -373,6 +397,60 @@ class WifiGatewayServer(private val context: Context) {
         sendToAll(MSG_TYPE_TIME, buffer.array())
     }
     
+    /**
+     * Send HUD display preferences to all connected clients.
+     *
+     * Payload layout is identical to the BLE characteristic
+     * ([M365HudGattProfile.DISPLAY_PREFS_SIZE] bytes, little-endian):
+     * `[version][mask u32][textScale][reserved]`.
+     */
+    fun updateDisplayPrefs(mask: Int, textScalePercent: Int) {
+        val buffer = ByteBuffer.allocate(M365HudGattProfile.DISPLAY_PREFS_SIZE)
+            .order(ByteOrder.LITTLE_ENDIAN)
+
+        buffer.put(M365HudGattProfile.DISPLAY_PREFS_VERSION.toByte())
+        buffer.putInt(mask)
+        buffer.put(
+            textScalePercent
+                .coerceIn(
+                    M365HudGattProfile.DISPLAY_PREFS_MIN_SCALE,
+                    M365HudGattProfile.DISPLAY_PREFS_MAX_SCALE
+                )
+                .toByte()
+        )
+        buffer.put(0) // reserved
+
+        sendToAll(MSG_TYPE_DISPLAY_PREFS, buffer.array())
+    }
+
+    /**
+     * Send HUD display preferences to one client.
+     *
+     * Used on connect: over BLE the phone pushes prefs the moment the glasses
+     * subscribe to the characteristic, so the TCP path has to do the same or a
+     * reconnecting glasses would sit on its default layout until the rider next
+     * changed the setting.
+     */
+    private fun sendDisplayPrefsTo(connection: ClientConnection) {
+        val store = DisplayPrefsStore.getInstance(context)
+        val buffer = ByteBuffer.allocate(M365HudGattProfile.DISPLAY_PREFS_SIZE)
+            .order(ByteOrder.LITTLE_ENDIAN)
+
+        buffer.put(M365HudGattProfile.DISPLAY_PREFS_VERSION.toByte())
+        buffer.putInt(store.mask.value)
+        buffer.put(
+            store.textScalePercent.value
+                .coerceIn(
+                    M365HudGattProfile.DISPLAY_PREFS_MIN_SCALE,
+                    M365HudGattProfile.DISPLAY_PREFS_MAX_SCALE
+                )
+                .toByte()
+        )
+        buffer.put(0)
+
+        sendTo(connection, MSG_TYPE_DISPLAY_PREFS, buffer.array())
+    }
+
     /**
      * Send heartbeat to a specific client
      */

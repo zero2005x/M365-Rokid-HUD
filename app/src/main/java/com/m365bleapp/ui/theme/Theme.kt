@@ -1,103 +1,83 @@
 package com.m365bleapp.ui.theme
 
 import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 // ============================================================
-// M365 Rokid HUD - Original Theme System
-// Custom brand colors for Material 3
+// M365 Rokid HUD — Theme
 // ============================================================
+//
+// The app is dark-only, on purpose.
+//
+// It used to build both a dark and a light scheme and pick between them with
+// `isSystemInDarkTheme()`. That is the wrong behaviour for this product: the
+// screen is glanced at while riding, and the glasses HUD is always dark, so a
+// light phone UI produced two different-looking halves of the same app and
+// forced every colour decision to work at two very different luminances.
+// Locking to the dark scheme means one palette, one set of contrast
+// guarantees, and a phone screen that matches the glasses.
+//
+// Dynamic colour was already off and stays off — `dynamicColor` was declared
+// but nothing ever passed `true`, and the branch is now removed rather than
+// left as a dead parameter.
 
 private val M365DarkColorScheme = darkColorScheme(
-    primary = ScooterCyan,
-    onPrimary = NeutralWhite,
-    primaryContainer = ScooterCyanDark,
-    onPrimaryContainer = ScooterCyanLight,
-    
-    secondary = EnergyGreen,
-    onSecondary = NeutralWhite,
-    secondaryContainer = EnergyGreenDark,
-    onSecondaryContainer = EnergyGreenLight,
-    
-    tertiary = CautionAmber,
-    onTertiary = NeutralDark,
-    tertiaryContainer = CautionAmberDark,
-    onTertiaryContainer = CautionAmberLight,
-    
-    error = DangerRed,
-    onError = NeutralWhite,
-    errorContainer = DangerRedDark,
-    onErrorContainer = DangerRedLight,
-    
-    background = SurfaceDark,
-    onBackground = NeutralLight,
-    surface = SurfaceDark,
-    onSurface = NeutralLight,
-    surfaceVariant = SurfaceVariantDark,
-    onSurfaceVariant = NeutralMedium,
-    
-    outline = NeutralMedium,
-    outlineVariant = CardDark
-)
+    // Accent: interactive elements only.
+    primary = AccentCyan,
+    onPrimary = SurfaceBase,
+    primaryContainer = AccentCyanSoft,
+    onPrimaryContainer = AccentCyan,
 
-private val M365LightColorScheme = lightColorScheme(
-    primary = ScooterCyanDark,
-    onPrimary = NeutralWhite,
-    primaryContainer = ScooterCyanLight,
-    onPrimaryContainer = ScooterCyanDark,
-    
-    secondary = EnergyGreenDark,
-    onSecondary = NeutralWhite,
-    secondaryContainer = EnergyGreenLight,
-    onSecondaryContainer = EnergyGreenDark,
-    
-    tertiary = CautionAmberDark,
-    onTertiary = NeutralWhite,
-    tertiaryContainer = CautionAmberLight,
-    onTertiaryContainer = CautionAmberDark,
-    
-    error = DangerRed,
-    onError = NeutralWhite,
-    errorContainer = DangerRedLight,
-    onErrorContainer = DangerRedDark,
-    
-    background = SurfaceLight,
-    onBackground = NeutralDark,
-    surface = SurfaceLight,
-    onSurface = NeutralDark,
-    surfaceVariant = SurfaceVariantLight,
-    onSurfaceVariant = NeutralMedium,
-    
-    outline = NeutralMedium,
-    outlineVariant = SurfaceVariantLight
+    // Secondary is deliberately NOT a second bright colour. It is used for
+    // "connected / good" affordances, so it reuses the semantic green.
+    secondary = LevelGreen,
+    onSecondary = SurfaceBase,
+    secondaryContainer = SurfaceSunken,
+    onSecondaryContainer = LevelGreen,
+
+    tertiary = LevelAmber,
+    onTertiary = SurfaceBase,
+    tertiaryContainer = SurfaceSunken,
+    onTertiaryContainer = LevelAmber,
+
+    error = LevelRed,
+    onError = SurfaceBase,
+    errorContainer = SurfaceSunken,
+    onErrorContainer = LevelRed,
+
+    // Surfaces.
+    background = SurfaceBase,
+    onBackground = TextPrimary,
+    surface = SurfaceBase,
+    onSurface = TextPrimary,
+    surfaceVariant = SurfaceRaised,
+    onSurfaceVariant = TextSecondary,
+    surfaceContainer = SurfaceRaised,
+    surfaceContainerHigh = SurfaceRaised,
+    surfaceContainerHighest = SurfaceSunken,
+    surfaceContainerLow = SurfaceBase,
+    surfaceContainerLowest = SurfaceBase,
+
+    // Lines.
+    outline = LineStrong,
+    outlineVariant = LineSubtle,
+
+    // Explicit, because `surfaceTint` defaults to `primary` and Material 3 then
+    // tints every elevated surface cyan. That is what made cards look washed
+    // out and slightly different from each other depending on elevation.
+    surfaceTint = SurfaceRaised,
 )
 
 @Composable
 fun M365BleAppTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Disable dynamic color for brand consistency
-    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> M365DarkColorScheme
-        else -> M365LightColorScheme
-    }
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -109,17 +89,15 @@ fun M365BleAppTheme(
             // own content shows through it, so the colour is supplied by the
             // Compose surface underneath rather than by the window.
             //
-            // Setting the icon appearance is still meaningful and still works:
-            // it is what keeps the clock and battery icons legible against a
-            // light or dark background.
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            // The icon appearance still matters: this is what keeps the clock
+            // and battery icons legible. Dark-only means these are always light.
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
     }
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = M365DarkColorScheme,
         typography = M365Typography,
         content = content
     )
 }
-

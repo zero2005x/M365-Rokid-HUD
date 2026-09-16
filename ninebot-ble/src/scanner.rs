@@ -1,3 +1,4 @@
+use crate::identity::XIAOMI_SCOOTER_MATCH;
 use std::hash::{Hash, Hasher};
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -56,15 +57,17 @@ impl TrackedDevice {
    * Check if current device is possible the scooter
    */
   pub fn is_scooter(&self) -> bool {
+    // Delegates so the rule lives in exactly one place; `has_xiaomi_service` is
+    // precomputed during the scan because the properties call is expensive.
     if self.has_xiaomi_service {
       return true;
     }
 
     if let Some(name) = &self.name {
-      return ProfileRegistry::available().iter().any(|profile|
+      return name.starts_with(XIAOMI_SCOOTER_MATCH.name_prefix) || ProfileRegistry::available().iter().any(|profile|
         profile.ble_filter().name_prefixes.iter().any(|prefix| name.starts_with(prefix)));
     }
-    return false;
+    false
   }
 }
 
@@ -293,3 +296,4 @@ async fn find_central(manager: &Manager) -> Result<Adapter, ScannerError> {
     Err(ScannerError::MissingCentral)
   }
 }
+

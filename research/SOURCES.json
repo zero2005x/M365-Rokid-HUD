@@ -1,0 +1,134 @@
+[
+  {
+    "path": "research/references/ninebot-docs/ES2BLE.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/ES2BLE.md",
+    "bytes": 273,
+    "sha256": "92ba2292a76295a4090cdb95f3d0f3ff8eaa31ef0e37fe6a7df21422ba704bea"
+  },
+  {
+    "path": "research/references/ninebot-docs/ES2ESC.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/ES2ESC.md",
+    "bytes": 5994,
+    "sha256": "b98e682a4b2bb9bc3ad66b81306bbd4cd54d5afab263e6f7f45c39f090e71557"
+  },
+  {
+    "path": "research/references/ninebot-docs/M365BLE.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/M365BLE.md",
+    "bytes": 1302,
+    "sha256": "e2d0c7580057a780a52d5a12d67f15199ff2c93a404b8ed6f389beeaf9eefbce"
+  },
+  {
+    "path": "research/references/ninebot-docs/M365PROESC.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/M365PROESC.md",
+    "bytes": 166,
+    "sha256": "3dc917a4b6ec0f95c52d437cde65d7647b363800e6219ac4f2a3133cb93957dc"
+  },
+  {
+    "path": "research/references/ninebot-docs/protocol.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/protocol.md",
+    "bytes": 4830,
+    "sha256": "e18fdf236d5139522c645f85fe19384eb026a7fcf8c9847c5464b7069ab8753f"
+  },
+  {
+    "path": "research/references/ninebot-docs/M365PROBLE.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/M365PROBLE.md",
+    "bytes": 557,
+    "sha256": "82317bd808642dbef04ca5040a139ea6bf45805c008484ff294f984c0636d556"
+  },
+  {
+    "path": "research/references/ninebot-docs/ES2BMS.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/ES2BMS.md",
+    "bytes": 1704,
+    "sha256": "4a5dbb27aaded12ca6c796d20c2dd788d9003bc058dfb2f0eb2d312670f0dbb9"
+  },
+  {
+    "path": "research/references/ninebot-docs/Home.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/Home.md",
+    "bytes": 563,
+    "sha256": "51185681f0852d77e12f1f57d292e528e59015201415616568101a962caa4e76"
+  },
+  {
+    "path": "research/references/ninebot-docs/M365ESC.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/M365ESC.md",
+    "bytes": 4260,
+    "sha256": "32d04339a234ce83ce6423e70e2cda2b1cf565314822037029cd3b52a5192426"
+  },
+  {
+    "path": "research/references/ninebot-docs/M365BMS.md",
+    "source": "/home/kali/ScooterHacking/research/ninebot-docs-wiki/M365BMS.md",
+    "bytes": 1756,
+    "sha256": "f82d16c2d97fa8616865f91d82038bd8857391d2d06e6fbc541a4242c27645c3"
+  },
+  {
+    "path": "research/references/ninebotcrypto/nbcrypt.c",
+    "source": "/home/kali/ScooterHacking/research/ninebotcrypto/nbcrypt.c",
+    "bytes": 9083,
+    "sha256": "529a4d3097add405e0b929c6524f5ca2340a63b742704b9386e0f7fdb348e919"
+  },
+  {
+    "path": "research/references/ninebotcrypto/ProtocolNinebot.kt",
+    "source": "/home/kali/ScooterHacking/research/ninebotcrypto/ProtocolNinebot.kt",
+    "bytes": 13046,
+    "sha256": "961fd84b883fca99888fb7654827b856f6ce03b0be0bafbf99fb107653c92366"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/mi365.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/mi365.txt",
+    "bytes": 9482,
+    "sha256": "9bc77c545a7ab167624d84284b1f3e542c035f1ed00f7c290629ac317799efc9"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/nbmax.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/nbmax.txt",
+    "bytes": 7710,
+    "sha256": "6d3bed47a105b80ca91981618195226a5ae024ae3c2a8ca21c83ea4523d10a84"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/nbesx.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/nbesx.txt",
+    "bytes": 6146,
+    "sha256": "4ef53abb375e5fe2b0c772ae0a81affb3518c1b64d4f4a0e3220e5a2034e6367"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/nbdocs.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/nbdocs.txt",
+    "bytes": 109,
+    "sha256": "ed794a1bc3a88beeb6b635b1338a1175a95668c75e1b112b0493e66827d84600"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/nbdseries.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/nbdseries.txt",
+    "bytes": 1403,
+    "sha256": "eca59113c03c0f638721ca0cf416c665bd05907ddf4ff639d9005027c7f5e63a"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/nbtseries.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/nbtseries.txt",
+    "bytes": 485,
+    "sha256": "a414ec140f23959fa3f5a21935ac74b5b4ed83cdf48a8868030c65ceaf96ab31"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/nbeseries.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/nbeseries.txt",
+    "bytes": 4736,
+    "sha256": "a8498a546feea7313d21008789c4def32a493997b88b543292305eb8c8cea0ce"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/ninebot_es2_es4.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/ninebot_es2_es4.txt",
+    "bytes": 1016,
+    "sha256": "2d2fa71368b6e6417670db40c72544322f70bc6621ef1cede57085de783a0e24"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/nberrorcodes.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/nberrorcodes.txt",
+    "bytes": 4809,
+    "sha256": "1def650dac8e690ef87f375db9f7f68b8d2c9434cfdf8b1b5b289cd50733b61a"
+  },
+  {
+    "path": "research/references/scooterhacking-wiki/escootererrorcodes.txt",
+    "source": "/home/kali/ScooterHacking/shwiki/pages/escootererrorcodes.txt",
+    "bytes": 2990,
+    "sha256": "a3fbef37242368002136a650dca59d08316d7dd67318a063628a8313359e72cf"
+  }
+]

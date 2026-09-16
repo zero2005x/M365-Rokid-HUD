@@ -98,6 +98,15 @@ class BleClient(private val context: Context) {
     
     private val _timeData = MutableStateFlow(TimeData())
     val timeData: StateFlow<TimeData> = _timeData.asStateFlow()
+
+    private val _displayPrefs = MutableStateFlow(DisplayPrefs())
+    /**
+     * Which fields the phone wants rendered.
+     *
+     * Defaults to the historical layout, so the HUD looks exactly as it did
+     * before this feature until the phone sends a preference.
+     */
+    val displayPrefs: StateFlow<DisplayPrefs> = _displayPrefs.asStateFlow()
     
     private val _rssi = MutableStateFlow(0)
     val rssi: StateFlow<Int> = _rssi.asStateFlow()
@@ -592,6 +601,29 @@ class BleClient(private val context: Context) {
                     }
                 }
             }
+
+            // Display preferences are OPTIONAL: their absence only means the
+            // phone app predates the feature, in which case the glasses keep
+            // their default layout. So a missing characteristic is logged at
+            // debug level and never treated as a connection failure.
+            //
+            // Subscribe only — no explicit read. A GATT read issued while the
+            // CCCD descriptor write is still in flight gets dropped by some
+            // Android stacks (the stack serialises GATT operations and does not
+            // queue a read behind a descriptor write reliably). The phone side
+            // therefore notifies the current value as soon as it sees us
+            // subscribe, which covers the reconnect case without a read.
+            val prefsChar = service.getCharacteristic(GattProfile.DISPLAY_PREFS_CHAR_UUID)
+            if (prefsChar != null) {
+                bleScope.launch {
+                    delay(750)
+                    withContext(Dispatchers.Main) {
+                        enableNotification(gatt, prefsChar)
+                    }
+                }
+            } else {
+                Log.d(TAG, "No display-prefs characteristic (older phone app); keeping default HUD layout")
+            }
             
             _connectionState.value = ConnectionState.Connected
             
@@ -647,6 +679,11 @@ class BleClient(private val context: Context) {
                     val data = TimeData.fromBytes(value)
                     Log.d(TAG, "Time: ${data.formatTime()}, phoneBattery=${data.phoneBattery}%")
                     _timeData.value = data
+                }
+                GattProfile.DISPLAY_PREFS_CHAR_UUID -> {
+                    val prefs = DisplayPrefs.fromBytes(value)
+                    Log.i(TAG, "Display prefs: mask=0x${prefs.mask.toString(16)}, scale=${prefs.textScalePercent}%")
+                    _displayPrefs.value = prefs
                 }
             }
         }

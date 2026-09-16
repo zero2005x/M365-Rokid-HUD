@@ -1,4 +1,10 @@
-use super::{MiSession, Payload};
+// The `MiSession` methods at the bottom drive a real radio; the info types and
+// their payload decoders above are pure protocol and stay available without the
+// `ble` feature, so the multi-model register tables can be tested on a host.
+#[cfg(feature = "ble")]
+use super::MiSession;
+use super::Payload;
+#[cfg(feature = "ble")]
 use super::commands::{ScooterCommand, Direction, Attribute, ReadWrite};
 
 use std::time::Duration;
@@ -70,6 +76,7 @@ impl MotorInfo {
   }
 }
 
+#[cfg(feature = "ble")]
 impl MiSession {
   pub async fn general_info(&mut self) -> Result<GeneralInfo> {
     tracing::debug!("Reading general information");

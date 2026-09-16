@@ -34,9 +34,21 @@
 **/*.rs.bk
 Cargo.lock
 
-# JNI Libraries (keep structure but ignore large binaries for now)
-# Uncomment if you want to include pre-built .so files:
-# /app/src/main/jniLibs/
+# JNI Libraries
+#
+# Generated, not committed.
+#
+# These .so files used to be checked in, which is what allowed them to drift
+# away from the Rust sources: the APK packaged whatever binary was committed,
+# and nothing compared it to the code. A protocol or crypto fix in ninebot-ble
+# could sit in the tree for months without ever reaching a build.
+#
+# The `copyRustJniLibs` Gradle task now regenerates them from source on every
+# build and writes a content-hash stamp; `verifyRustJniLibs` fails the build if
+# the libraries are missing or do not match the sources. See app/build.gradle.kts.
+#
+# To build without a Rust toolchain: ./gradlew assembleDebug -PskipRustBuild
+/app/src/main/jniLibs/
 
 # Logs
 *.log

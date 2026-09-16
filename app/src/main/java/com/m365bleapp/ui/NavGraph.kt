@@ -38,13 +38,25 @@ fun NavHostContainer(repository: ScooterRepository) {
         })
     }
 
-    NavHost(navController = navController, startDestination = "scan") {
-        composable("scan") {
-            ScanScreen(
+    // The home page is the start destination and stays the start destination.
+    //
+    // There used to be two top-level screens — "scan" and "dashboard" — with a
+    // one-way navigation between them fired as soon as a scooter connected.
+    // That is what made the entry point ambiguous (the app began somewhere
+    // different depending on whether a scooter was already paired) and what
+    // forced a disconnect before you could connect a different scooter.
+    //
+    // HomeScreen now owns both faces and swaps between them in place. The
+    // "dashboard" route is kept only as the full detail view reachable from it.
+    NavHost(navController = navController, startDestination = "home") {
+        composable("home") {
+            HomeScreen(
                 repository = repository,
-                onNavigateToDashboard = { navController.navigate("dashboard") },
-                onNavigateToLanguage = { navController.navigate("language") },
-                onNavigateToLogViewer = { navController.navigate("logViewer") }
+                onOpenSettings = { navController.navigate("settings") },
+                onOpenHudDisplay = { navController.navigate("hudDisplay") },
+                onOpenScooterInfo = { navController.navigate("scooterInfo") },
+                onOpenDashboard = { navController.navigate("dashboard") },
+                onOpenLogViewer = { navController.navigate("logViewer") }
             )
         }
         composable("dashboard") {
@@ -52,13 +64,24 @@ fun NavHostContainer(repository: ScooterRepository) {
                 repository = repository,
                 onLogs = { navController.navigate("logViewer") },
                 onScooterInfo = { navController.navigate("scooterInfo") },
-                onDisconnect = { 
+                onDisconnect = {
                     // Reachable only after a successful connection, so
                     // BLUETOOTH_CONNECT has been granted by this point.
                     @SuppressLint("MissingPermission")
                     repository.disconnect()
+                    // Back to home, which will now show its disconnected face.
                     navController.popBackStack()
                 }
+            )
+        }
+        composable("settings") {
+            SettingsScreen(
+                repository = repository,
+                onBack = { navController.popBackStack() },
+                onOpenHudDisplay = { navController.navigate("hudDisplay") },
+                onOpenLanguage = { navController.navigate("language") },
+                onOpenLogViewer = { navController.navigate("logViewer") },
+                onOpenLogging = { navController.navigate("logs") }
             )
         }
         composable("scooterInfo") {
@@ -75,6 +98,12 @@ fun NavHostContainer(repository: ScooterRepository) {
         }
         composable("logViewer") {
             LogViewerScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable("hudDisplay") {
+            HudDisplayScreen(
+                store = com.m365bleapp.gateway.DisplayPrefsStore.getInstance(context),
                 onBack = { navController.popBackStack() }
             )
         }

@@ -13,18 +13,21 @@ zeroize = "1.8"
 jni = "0.19"
 thiserror = "1.0"
 hex = "0.4"
-serde = { version = "1.0", features = ["derive"] }
-anyhow = "1.0"
-pretty-hex = "0.3" 
+pretty-hex = "0.3"
 
-# Crypto dependencies from ninebot-ble
-btleplug = { version = "0.11", optional = true } # Removed/unused
+# The crypto lives in exactly one place.
+#
+# This crate used to carry its own copy of `src/mi_crypto.rs` alongside
+# ninebot-ble's. The two were byte-identical except for commented-out tracing
+# calls, so nothing was broken *yet* — but it meant the ECDH / HKDF / AES-CCM
+# implementation existed twice, and a security fix applied to one copy would
+# silently miss the other. This is the only implementation now.
+#
+# `default-features = false` is required, not stylistic: ninebot-ble's default
+# `ble` feature pulls in btleplug, whose Linux backend needs `pkg-config` +
+# `libdbus-1-dev`. This crate only needs the protocol core, so it opts out and
+# stays buildable on a bare host as well as on Android.
+ninebot-ble = { path = "../ninebot-ble", default-features = false }
+
 p256 = { version = "0.10.1", features = ["ecdsa", "ecdh"] }
-rand_core = "0.6.3"
 elliptic-curve = "0.11.9"
-ccm = "0.4.4"
-aes = { version = "0.7", features = ["force-soft"] }
-hkdf = "0.12.0"
-sha2 = "0.10.1"
-hex-literal = "0.3.4"
-hmac = "0.12.1"

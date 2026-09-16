@@ -1,10 +1,7 @@
-#[path = "../../ninebot-ble/src/ninebot_crypto.rs"]
-pub mod ninebot_crypto;
-#[path = "../../ninebot-ble/src/pairing.rs"]
-pub mod pairing;
+pub use ninebot_ble::ninebot_crypto;
+pub use ninebot_ble::pairing;
 // 與 BLE crate 共用同一份純資料核心，避免帶入平台 BLE 相依套件。
-#[path = "../../ninebot-ble/src/profile.rs"]
-pub mod profile;
+pub use ninebot_ble::profile;
 use jni::JNIEnv;
 use jni::objects::JClass;
 use jni::sys::{jbyteArray, jlong};
@@ -265,6 +262,10 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_freeSession(
     _class: JClass,
     ptr: jlong,
 ) {
+    release_session(ptr);
+}
+
+fn release_session(ptr: jlong) {
     if ptr == 0 {
         return;
     }
@@ -386,8 +387,7 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_freePairing(
     if let Ok(mut sessions) = pairing_sessions().lock() { sessions.remove(&handle); }
 }
 
-#[path = "../../ninebot-ble/src/vehicle.rs"]
-pub mod vehicle;
+pub use ninebot_ble::vehicle;
 
 fn vehicle_sessions() -> &'static Mutex<HashMap<i64, Arc<Mutex<vehicle::VehicleSession>>>> {
     static VEHICLES: OnceLock<Mutex<HashMap<i64, Arc<Mutex<vehicle::VehicleSession>>>>> = OnceLock::new();
@@ -481,4 +481,70 @@ pub extern "system" fn Java_com_m365bleapp_ffi_M365Native_profileControl(env: JN
         match (feature, value) { (0, 0) => commands.unlock, (0, 1) => commands.lock, (1, 0) => commands.light_off, (1, 1) => commands.light_on, _ => None }.map(|c| c.bytes())
     });
     match result { Ok(Some(bytes)) => to_java(&env, &bytes), _ => empty(&env) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session() -> i64 {
+        let keys = mi_crypto::LoginKeychain {
+            app: mi_crypto::EncryptionKey { key: [1; 16], iv: [2; 4] },
+            dev: mi_crypto::EncryptionKey { key: [3; 16], iv: [4; 4] },
+        };
+        let handle = next_handle();
+        sessions().lock().unwrap().insert(handle, Arc::new(SessionState { keys }));
+        handle
+    }
+
+    #[test]
+    fn zero_and_forged_handles_are_rejected() {
+        assert!(session_for(0).is_none());
+        assert!(session_for(-1).is_none());
+        release_session(0);
+        release_session(-1);
+    }
+
+    #[test]
+    fn released_handle_stays_invalid_after_new_session() {
+        let old = session();
+        release_session(old);
+        release_session(old);
+        let new = session();
+        assert_ne!(old, new);
+        assert!(session_for(old).is_none());
+        assert!(session_for(new).is_some());
+        release_session(new);
+    }
+
+    #[test]
+    fn in_flight_session_survives_concurrent_release() {
+        let handle = session();
+        let in_flight = session_for(handle).unwrap();
+        std::thread::spawn(move || release_session(handle)).join().unwrap();
+        assert!(session_for(handle).is_none());
+        let frame = mi_crypto::encrypt_uart(&in_flight.keys.app, &[1, 2, 3], 42, Some([0; 4])).unwrap();
+        assert_eq!(mi_crypto::decrypt_uart(&in_flight.keys.app, &frame).unwrap(), [2, 3, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn freeing_one_session_does_not_remove_another() {
+        let a = session();
+        let b = session();
+        release_session(a);
+        assert!(session_for(b).is_some());
+        release_session(b);
+    }
+
+    #[test]
+    fn handle_allocation_is_unique_across_threads() {
+        let threads: Vec<_> = (0..8).map(|_| std::thread::spawn(|| {
+            (0..100).map(|_| next_handle()).collect::<Vec<_>>()
+        })).collect();
+        let mut handles: Vec<_> = threads.into_iter().flat_map(|t| t.join().unwrap()).collect();
+        assert!(handles.iter().all(|h| *h > 0));
+        handles.sort_unstable();
+        handles.dedup();
+        assert_eq!(handles.len(), 800);
+    }
 }

@@ -13,6 +13,9 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import com.m365bleapp.protocol.MtuFragmenter
 import androidx.annotation.RequiresPermission
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.channels.awaitClose
@@ -47,7 +50,128 @@ class BleManager(private val context: Context) {
     private var descriptorContinuation: CancellableContinuation<Boolean>? = null
     private var onNotifyCallback: ((UUID, ByteArray) -> Unit)? = null
 
+    /**
+     * ATT_MTU the peripheral actually granted, or [MtuFragmenter.DEFAULT_ATT_MTU]
+     * before negotiation completes.
+     *
+     * `requestMtu()` is a *request*: the peripheral may grant less, and many
+     * scooter BLE modules cap it at the 23-byte minimum. Nothing here used to
+     * record what came back — `onMtuChanged` was never overridden — so the write
+     * path fell back to a hard-coded 20-byte chunk and could never use a larger
+     * MTU even when one had been granted.
+     *
+     * Volatile because it is written on the BLE callback thread and read from
+     * the telemetry coroutine.
+     */
+    @Volatile
+    var negotiatedMtu: Int = MtuFragmenter.DEFAULT_ATT_MTU
+        private set
+
+    private val _discoveredProfiles =
+        MutableStateFlow<List<com.m365bleapp.protocol.GattChannels>>(emptyList())
+
+    /**
+     * GATT layouts found on the connected device, in probe order.
+     *
+     * Empty until service discovery completes, and empty afterwards if none of
+     * the known layouts are present — which is itself informative, so an empty
+     * list is never silently replaced with a guess.
+     */
+    val discoveredProfiles: kotlinx.coroutines.flow.StateFlow<List<com.m365bleapp.protocol.GattChannels>> =
+        _discoveredProfiles.asStateFlow()
+
+    /**
+     * Translates a real `BluetoothGatt` into the pure views the discovery logic
+     * consumes, and publishes the result.
+     *
+     * All the decision-making lives in
+     * [com.m365bleapp.protocol.GattProfileDiscovery], which is unit-tested on the
+     * host. This method only reads Android objects, so there is nothing here that
+     * a test would need to cover.
+     */
+    private fun publishDiscoverableProfiles(gatt: BluetoothGatt) {
+        try {
+            val services = gatt.services.map { svc ->
+                com.m365bleapp.protocol.GattServiceView(
+                    uuid = svc.uuid,
+                    characteristics = svc.characteristics.map { it.uuid },
+                )
+            }
+            val characteristics = gatt.services.flatMap { svc ->
+                svc.characteristics.map { ch ->
+                    com.m365bleapp.protocol.GattCharacteristicView(
+                        uuid = ch.uuid,
+                        serviceUuid = svc.uuid,
+                        // PROPERTY_WRITE_NO_RESPONSE alone is common on these
+                        // modules, so both write properties count.
+                        canWrite = ch.properties and (
+                            BluetoothGattCharacteristic.PROPERTY_WRITE or
+                                BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
+                            ) != 0,
+                        canNotify = ch.properties and (
+                            BluetoothGattCharacteristic.PROPERTY_NOTIFY or
+                                BluetoothGattCharacteristic.PROPERTY_INDICATE
+                            ) != 0,
+                    )
+                }
+            }
+
+            val found = com.m365bleapp.protocol.GattProfileDiscovery.discover(services, characteristics)
+            _discoveredProfiles.value = found
+
+            if (found.isEmpty()) {
+                // Not an error, but the single most useful line in a bug report
+                // for an unsupported scooter: it says what the device actually
+                // exposes.
+                Log.w(
+                    "BleManager",
+                    "No known GATT layout on this device. Reported services: " +
+                        com.m365bleapp.protocol.GattProfileDiscovery
+                            .describeUnknown(services)
+                            .joinToString()
+                )
+            } else {
+                Log.i(
+                    "BleManager",
+                    "GATT layouts available: " +
+                        found.joinToString { "${it.kind.displayName}(${it.kind})" }
+                )
+            }
+        } catch (e: SecurityException) {
+            // Reading uuid/properties needs BLUETOOTH_CONNECT. Not fatal: the
+            // connection proceeds and the caller falls back to the known layout.
+            Log.w("BleManager", "Cannot inspect services without BLUETOOTH_CONNECT", e)
+        }
+    }
+
+    /** Usable ATT payload for the current link, i.e. `negotiatedMtu - 3`. */
+    val usableChunkSize: Int
+        get() = MtuFragmenter.chunkSizeFor(negotiatedMtu)
+
     private val gattCallback = object : BluetoothGattCallback() {
+        /**
+         * Records the MTU the peripheral agreed to.
+         *
+         * A failure leaves [negotiatedMtu] at the safe default rather than
+         * raising it: assuming a larger MTU than the link supports is the
+         * failure mode that loses frames silently.
+         */
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                negotiatedMtu = mtu
+                Log.i(
+                    "BleManager",
+                    "MTU negotiated: $mtu (usable payload ${MtuFragmenter.chunkSizeFor(mtu)} bytes)"
+                )
+            } else {
+                Log.w(
+                    "BleManager",
+                    "MTU request failed (status=$status); keeping ${negotiatedMtu} " +
+                        "(usable payload $usableChunkSize bytes)"
+                )
+            }
+        }
+
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
              Log.d("BleManager", "onConnectionStateChange: status=$status, newState=$newState (${if(newState == BluetoothProfile.STATE_CONNECTED) "CONNECTED" else if(newState == BluetoothProfile.STATE_DISCONNECTED) "DISCONNECTED" else "OTHER"})")
@@ -77,6 +201,15 @@ class BleManager(private val context: Context) {
                 Log.w("BleManager", "Disconnected from ${gatt.device?.address}")
                 gatt.close()
 
+                // Reset the negotiated MTU. It belongs to the link, not to this
+                // manager: carrying a 512-byte value from a previous scooter
+                // into a new connection that only granted 23 would over-size
+                // every write and lose frames silently.
+                if (negotiatedMtu != MtuFragmenter.DEFAULT_ATT_MTU) {
+                    Log.d("BleManager", "Resetting MTU $negotiatedMtu -> ${MtuFragmenter.DEFAULT_ATT_MTU}")
+                    negotiatedMtu = MtuFragmenter.DEFAULT_ATT_MTU
+                }
+
                 // If the link drops before onServicesDiscovered fires (scooter
                 // powered off / out of range mid-connect), connect() would stay
                 // suspended forever and the stale continuation would make every
@@ -105,6 +238,7 @@ class BleManager(private val context: Context) {
                 services.forEach { service ->
                     Log.d("BleManager", "  Service: ${service.uuid}")
                 }
+                publishDiscoverableProfiles(gatt)
                 if (cont?.isActive == true) cont.resume(gatt)
             } else {
                 Log.e("BleManager", "Service discovery failed with status $status")

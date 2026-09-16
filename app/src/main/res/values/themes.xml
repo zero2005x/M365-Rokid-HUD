@@ -1,5 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.M365BleApp" parent="android:Theme">
+    <!--
+      The window theme for MainActivity.
+
+      WHAT WAS WRONG
+      This read `parent="android:Theme"`, the platform's bare theme, which
+      supplies a decorated window WITH an ActionBar. Every screen then added its
+      own Material 3 `TopAppBar` inside a `Scaffold`, so the app drew two title
+      bars: the platform one (app label) and the Compose one (screen title).
+      That is the duplicated header in the reported screenshots, and on a HUD it
+      wasted a status-bar's worth of vertical space.
+
+      WHY A PLATFORM THEME AND NOT `Theme.Material3.*`
+      The obvious fix is `Theme.Material3.DayNight.NoActionBar`, but that style
+      lives in the View-based `com.google.android.material` artifact, which this
+      module does NOT depend on — it has only `androidx.compose.material3`.
+      Naming it here would fail resource linking.
+
+      It is also not needed: this app is pure Compose. `app/src/main/res` has no
+      `layout/` directory at all, and every dialog is a Compose `AlertDialog`.
+      Nothing inflates a View that reads theme attributes. The only requirements
+      on this theme are (a) no ActionBar and (b) a black window background, both
+      of which a platform theme provides without adding a dependency.
+
+      `android:Theme.Material.NoActionBar` is the dark platform theme — the app
+      is dark-only by design (see ui/theme/Theme.kt), so a light parent would
+      flash white on cold start.
+    -->
+    <style name="Theme.M365BleApp" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>

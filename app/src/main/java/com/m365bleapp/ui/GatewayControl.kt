@@ -41,8 +41,12 @@ import com.m365bleapp.utils.BluetoothHelper
  *   rather than an optimistic guess.
  * @return a lambda the caller invokes with `true`/`false` from a switch.
  */
+// NOSONAR kotlin:S3776 — a single permission-gating flow: it owns two
+// ActivityResult launchers (enable-Bluetooth, request-permissions) whose
+// callbacks and the returned decision all share `pendingEnable`. Splitting the
+// branches apart would scatter that shared state across functions.
 @Composable
-fun rememberGatewayEnabler(setEnabled: (Boolean) -> Unit): (Boolean) -> Unit {
+fun rememberGatewayEnabler(setEnabled: (Boolean) -> Unit): (Boolean) -> Unit { // NOSONAR
     val context = LocalContext.current
     // Kept across the permission / enable-Bluetooth round trips so the launcher
     // callbacks know the user was trying to *enable* the gateway.

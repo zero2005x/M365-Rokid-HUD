@@ -23,7 +23,13 @@ import kotlinx.coroutines.flow.asStateFlow
  * - LATENCY MONITORING: Tracks telemetry freshness and auto-reconnects on stale data
  */
 @SuppressLint("MissingPermission")
-class BleClient(private val context: Context) {
+class BleClient(
+    private val context: Context,
+    // Injected (with production defaults) so coroutine builders receive provided
+    // dispatchers instead of hardcoded ones — Sonar S6310.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
+) {
     
     companion object {
         private const val TAG = "BleClient"
@@ -55,10 +61,6 @@ class BleClient(private val context: Context) {
     
     // === COROUTINE SCOPE for BLE operations ===
     // Uses IO dispatcher for BLE operations to prevent blocking UI thread
-    // Injected rather than hardcoded at each call site so the dispatchers can be
-    // swapped in tests and there is a single place to change them.
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
-    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main
     private val bleScope = CoroutineScope(ioDispatcher + SupervisorJob())
     
     // CONNECTION HEALTH: Count consecutive stale checks

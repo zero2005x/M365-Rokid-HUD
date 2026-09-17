@@ -127,7 +127,7 @@ fun SettingsScreen(
 
             // --- Glasses connection ---
             SettingsSection(stringResource(R.string.settings_section_gateway))
-            GatewayRow(context)
+            GatewayRow()
             WifiGatewayRow(context)
             BatteryOptimizationRow(context)
 
@@ -214,7 +214,7 @@ fun SettingsScreen(
  * next to the switch that depends on it.
  */
 @Composable
-private fun GatewayRow(context: Context) {
+private fun GatewayRow() {
     var enabled by remember {
         mutableStateOf(com.m365bleapp.gateway.GatewayService.isRunning())
     }

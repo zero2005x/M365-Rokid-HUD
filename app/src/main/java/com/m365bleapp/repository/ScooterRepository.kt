@@ -111,7 +111,12 @@ data class MotorInfo(
     val isCharging: Boolean? = null,
 )
 
-class ScooterRepository private constructor(private val context: Context) {
+class ScooterRepository private constructor(
+    private val context: Context,
+    // Injected (with a production default) so coroutine builders receive a
+    // provided dispatcher instead of a hardcoded one — Sonar S6310.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) {
     
     companion object {
         @Volatile
@@ -187,9 +192,6 @@ class ScooterRepository private constructor(private val context: Context) {
     
     private val native = M365Native()
     private val bleManager = BleManager(context)
-    // Injected rather than hardcoded at each call site so the IO dispatcher can
-    // be swapped in tests and there is a single place to change it.
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
     private val scope = CoroutineScope(ioDispatcher + SupervisorJob())
     
     // Helper function to get localized strings

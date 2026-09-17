@@ -269,4 +269,15 @@
     <string name="diagnostics_subtitle">Which layout, dialect, MTU and model the app detected</string>
     <string name="settings_protocol_title">Protocol &amp; Connection</string>
     <string name="diagnostics_no_layout">No known layout</string>
+    <!-- Home controls / feedback -->
+    <string name="control_state_unknown">State unknown</string>
+    <string name="lock_confirm_title">Lock motor?</string>
+    <string name="lock_confirm_message">The scooter cannot report its lock state, so this cannot be verified. Only lock a stationary scooter.</string>
+    <string name="msg_motor_locked">Motor locked</string>
+    <string name="msg_motor_unlocked">Motor unlocked</string>
+    <string name="msg_lock_failed">Lock failed: %1$s</string>
+    <string name="msg_unlock_failed">Unlock failed: %1$s</string>
+    <string name="msg_light_on">Tail light on</string>
+    <string name="msg_light_off">Tail light off</string>
+    <string name="msg_light_failed">Light control failed: %1$s</string>
 </resources>

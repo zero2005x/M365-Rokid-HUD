@@ -1,6 +1,5 @@
 package com.m365bleapp.ui
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.os.Build
@@ -25,8 +24,8 @@ fun NavHostContainer(repository: ScooterRepository) {
     // different depending on whether a scooter was already paired) and what
     // forced a disconnect before you could connect a different scooter.
     //
-    // HomeScreen now owns both faces and swaps between them in place. The
-    // "dashboard" route is kept only as the full detail view reachable from it.
+    // HomeScreen owns both faces and swaps between them in place. The connected
+    // face is the dashboard; ScooterInfoScreen is the one full detail view.
     NavHost(navController = navController, startDestination = "home") {
         composable("home") {
             HomeScreen(
@@ -34,23 +33,7 @@ fun NavHostContainer(repository: ScooterRepository) {
                 onOpenSettings = { navController.navigate("settings") },
                 onOpenHudDisplay = { navController.navigate("hudDisplay") },
                 onOpenScooterInfo = { navController.navigate("scooterInfo") },
-                onOpenDashboard = { navController.navigate("dashboard") },
                 onOpenLogViewer = { navController.navigate("logViewer") }
-            )
-        }
-        composable("dashboard") {
-            DashboardScreen(
-                repository = repository,
-                onLogs = { navController.navigate("logViewer") },
-                onScooterInfo = { navController.navigate("scooterInfo") },
-                onDisconnect = {
-                    // Reachable only after a successful connection, so
-                    // BLUETOOTH_CONNECT has been granted by this point.
-                    @SuppressLint("MissingPermission")
-                    repository.disconnect()
-                    // Back to home, which will now show its disconnected face.
-                    navController.popBackStack()
-                }
             )
         }
         composable("settings") {

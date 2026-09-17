@@ -173,4 +173,15 @@
     <string name="battery_optimization_warning">⚠️ 電池優化已開啟</string>
     <string name="battery_optimization_message">Android 可能會在背景關閉應用程式，導致眼鏡連線中斷。點擊以關閉電池優化，確保連線穩定。</string>
     <string name="battery_optimization_exempt">關閉優化</string>
+    <!-- Home controls / feedback -->
+    <string name="control_state_unknown">狀態未知</string>
+    <string name="lock_confirm_title">要鎖定馬達嗎？</string>
+    <string name="lock_confirm_message">滑板車無法回報鎖定狀態，因此無法驗證。請僅在靜止時鎖定。</string>
+    <string name="msg_motor_locked">馬達已鎖定</string>
+    <string name="msg_motor_unlocked">馬達已解鎖</string>
+    <string name="msg_lock_failed">鎖定失敗：%1$s</string>
+    <string name="msg_unlock_failed">解鎖失敗：%1$s</string>
+    <string name="msg_light_on">尾燈開啟</string>
+    <string name="msg_light_off">尾燈關閉</string>
+    <string name="msg_light_failed">燈光控制失敗：%1$s</string>
 </resources>

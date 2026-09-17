@@ -128,6 +128,7 @@ fun SettingsScreen(
             // --- Glasses connection ---
             SettingsSection(stringResource(R.string.settings_section_gateway))
             GatewayRow(context)
+            WifiGatewayRow(context)
             BatteryOptimizationRow(context)
 
             // --- Advanced ---
@@ -217,6 +218,10 @@ private fun GatewayRow(context: Context) {
     var enabled by remember {
         mutableStateOf(com.m365bleapp.gateway.GatewayService.isRunning())
     }
+    // Shared safe enabler: checks Bluetooth + BLUETOOTH_ADVERTISE/CONNECT before
+    // starting the service, so this toggle can no longer start a gateway that
+    // then silently fails to advertise.
+    val enableGateway = rememberGatewayEnabler(setEnabled = { enabled = it })
 
     SettingsRow(
         icon = "📡",
@@ -229,11 +234,40 @@ private fun GatewayRow(context: Context) {
         trailing = {
             androidx.compose.material3.Switch(
                 checked = enabled,
+                onCheckedChange = { want -> enableGateway(want) }
+            )
+        },
+        onClick = { enableGateway(!enabled) }
+    )
+}
+
+/**
+ * WiFi gateway toggle — the lower-latency alternative transport to the BLE
+ * gateway. It lives here rather than on the riding screen because two transport
+ * switches on the glance surface is clutter; the rider picks a transport once.
+ */
+@Composable
+private fun WifiGatewayRow(context: Context) {
+    var enabled by remember {
+        mutableStateOf(com.m365bleapp.gateway.wifi.WifiGatewayService.isRunning())
+    }
+
+    SettingsRow(
+        icon = "📶",
+        title = stringResource(R.string.wifi_gateway_title),
+        subtitle = if (enabled) {
+            stringResource(R.string.wifi_gateway_starting)
+        } else {
+            stringResource(R.string.wifi_gateway_hint)
+        },
+        trailing = {
+            androidx.compose.material3.Switch(
+                checked = enabled,
                 onCheckedChange = { want ->
                     if (want) {
-                        com.m365bleapp.gateway.GatewayService.start(context)
+                        com.m365bleapp.gateway.wifi.WifiGatewayService.start(context)
                     } else {
-                        com.m365bleapp.gateway.GatewayService.stop(context)
+                        com.m365bleapp.gateway.wifi.WifiGatewayService.stop(context)
                     }
                     enabled = want
                 }
@@ -241,9 +275,9 @@ private fun GatewayRow(context: Context) {
         },
         onClick = {
             if (enabled) {
-                com.m365bleapp.gateway.GatewayService.stop(context)
+                com.m365bleapp.gateway.wifi.WifiGatewayService.stop(context)
             } else {
-                com.m365bleapp.gateway.GatewayService.start(context)
+                com.m365bleapp.gateway.wifi.WifiGatewayService.start(context)
             }
             enabled = !enabled
         }

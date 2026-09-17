@@ -58,6 +58,7 @@ fun HudScreen(
     connectionState: BleClient.ConnectionState,
     signalStrength: BleClient.SignalStrength = BleClient.SignalStrength.Good,
     isTelemetryFresh: Boolean = true,
+    displayPrefs: DisplayPrefs = DisplayPrefs(),
     onRetryClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -70,12 +71,22 @@ fun HudScreen(
             delay(30_000L) // Refresh every 30 seconds
         }
     }
-    // Colors optimized for glasses display (bright on dark)
+    // Colors optimised for the glasses display (bright on dark).
+    //
+    // The accent is cyan, matching the phone app's `AccentCyan`, so the two
+    // halves of the product read as one thing. It used to be a bright green
+    // here and cyan there.
     val backgroundColor = Color(0xFF000000)
-    val primaryColor = Color(0xFF00FF88)  // Bright green for speed
+    val primaryColor = Color(0xFF22D3EE)  // accent, matches phone AccentCyan
     val secondaryColor = Color(0xFFFFFFFF)
     val warningColor = Color(0xFFFFAA00)
     val errorColor = Color(0xFFFF4444)
+
+    // Rider-selected text scale (100 = normal). Applied to every size below so
+    // the whole layout grows together instead of one element outgrowing its
+    // column.
+    val scale = displayPrefs.textScalePercent / 100f
+    fun sz(base: Float) = (base * scale).sp
     
     Box(
         modifier = Modifier
@@ -111,6 +122,7 @@ fun HudScreen(
                     glassesBattery = glassesBattery,
                     signalStrength = signalStrength,
                     isTelemetryFresh = isTelemetryFresh,
+                    displayPrefs = displayPrefs,
                     primaryColor = primaryColor,
                     secondaryColor = secondaryColor,
                     warningColor = warningColor
@@ -204,13 +216,25 @@ private fun ConnectedHudView(
     glassesBattery: Int,
     signalStrength: BleClient.SignalStrength,
     isTelemetryFresh: Boolean,
+    displayPrefs: DisplayPrefs,
     primaryColor: Color,
     secondaryColor: Color,
     warningColor: Color
 ) {
     // Warning color for stale data or weak signal
     val staleWarningColor = Color(0xFFFF6600)
-    
+
+    // Rider-selected text scale. Each element scales with the rest so the
+    // three columns stay visually balanced; see HudScreen for why.
+    val scale = displayPrefs.textScalePercent / 100f
+
+    /** Choose a battery colour by level. Reserved for level, never decoration. */
+    fun levelColor(percent: Int, normal: Color) = when {
+        percent <= 15 -> Color.Red
+        percent <= 30 -> warningColor
+        else -> normal
+    }
+
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -218,133 +242,150 @@ private fun ConnectedHudView(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left: Time & Phone Battery & Glasses Battery
+        // ---- Left column: time, phone battery, glasses battery, link quality.
+        // Each row is independently switchable, so a rider who only wants the
+        // clock gets only the clock.
         Column(
             horizontalAlignment = Alignment.Start,
             modifier = Modifier.weight(1.2f)
         ) {
-            // Current Time - use Row to keep HH:mm on single line
-            Text(
-                text = if (timeData.hour > 0 || timeData.minute > 0) {
-                    timeData.formatTime()
-                } else {
-                    // Fallback to system time
-                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                },
-                color = secondaryColor,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Light,
-                maxLines = 1,
-                softWrap = false
-            )
-            
-            Spacer(modifier = Modifier.height(4.dp))
-            
-            // Phone Battery - keep on single line
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.wrapContentWidth()
-            ) {
+            if (displayPrefs.shows(DisplayField.TIME)) {
                 Text(
-                    text = "📱",
-                    fontSize = 14.sp
-                )
-                Spacer(modifier = Modifier.width(2.dp))
-                Text(
-                    text = "${timeData.phoneBattery}%",
-                    color = when {
-                        timeData.phoneBattery <= 15 -> Color.Red
-                        timeData.phoneBattery <= 30 -> warningColor
-                        else -> secondaryColor
+                    text = if (timeData.hour > 0 || timeData.minute > 0) {
+                        timeData.formatTime()
+                    } else {
+                        // Fallback to system time
+                        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                     },
-                    fontSize = 14.sp,
-                    fontWeight = if (timeData.phoneBattery <= 15) FontWeight.Bold else FontWeight.Normal,
+                    color = secondaryColor,
+                    fontSize = (22f * scale).sp,
+                    fontWeight = FontWeight.Light,
                     maxLines = 1,
                     softWrap = false
                 )
             }
-            
-            Spacer(modifier = Modifier.height(2.dp))
-            
-            // Glasses Battery - keep on single line
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.wrapContentWidth()
-            ) {
-                Text(
-                    text = "👓",
-                    fontSize = 14.sp
-                )
-                Spacer(modifier = Modifier.width(2.dp))
-                Text(
-                    text = "${glassesBattery}%",
-                    color = when {
-                        glassesBattery <= 15 -> Color.Red
-                        glassesBattery <= 30 -> warningColor
-                        else -> secondaryColor
-                    },
-                    fontSize = 14.sp,
-                    fontWeight = if (glassesBattery <= 15) FontWeight.Bold else FontWeight.Normal,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(2.dp))
-            
-            // Connection Quality Indicator
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.wrapContentWidth()
-            ) {
-                // Signal strength icon
-                val (signalIcon, signalColor) = when (signalStrength) {
-                    BleClient.SignalStrength.Good -> "📶" to Color(0xFF00FF88)
-                    BleClient.SignalStrength.Weak -> "📶" to warningColor
-                    BleClient.SignalStrength.Poor -> "📵" to Color.Red
-                }
-                Text(
-                    text = signalIcon,
-                    fontSize = 12.sp
-                )
-                
-                // Stale data warning
-                if (!isTelemetryFresh) {
-                    Spacer(modifier = Modifier.width(4.dp))
+
+            if (displayPrefs.shows(DisplayField.PHONE_BATTERY)) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.wrapContentWidth()
+                ) {
+                    Text(text = "📱", fontSize = (14f * scale).sp)
+                    Spacer(modifier = Modifier.width(2.dp))
                     Text(
-                        text = "⚠",
-                        fontSize = 12.sp,
-                        color = staleWarningColor
+                        text = "${timeData.phoneBattery}%",
+                        color = levelColor(timeData.phoneBattery, secondaryColor),
+                        fontSize = (16f * scale).sp,
+                        fontWeight = if (timeData.phoneBattery <= 15) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
+
+            if (displayPrefs.shows(DisplayField.GLASSES_BATTERY)) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.wrapContentWidth()
+                ) {
+                    Text(text = "👓", fontSize = (14f * scale).sp)
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text(
+                        text = "${glassesBattery}%",
+                        color = levelColor(glassesBattery, secondaryColor),
+                        fontSize = (16f * scale).sp,
+                        fontWeight = if (glassesBattery <= 15) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+
+            if (displayPrefs.shows(DisplayField.TEMPERATURE)) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "%.0f°C".format(telemetry.temperatureC),
+                    color = secondaryColor.copy(alpha = 0.8f),
+                    fontSize = (14f * scale).sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+
+            if (displayPrefs.shows(DisplayField.SIGNAL_QUALITY)) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.wrapContentWidth()
+                ) {
+                    val (signalIcon, signalColor) = when (signalStrength) {
+                        BleClient.SignalStrength.Good -> "📶" to Color(0xFF34D399)
+                        BleClient.SignalStrength.Weak -> "📶" to warningColor
+                        BleClient.SignalStrength.Poor -> "📵" to Color.Red
+                    }
+                    Text(
+                        text = signalIcon,
+                        fontSize = (12f * scale).sp,
+                        color = signalColor
+                    )
+
+                    if (!isTelemetryFresh) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "⚠",
+                            fontSize = (12f * scale).sp,
+                            color = staleWarningColor
+                        )
+                    }
+                }
+            }
         }
-        
-        // Center: Speed (Large)
+
+        // ---- Centre column: speed, the hero element.
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.weight(2f)
         ) {
-            // Speed value - reduced size to prevent overlap
-            Text(
-                text = "%.1f".format(telemetry.speedKmh),
-                color = primaryColor,
-                fontSize = 48.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                softWrap = false
-            )
-            
-            // Unit
-            Text(
-                text = "km/h",
-                color = secondaryColor.copy(alpha = 0.7f),
-                fontSize = 16.sp,
-                maxLines = 1
-            )
-            
-            // Scooter connection indicator
+            if (displayPrefs.shows(DisplayField.SPEED)) {
+                Text(
+                    text = "%.1f".format(telemetry.speedKmh),
+                    color = primaryColor,
+                    fontSize = (48f * scale).sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Text(
+                    text = "km/h",
+                    color = secondaryColor.copy(alpha = 0.7f),
+                    fontSize = (16f * scale).sp,
+                    maxLines = 1
+                )
+            }
+
+            if (displayPrefs.shows(DisplayField.AVG_SPEED)) {
+                Text(
+                    text = "avg %.1f".format(telemetry.avgSpeedKmh),
+                    color = secondaryColor.copy(alpha = 0.7f),
+                    fontSize = (14f * scale).sp,
+                    maxLines = 1
+                )
+            }
+
+            if (displayPrefs.shows(DisplayField.REMAINING_RANGE)) {
+                Text(
+                    text = "~%.1f km".format(telemetry.remainingRangeKm),
+                    color = secondaryColor.copy(alpha = 0.7f),
+                    fontSize = (14f * scale).sp,
+                    maxLines = 1
+                )
+            }
+
+            // Scooter link state is not a rider preference: if the scooter link
+            // is down, the numbers above are stale and saying so is not optional.
             if (telemetry.connectionState != GattProfile.STATE_READY) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
@@ -353,54 +394,63 @@ private fun ConnectedHudView(
                         else -> "❌ Scooter Offline"
                     },
                     color = warningColor,
-                    fontSize = 12.sp
+                    fontSize = (12f * scale).sp
                 )
             }
         }
-        
-        // Right: Scooter Battery
+
+        // ---- Right column: scooter battery, odometer, trip.
         Column(
             horizontalAlignment = Alignment.End,
             modifier = Modifier.weight(1.2f)
         ) {
-            // Scooter Battery - keep on single line
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.wrapContentWidth()
-            ) {
+            if (displayPrefs.shows(DisplayField.SCOOTER_BATTERY)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.wrapContentWidth()
+                ) {
+                    Text(text = "🛴", fontSize = (14f * scale).sp)
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text(
+                        text = "${telemetry.scooterBattery}%",
+                        color = levelColor(telemetry.scooterBattery, primaryColor),
+                        fontSize = (18f * scale).sp,
+                        fontWeight = if (telemetry.scooterBattery <= 15) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+
+            if (displayPrefs.shows(DisplayField.TOTAL_MILEAGE)) {
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "🛴",
-                    fontSize = 14.sp
-                )
-                Spacer(modifier = Modifier.width(2.dp))
-                Text(
-                    text = "${telemetry.scooterBattery}%",
-                    color = when {
-                        telemetry.scooterBattery <= 15 -> Color.Red
-                        telemetry.scooterBattery <= 30 -> warningColor
-                        else -> primaryColor
-                    },
-                    fontSize = 18.sp,
-                    fontWeight = if (telemetry.scooterBattery <= 15) FontWeight.Bold else FontWeight.Normal,
-                    maxLines = 1,
-                    softWrap = false
+                    text = telemetry.formatTotalMileage(),
+                    color = secondaryColor.copy(alpha = 0.8f),
+                    fontSize = (14f * scale).sp,
+                    maxLines = 1
                 )
             }
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            // Trip info (if riding)
-            if (telemetry.tripMeters > 0 || telemetry.tripSeconds > 0) {
+
+            if (displayPrefs.shows(DisplayField.TRIP_DISTANCE) &&
+                (telemetry.tripMeters > 0 || telemetry.tripSeconds > 0)
+            ) {
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = telemetry.formatTripDistance(),
                     color = secondaryColor.copy(alpha = 0.8f),
-                    fontSize = 12.sp,
+                    fontSize = (14f * scale).sp,
                     maxLines = 1
                 )
+            }
+
+            if (displayPrefs.shows(DisplayField.TRIP_TIME) &&
+                (telemetry.tripMeters > 0 || telemetry.tripSeconds > 0)
+            ) {
                 Text(
                     text = telemetry.formatTripTime(),
                     color = secondaryColor.copy(alpha = 0.6f),
-                    fontSize = 10.sp,
+                    fontSize = (12f * scale).sp,
                     maxLines = 1
                 )
             }

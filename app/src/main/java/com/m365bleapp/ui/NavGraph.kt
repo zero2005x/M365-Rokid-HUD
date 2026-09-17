@@ -1,16 +1,9 @@
 package com.m365bleapp.ui
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.os.Build
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import com.m365bleapp.vehicle.modelName
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -22,43 +15,33 @@ import com.m365bleapp.repository.ScooterRepository
 fun NavHostContainer(repository: ScooterRepository) {
     val navController = rememberNavController()
     val context = LocalContext.current
-    val unverified by repository.verificationPrompt.collectAsState()
-    unverified?.let { profile ->
-        AlertDialog(onDismissRequest = { repository.confirmUnverified(false) },
-            title = { Text("未驗證車款") },
-            text = { Text(modelName(profile.modelId) + " 已完成文件與單元測試，尚未經實車驗證。部分控制可能未提供，請確認後再連線。") },
-            confirmButton = { TextButton(onClick = { repository.confirmUnverified(true) }) { Text("使用實驗性車款") } },
-            dismissButton = { TextButton(onClick = { repository.confirmUnverified(false) }) { Text("取消") } })
-    }
-    val pairingDevice by repository.pairingDevice.collectAsState()
-    pairingDevice?.let { name ->
-        PairingSerialDialog(name, repository::submitPairingSerial, onCancel = {
-            @SuppressLint("MissingPermission")
-            repository.disconnect()
-        })
-    }
 
-    NavHost(navController = navController, startDestination = "scan") {
-        composable("scan") {
-            ScanScreen(
+    // The home page is the start destination and stays the start destination.
+    //
+    // There used to be two top-level screens — "scan" and "dashboard" — with a
+    // one-way navigation between them fired as soon as a scooter connected.
+    // That is what made the entry point ambiguous (the app began somewhere
+    // different depending on whether a scooter was already paired) and what
+    // forced a disconnect before you could connect a different scooter.
+    //
+    // HomeScreen owns both faces and swaps between them in place. The connected
+    // face is the dashboard; ScooterInfoScreen is the one full detail view.
+    NavHost(navController = navController, startDestination = "home") {
+        composable("home") {
+            HomeScreen(
                 repository = repository,
-                onNavigateToDashboard = { navController.navigate("dashboard") },
-                onNavigateToLanguage = { navController.navigate("language") },
-                onNavigateToLogViewer = { navController.navigate("logViewer") }
+                onOpenSettings = { navController.navigate("settings") },
+                onOpenScooterInfo = { navController.navigate("scooterInfo") }
             )
         }
-        composable("dashboard") {
-            DashboardScreen(
+        composable("settings") {
+            SettingsScreen(
                 repository = repository,
-                onLogs = { navController.navigate("logViewer") },
-                onScooterInfo = { navController.navigate("scooterInfo") },
-                onDisconnect = { 
-                    // Reachable only after a successful connection, so
-                    // BLUETOOTH_CONNECT has been granted by this point.
-                    @SuppressLint("MissingPermission")
-                    repository.disconnect()
-                    navController.popBackStack()
-                }
+                onBack = { navController.popBackStack() },
+                onOpenHudDisplay = { navController.navigate("hudDisplay") },
+                onOpenLanguage = { navController.navigate("language") },
+                onOpenLogViewer = { navController.navigate("logViewer") },
+                onOpenLogging = { navController.navigate("logs") }
             )
         }
         composable("scooterInfo") {
@@ -75,6 +58,12 @@ fun NavHostContainer(repository: ScooterRepository) {
         }
         composable("logViewer") {
             LogViewerScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable("hudDisplay") {
+            HudDisplayScreen(
+                store = com.m365bleapp.gateway.DisplayPrefsStore.getInstance(context),
                 onBack = { navController.popBackStack() }
             )
         }

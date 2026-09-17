@@ -19,14 +19,15 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,12 +39,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.m365bleapp.R
-import com.m365bleapp.vehicle.modelName
-import com.m365bleapp.vehicle.profileDisplayName
-import com.m365bleapp.ffi.ProfileDescriptor
 import com.m365bleapp.ble.BleManager
 import com.m365bleapp.gateway.GatewayService
 import com.m365bleapp.repository.ConnectionState
+import com.m365bleapp.protocol.Identification
+import com.m365bleapp.protocol.ScooterModelRegistry
+import com.m365bleapp.ui.components.ModelBadge
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.RadioButton
+import com.m365bleapp.protocol.ModelOverrideStore
 import com.m365bleapp.repository.ScooterRepository
 import com.m365bleapp.utils.BluetoothHelper
 import kotlinx.coroutines.CancellationException
@@ -120,23 +125,32 @@ private data class ScannedDevice(
     val name: String? = scanResult.scanRecord?.deviceName ?: scanResult.device.name,
     val address: String = scanResult.device.address
 ) {
-    companion object {
-        // Xiaomi M365 scooter service UUID
-        private val XIAOMI_SERVICE_UUID = android.os.ParcelUuid.fromString("0000fe95-0000-1000-8000-00805f9b34fb")
-        private const val XIAOMI_SCOOTER_NAME_PREFIX = "MIScooter"
-    }
-    
     /**
-     * Check if this device is likely a Xiaomi M365 scooter
+     * What this device looks like it is.
+     *
+     * Resolved through [ScooterModelRegistry] rather than a local name check.
+     *
+     * The old logic was a single hard-coded `MIScooter` prefix plus a `fe95`
+     * UUID test, which had two problems: it recognised exactly one family, and
+     * it presented the result as a fact. A name prefix cannot establish a
+     * protocol — the same model name spans several wire generations, and Xiaomi,
+     * Ninebot and current Segway models all advertise the same Nordic UART
+     * service — so the registry returns a confidence alongside the guess and the
+     * badge shows both.
      */
-    val isScooter: Boolean
-        get() {
-            // Check if name starts with MIScooter
-            if (name?.startsWith(XIAOMI_SCOOTER_NAME_PREFIX) == true) return true
-            // Check if device advertises Xiaomi service UUID
-            val serviceUuids = scanResult.scanRecord?.serviceUuids
-            return serviceUuids?.contains(XIAOMI_SERVICE_UUID) == true
-        }
+    val identification: Identification
+        get() = ScooterModelRegistry.resolve(advertisedName = name)
+
+    /**
+     * Whether this device is worth offering as a scooter.
+     *
+     * A manual override exists on the scan screen for the case this returns
+     * false: a scooter we cannot name is still a scooter, and the rider must be
+     * able to say so. Without that, an unidentifiable vehicle would be
+     * permanently unreachable.
+     */
+    val looksLikeScooter: Boolean
+        get() = !identification.isUnknown
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -144,8 +158,7 @@ private data class ScannedDevice(
 fun ScanScreen(
     repository: ScooterRepository,
     onNavigateToDashboard: () -> Unit,
-    onNavigateToLanguage: () -> Unit = {},
-    onNavigateToLogViewer: () -> Unit = {}
+    onNavigateToSettings: () -> Unit = {}
 ) {
     // val bleManager = BleManager(repository.context) // Removed
     
@@ -159,7 +172,7 @@ fun ScanScreen(
         derivedStateOf {
             devicesMap.values.sortedWith(
                 compareByDescending<ScannedDevice> { it.isRegistered }
-                    .thenByDescending { it.isScooter }
+                    .thenByDescending { it.looksLikeScooter }
                     .thenByDescending { 
                         // Named devices first, unknown last
                         !it.name.isNullOrBlank() && !it.name.startsWith("Unknown")
@@ -187,6 +200,17 @@ fun ScanScreen(
     
     // Fix: Use state to trigger recomposition when permissions are granted
     val context = LocalContext.current
+
+    // Manual model override.
+    //
+    // The app cannot identify every scooter from a scan — a name prefix covers
+    // several wire generations and the service list is not a discriminator — so
+    // on untested hardware automatic identification can fail outright. This is
+    // the rider's way to say what the scooter is, and without it such a scooter
+    // would be permanently unreachable.
+    val overrideStore = remember { ModelOverrideStore.getInstance(context) }
+    val modelOverride by overrideStore.override.collectAsState()
+    var overridePickerOpen by remember { mutableStateOf(false) }
     var permissionsGranted by remember { 
         mutableStateOf(
             permissions.all { 
@@ -306,7 +330,7 @@ fun ScanScreen(
                         existing.name != advertisedName) {
                         val scannedDevice = ScannedDevice(res, isReg)
                         // Log scooter discovery
-                        if (scannedDevice.isScooter || repository.experimentalModels.value) {
+                        if (scannedDevice.looksLikeScooter) {
                             Log.i("ScanScreen", "Found scooter: $advertisedName ($mac)")
                         }
                         devicesMap[mac] = scannedDevice
@@ -323,7 +347,6 @@ fun ScanScreen(
     
     // Connection State Observation
     val connState by repository.connectionState.collectAsState()
-    val experimental by repository.experimentalModels.collectAsState()
     
     LaunchedEffect(connState) {
         if (connState is ConnectionState.Ready) {
@@ -334,16 +357,27 @@ fun ScanScreen(
     // UI
     var selectedDevice by remember { mutableStateOf<ScannedDevice?>(null) }
     
+    if (overridePickerOpen) {
+        ModelOverrideDialog(
+            current = modelOverride,
+            onDismiss = { overridePickerOpen = false },
+            onSelect = { choice ->
+                overrideStore.set(choice)
+                overridePickerOpen = false
+            }
+        )
+    }
+
     if (selectedDevice != null) {
         ConnectDialog(
             repository = repository,
             device = selectedDevice!!.scanResult,
             onDismiss = { selectedDevice = null },
-            onConnect = { register, expected, encrypted, plain ->
+            onConnect = { register ->
                 val deviceToConnect = selectedDevice
                 if (deviceToConnect != null) {
                     // Connect is now non-blocking and runs on Repository scope
-                    repository.connect(deviceToConnect.scanResult.device.address, register, expected, encrypted, plain)
+                    repository.connect(deviceToConnect.scanResult.device.address, register)
                 }
                 selectedDevice = null
             }
@@ -387,16 +421,31 @@ fun ScanScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.scan_title)) },
                 actions = {
-                    IconButton(onClick = onNavigateToLogViewer) {
+                    // One labelled entry point instead of four unlabelled icons.
+                    //
+                    // The bar used to carry glasses-display, logs and language
+                    // as three equal-weight glyphs next to the title. Three
+                    // icons is already a guessing game, and it put diagnostics
+                    // on the same footing as riding controls. Everything now
+                    // lives in Settings, grouped and labelled.
+                    IconButton(onClick = { overridePickerOpen = true }) {
                         Icon(
-                            imageVector = Icons.Default.Description,
-                            contentDescription = stringResource(R.string.view_logs)
+                            imageVector = Icons.Default.Tune,
+                            // Tinted when an override is active, so an
+                            // overridden identification is visible at a glance
+                            // rather than silently changing what the app reads.
+                            tint = if (modelOverride != null) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                LocalContentColor.current
+                            },
+                            contentDescription = stringResource(R.string.model_override_title)
                         )
                     }
-                    IconButton(onClick = onNavigateToLanguage) {
+                    IconButton(onClick = onNavigateToSettings) {
                         Icon(
-                            imageVector = Icons.Default.Language,
-                            contentDescription = stringResource(R.string.language_title)
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.settings_title)
                         )
                     }
                 }
@@ -404,11 +453,6 @@ fun ScanScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("實驗性車款", Modifier.weight(1f))
-                Switch(checked = experimental, onCheckedChange = repository::setExperimentalModels)
-            }
-            if (experimental) Text("顯示附近所有藍牙裝置；連線後讀取序號辨識車款。", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
             if (showPermissionError) {
                 Text(stringResource(R.string.scan_bluetooth_permission_required), color = MaterialTheme.colorScheme.error)
             }
@@ -683,7 +727,8 @@ fun ScanScreen(
                     // Use cached properties from ScannedDevice for better performance
                     val displayName = scannedDevice.name ?: stringResource(R.string.unknown)
                     val isReg = scannedDevice.isRegistered
-                    val isScooter = scannedDevice.isScooter
+                    val identification = scannedDevice.identification
+                    val isScooter = scannedDevice.looksLikeScooter
                     val address = scannedDevice.address
                     val rssi = scannedDevice.rssi
                     
@@ -707,11 +752,20 @@ fun ScanScreen(
                             .clickable { selectedDevice = scannedDevice },
                         headlineContent = { 
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                // Show scooter icon for identified M365 devices
                                 if (isScooter) {
                                     Text("🛴 ", style = MaterialTheme.typography.bodyLarge)
                                 }
                                 Text(displayName)
+                                // Model + confidence badge.
+                                //
+                                // The confidence is part of the badge on purpose:
+                                // a name prefix identifies a family, not a
+                                // protocol, so presenting the model alone would
+                                // claim more than the scan can know.
+                                if (isScooter) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    ModelBadge(identification)
+                                }
                                 if (isReg) {
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Surface(
@@ -741,45 +795,52 @@ fun ConnectDialog(
     repository: ScooterRepository,
     device: ScanResult,
     onDismiss: () -> Unit,
-    onConnect: (Boolean, Int, Boolean, Boolean) -> Unit
+    onConnect: (Boolean) -> Unit
 ) {
+    // Registration is decided here, not asked.
+    //
+    // The dialog used to present a "Register" checkbox, which asked the rider to
+    // choose between two protocol paths they have no way to evaluate. The answer
+    // is not a preference — it is a fact the app already knows: a scooter with a
+    // stored token must log in, one without must register first. `register` is
+    // therefore derived from storage and passed straight through to connect().
     val isAlreadyRegistered = repository.isRegistered(device.device.address)
-    var register by remember { mutableStateOf(!isAlreadyRegistered) }
-    val experimental by repository.experimentalModels.collectAsState()
-    val profiles by repository.profiles.collectAsState()
-    var expected by remember { mutableStateOf(-1) }
-    var protocol by remember { mutableStateOf(0) }
+    // Kept as a recallable value so the confirm button reads from state rather
+    // than recomputing storage on every recomposition.
+    val register = !isAlreadyRegistered
+
     // The dialog is only shown for a device discovered by a permission-gated
     // scan, so BLUETOOTH_CONNECT is already held here.
     @SuppressLint("MissingPermission")
     val deviceName = device.device.name ?: stringResource(R.string.unknown)
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.dialog_connect_title, deviceName)) },
+        title = { Text(deviceName) },
         text = {
             Column {
-                Text(stringResource(R.string.dialog_address, device.device.address))
-                if (experimental) {
-                    ProfilePicker(profiles, expected, onExpected = { expected = it }, onProtocol = { protocol = it })
-                    ProtocolPicker(protocol, onProtocol = { protocol = it })
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = register, onCheckedChange = { register = it })
-                    Text(stringResource(R.string.dialog_register_checkbox))
-                }
-                if (register) {
+                Text(
+                    text = if (isAlreadyRegistered) {
+                        stringResource(R.string.dialog_connect_known)
+                    } else {
+                        stringResource(R.string.dialog_connect_new)
+                    },
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                if (!isAlreadyRegistered) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    // The one instruction that genuinely matters on a first
+                    // pairing, and the reason it is here rather than in a log.
                     Text(
-                        stringResource(R.string.dialog_register_warning),
-                        color = MaterialTheme.colorScheme.error,
+                        text = stringResource(R.string.dialog_register_warning),
+                        color = MaterialTheme.colorScheme.tertiary,
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
         },
         confirmButton = {
-            Button(onClick = { onConnect(register, expected, protocol == 1, protocol == 2) }) {
+            Button(onClick = { onConnect(register) }) {
                 Text(stringResource(R.string.connect))
             }
         },
@@ -793,37 +854,98 @@ fun ConnectDialog(
 
 
 
+/**
+ * Lets the rider pin the scooter model when identification fails or is wrong.
+ *
+ * The list is deliberately flat and labelled rather than grouped: a rider
+ * reaching for this is looking at a scooter that the app could not name, and a
+ * two-level picker would be a worse experience at exactly the moment they are
+ * already stuck.
+ *
+ * Models whose register layout this app cannot read are still listed. Selecting
+ * one is honest — it tells the app what the scooter *is*, even though the app
+ * will then report that it cannot read it. Hiding them would leave the rider
+ * wondering whether their scooter was in the list at all.
+ */
 @Composable
-private fun ProfilePicker(
-    profiles: List<ProfileDescriptor>,
-    expected: Int,
-    onExpected: (Int) -> Unit,
-    onProtocol: (Int) -> Unit,
+fun ModelOverrideDialog(
+    current: com.m365bleapp.protocol.ScooterModel?,
+    onDismiss: () -> Unit,
+    onSelect: (com.m365bleapp.protocol.ScooterModel?) -> Unit
 ) {
-    var menu by remember { mutableStateOf(false) }
-    val label = if (expected == -1) "自動辨識車款" else "手動設定（仍核對序號）：" + modelName(expected)
-    Box {
-        TextButton(onClick = { menu = true }) { Text(label) }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(text = { Text("自動辨識") }, onClick = { onExpected(-1); menu = false })
-            profiles.forEach { profile ->
-                DropdownMenuItem(text = { Text(profileDisplayName(profile)) }, onClick = {
-                    onExpected(profile.modelId)
-                    onProtocol(if (profile.cryptoStrategy == 2) 1 else 0)
-                    menu = false
-                })
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.model_override_title)) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    text = stringResource(R.string.model_override_explanation),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // "Automatic" first: clearing the override is the common case
+                // once a scooter has been identified correctly.
+                ModelOverrideRow(
+                    label = stringResource(R.string.model_override_automatic),
+                    detail = null,
+                    selected = current == null,
+                    onClick = { onSelect(null) }
+                )
+
+                for (model in com.m365bleapp.protocol.ScooterModelRegistry.selectableModels) {
+                    ModelOverrideRow(
+                        label = model.displayName,
+                        detail = if (model.producesTelemetry) {
+                            null
+                        } else {
+                            stringResource(R.string.model_override_no_readings)
+                        },
+                        selected = current == model,
+                        onClick = { onSelect(model) }
+                    )
+                }
             }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
-    }
+    )
 }
 
 @Composable
-private fun ProtocolPicker(protocol: Int, onProtocol: (Int) -> Unit) {
-    Text("連線方式（偵測邊界情況可手動覆寫）", style = MaterialTheme.typography.bodySmall)
-    listOf("自動選擇", "新款加密配對", "舊版明文（僅 ESx）").forEachIndexed { index, name ->
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = protocol == index, onClick = { onProtocol(index) })
-            Text(name)
+fun ModelOverrideRow(
+    label: String,
+    detail: String?,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(modifier = Modifier.width(4.dp))
+        Column {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+            )
+            if (detail != null) {
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

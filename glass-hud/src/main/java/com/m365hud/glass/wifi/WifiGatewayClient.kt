@@ -4,72 +4,39 @@ import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
+import com.m365hud.glass.DisplayPrefs
 import com.m365hud.glass.TelemetryData
 import com.m365hud.glass.TimeData
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.*
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
-/**
- * WiFi Client for connecting to M365 HUD Gateway (phone) over WiFi.
- * 
- * Features:
- * - mDNS/NSD service discovery (automatic gateway detection)
- * - Manual IP connection support
- * - Automatic reconnection with exponential backoff
- * - Same data format as BLE for compatibility
- * - Lower latency than BLE (typically < 10ms vs < 50ms)
- * 
- * Usage:
- * 1. Create instance: val client = WifiGatewayClient(context)
- * 2. Start discovery: client.startDiscovery()
- * 3. Or connect directly: client.connect("192.168.1.100", 8365)
- * 4. Observe: client.telemetry.collect { ... }
- */
+/** Service-owned NSD discovery and a single reconnecting TCP session. */
 class WifiGatewayClient(private val context: Context) {
-    
     companion object {
         private const val TAG = "WifiGatewayClient"
-        
-        // Service Discovery
         const val SERVICE_TYPE = "_m365hud._tcp."
         const val DEFAULT_PORT = 8365
-        
-        // Message Types (must match server)
         const val MSG_TYPE_TELEMETRY: Byte = 0x01
         const val MSG_TYPE_TIME: Byte = 0x02
         const val MSG_TYPE_COMMAND: Byte = 0x03
         const val MSG_TYPE_HEARTBEAT: Byte = 0x04
         const val MSG_TYPE_GLASSES_BATTERY: Byte = 0x05
-        
-        // Connection settings
+        const val MSG_TYPE_DISPLAY_PREFS: Byte = 0x06
         const val CONNECT_TIMEOUT_MS = 5000
         const val READ_TIMEOUT_MS = 10000
         const val HEARTBEAT_INTERVAL_MS = 3000L
         const val MAX_RECONNECT_DELAY_MS = 30000L
-        
-        // Data sizes — these MUST match what the parsers actually consume.
-        // parseTelemetry reads 18 bytes (2+1+2+4+2+2+1+2+2) and parseTimeData
-        // reads 4 (hour/minute/second/phoneBattery). The previous values of 20
-        // and 12 made the `payload.size < SIZE` guards reject every valid
-        // frame, silently dropping all data.
-        const val TELEMETRY_DATA_SIZE = 18
-        const val TIME_DATA_SIZE = 4
-
-        /** Largest accepted message; anything else is a protocol violation. */
-        const val MAX_MESSAGE_LENGTH = 1024
+        const val TELEMETRY_STALE_MS = 3000L
     }
-    
-    // Connection state
+
     sealed class ConnectionState {
         object Disconnected : ConnectionState()
         object Discovering : ConnectionState()
@@ -77,492 +44,244 @@ class WifiGatewayClient(private val context: Context) {
         data class Connected(val address: String) : ConnectionState()
         data class Error(val message: String) : ConnectionState()
     }
-    
-    // Signal strength (based on latency for WiFi)
-    enum class SignalStrength {
-        Excellent,  // < 10ms
-        Good,       // < 30ms
-        Fair,       // < 100ms
-        Poor        // > 100ms
-    }
-    
-    // State
-    // @Volatile: these are mutated by the connect, receive, heartbeat,
-    // reconnect and disconnect coroutines on different Dispatchers.IO threads.
-    // Without it a coroutine can observe a stale (already closed) stream.
-    @Volatile private var socket: Socket? = null
-    @Volatile private var outputStream: DataOutputStream? = null
-    @Volatile private var inputStream: DataInputStream? = null
-    private val isRunning = AtomicBoolean(false)
+    enum class SignalStrength { Excellent, Good, Fair, Poor }
 
-    /**
-     * Guards against overlapping connection attempts.
-     *
-     * `isRunning` is only set once the socket is up, so during a connect
-     * attempt or a reconnect delay it is still false — manual connect(), the
-     * NSD-resolved connect and the auto-reconnect coroutine could all slip past
-     * the guard at once and create competing sockets.
-     */
-    private val isConnecting = AtomicBoolean(false)
-
-    // Recreated by disconnect(): a cancelled scope silently drops every later
-    // launch, which made the client unusable after the first disconnect even
-    // though connect() stays public.
     private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    
-    // NSD
-    private var nsdManager: NsdManager? = null
-    private var discoveryListener: NsdManager.DiscoveryListener? = null
-    private var resolveListener: NsdManager.ResolveListener? = null
-    
-    // Discovered gateway
-    @Volatile private var gatewayAddress: String? = null
-    @Volatile private var gatewayPort: Int = DEFAULT_PORT
-    
-    // Reconnection
-    @Volatile private var reconnectDelay = 1000L
-    @Volatile private var shouldReconnect = true
-    
-    // State flows
+    private var connectionJob: Job? = null
+    private val generation = AtomicLong()
+    @Volatile private var socket: Socket? = null
+    @Volatile private var output: DataOutputStream? = null
+    @Volatile private var lastTelemetryMs = 0L
+    @Volatile private var latencyMs = Long.MAX_VALUE
+    private var discovery: NsdManager.DiscoveryListener? = null
+    private var nsd: NsdManager? = null
+
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
-    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
-    
+    val connectionState = _connectionState.asStateFlow()
     private val _telemetry = MutableStateFlow(TelemetryData())
-    val telemetry: StateFlow<TelemetryData> = _telemetry.asStateFlow()
-    
+    val telemetry = _telemetry.asStateFlow()
     private val _timeData = MutableStateFlow(TimeData())
-    val timeData: StateFlow<TimeData> = _timeData.asStateFlow()
-    
-    private val _signalStrength = MutableStateFlow(SignalStrength.Good)
-    val signalStrength: StateFlow<SignalStrength> = _signalStrength.asStateFlow()
-    
+    val timeData = _timeData.asStateFlow()
+    private val _displayPrefs = MutableStateFlow(DisplayPrefs())
+    val displayPrefs = _displayPrefs.asStateFlow()
+    private val _signalStrength = MutableStateFlow(SignalStrength.Poor)
+    val signalStrength = _signalStrength.asStateFlow()
     private val _isTelemetryFresh = MutableStateFlow(false)
-    val isTelemetryFresh: StateFlow<Boolean> = _isTelemetryFresh.asStateFlow()
-    
-    // Latency monitoring
-    @Volatile private var lastTelemetryUpdateMs: Long = 0
-    @Volatile private var telemetryUpdateCount: Int = 0
-    @Volatile private var lastLogTimeMs: Long = 0
-    @Volatile private var lastHeartbeatLatencyMs: Long = 0
-    
-    /**
-     * Start NSD discovery to find gateway automatically
-     */
-    fun startDiscovery() {
-        Log.i(TAG, "Starting NSD discovery...")
+    val isTelemetryFresh = _isTelemetryFresh.asStateFlow()
+
+    // NOSONAR kotlin:S3776 — the NSD discovery listener is one object whose
+    // nested callbacks all share the same epoch/generation guard; pulling them
+    // apart would scatter that guard and the resolve→connect hand-off.
+    @Synchronized
+    fun startDiscovery() { // NOSONAR
+        if (discovery != null || connectionJob?.isActive == true) return
+        val epoch = generation.get()
         _connectionState.value = ConnectionState.Discovering
-        
+        val manager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+        nsd = manager
+        val listener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(type: String) = Unit
+            override fun onDiscoveryStopped(type: String) = Unit
+            override fun onServiceLost(service: NsdServiceInfo) = Unit // The socket detects actual loss.
+            override fun onStopDiscoveryFailed(type: String, code: Int) {
+                Log.w(TAG, "NSD stop failed: $code")
+            }
+            override fun onStartDiscoveryFailed(type: String, code: Int) {
+                synchronized(this@WifiGatewayClient) {
+                    if (generation.get() != epoch) return
+                    discovery = null
+                    _connectionState.value = ConnectionState.Error("Discovery failed: $code")
+                }
+            }
+            override fun onServiceFound(service: NsdServiceInfo) {
+                if (generation.get() != epoch || !service.serviceName.contains("M365-HUD")) return
+                @Suppress("DEPRECATION")
+                manager.resolveService(service, object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(info: NsdServiceInfo, code: Int) {
+                        Log.w(TAG, "NSD resolve failed: $code")
+                    }
+                    override fun onServiceResolved(info: NsdServiceInfo) {
+                        val host = if (Build.VERSION.SDK_INT >= 34) {
+                            info.hostAddresses.firstOrNull()?.hostAddress
+                        } else {
+                            @Suppress("DEPRECATION")
+                            info.host?.hostAddress
+                        }
+                        synchronized(this@WifiGatewayClient) {
+                            // A delayed NSD callback from a stopped run must not reconnect it.
+                            if (generation.get() == epoch && host != null) connect(host, info.port)
+                        }
+                    }
+                })
+            }
+        }
+        discovery = listener
         try {
-            nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
-            
-            discoveryListener = object : NsdManager.DiscoveryListener {
-                override fun onDiscoveryStarted(serviceType: String) {
-                    Log.i(TAG, "NSD discovery started for $serviceType")
-                }
-                
-                override fun onServiceFound(service: NsdServiceInfo) {
-                    Log.i(TAG, "Service found: ${service.serviceName}")
-                    if (service.serviceName.contains("M365-HUD")) {
-                        resolveService(service)
-                    }
-                }
-                
-                override fun onServiceLost(service: NsdServiceInfo) {
-                    Log.w(TAG, "Service lost: ${service.serviceName}")
-                    if (gatewayAddress != null) {
-                        // Gateway lost, trigger reconnection
-                        handleDisconnection()
-                    }
-                }
-                
-                override fun onDiscoveryStopped(serviceType: String) {
-                    Log.i(TAG, "NSD discovery stopped")
-                }
-                
-                override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                    Log.e(TAG, "NSD discovery start failed: $errorCode")
-                    _connectionState.value = ConnectionState.Error("Discovery failed: $errorCode")
-                }
-                
-                override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                    Log.e(TAG, "NSD discovery stop failed: $errorCode")
-                }
-            }
-            
-            nsdManager?.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discoveryListener)
-            
+            manager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start discovery", e)
-            _connectionState.value = ConnectionState.Error(e.message ?: "Discovery error")
+            discovery = null
+            _connectionState.value = ConnectionState.Error(e.message ?: "Discovery failed")
         }
     }
-    
-    /**
-     * Resolve discovered service
-     */
-    private fun resolveService(service: NsdServiceInfo) {
-        resolveListener = object : NsdManager.ResolveListener {
-            override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                val host = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    serviceInfo.hostAddresses.firstOrNull()?.hostAddress
-                } else {
-                    @Suppress("DEPRECATION")
-                    serviceInfo.host?.hostAddress
-                }
-                val port = serviceInfo.port
-                Log.i(TAG, "Service resolved: $host:$port")
-                
-                if (host != null) {
-                    gatewayAddress = host
-                    gatewayPort = port
-                    
-                    // Connect to resolved address
-                    scope.launch {
-                        connect(host, port)
-                    }
-                }
-            }
-            
-            override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                Log.e(TAG, "Service resolve failed: $errorCode")
-            }
-        }
-        
-        @Suppress("DEPRECATION")
-        nsdManager?.resolveService(service, resolveListener)
-    }
-    
-    /**
-     * Connect to gateway directly by IP and port
-     */
-    fun connect(address: String, port: Int = DEFAULT_PORT) {
-        if (isRunning.get() || !isConnecting.compareAndSet(false, true)) {
-            Log.w(TAG, "Already connected or connecting")
-            return
-        }
 
-        scope.launch {
-            try {
-                connectInternal(address, port)
-            } finally {
-                isConnecting.set(false)
-            }
-        }
-    }
-    
-    /**
-     * Internal connection logic
-     */
-    private suspend fun connectInternal(address: String, port: Int) {
-        try {
-            Log.i(TAG, "Connecting to $address:$port...")
-            _connectionState.value = ConnectionState.Connecting(address)
-            
-            // Create socket with timeout
-            socket = Socket()
-            socket?.connect(InetSocketAddress(address, port), CONNECT_TIMEOUT_MS)
-            socket?.soTimeout = READ_TIMEOUT_MS
-            socket?.tcpNoDelay = true  // Disable Nagle's algorithm for lower latency
-            
-            outputStream = DataOutputStream(socket?.getOutputStream())
-            inputStream = DataInputStream(socket?.getInputStream())
-            
-            isRunning.set(true)
-            shouldReconnect = true
-            reconnectDelay = 1000L  // Reset backoff
-            
-            gatewayAddress = address
-            gatewayPort = port
-            
-            _connectionState.value = ConnectionState.Connected(address)
-            Log.i(TAG, "Connected to gateway at $address:$port")
-            
-            // Start heartbeat
-            startHeartbeat()
-            
-            // Start receiving data
-            receiveLoop()
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Connection failed", e)
-            _connectionState.value = ConnectionState.Error(e.message ?: "Connection failed")
-            handleDisconnection()
-        }
-    }
-    
-    /**
-     * Receive loop - read incoming messages
-     */
-    private suspend fun receiveLoop() {
-        try {
-            val input = inputStream ?: return
-            
-            while (isRunning.get()) {
+    // NOSONAR kotlin:S3776 — a single TCP reconnect state machine: connect,
+    // concurrent heartbeat + freshness + read loops inside one coroutineScope,
+    // exponential backoff, and epoch-guarded socket teardown. The generation
+    // checks are only correct while these stay in one lexical scope; decomposing
+    // would move shared mutable state (socket/output) across the guard.
+    @Synchronized
+    fun connect(address: String, port: Int = DEFAULT_PORT) { // NOSONAR
+        if (connectionJob?.isActive == true) return
+        val epoch = generation.get()
+        connectionJob = scope.launch {
+            var retryMs = 1000L
+            while (isActive && generation.get() == epoch) {
+                val current = Socket()
+                synchronized(this@WifiGatewayClient) {
+                    if (generation.get() != epoch) {
+                        current.close()
+                        return@launch
+                    }
+                    socket = current // disconnect can interrupt even a pending connect.
+                    _connectionState.value = ConnectionState.Connecting(address)
+                }
                 try {
-                    // Read message length
-                    val length = input.readInt()
-                    if (length <= 0 || length > MAX_MESSAGE_LENGTH) {
-                        // The payload cannot be skipped once the declared
-                        // length is bogus, so `continue` would leave every
-                        // later readInt()/readFully() permanently misaligned on
-                        // the stream. Treat it as fatal for this connection.
-                        Log.w(TAG, "Invalid message length: $length, closing connection")
-                        break
+                    current.connect(InetSocketAddress(address, port), CONNECT_TIMEOUT_MS)
+                    current.soTimeout = READ_TIMEOUT_MS
+                    current.tcpNoDelay = true
+                    ensureActive()
+                    val writer = DataOutputStream(current.getOutputStream())
+                    synchronized(this@WifiGatewayClient) {
+                        if (generation.get() != epoch) return@launch
+                        output = writer
+                        _connectionState.value = ConnectionState.Connected(address)
+                        _isTelemetryFresh.value = false
+                        lastTelemetryMs = 0
                     }
+                    retryMs = 1000L
+                    coroutineScope {
+                        val heartbeat = launch {
+                            while (isActive) {
+                                delay(HEARTBEAT_INTERVAL_MS)
+                                send(writer, MSG_TYPE_HEARTBEAT,
+                                    ByteBuffer.allocate(8).putLong(System.currentTimeMillis()).array())
+                            }
+                        }
+                        val freshness = launch {
+                            while (isActive) {
+                                delay(500)
+                                synchronized(this@WifiGatewayClient) {
+                                    if (generation.get() == epoch) {
+                                        _isTelemetryFresh.value = lastTelemetryMs != 0L &&
+                                            SystemClock.elapsedRealtime() - lastTelemetryMs < TELEMETRY_STALE_MS
+                                    }
+                                }
+                            }
+                        }
+                        // A failed heartbeat must interrupt a blocking socket read.
+                        heartbeat.invokeOnCompletion { if (it != null) current.close() }
+                        try {
+                            val input = DataInputStream(current.getInputStream())
+                            while (isActive) {
+                                val frame = WifiHudProtocol.readFrame(input)
+                                synchronized(this@WifiGatewayClient) {
+                                    if (generation.get() == epoch) process(frame)
+                                }
+                            }
+                        } finally {
+                            heartbeat.cancel()
+                            freshness.cancel()
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    synchronized(this@WifiGatewayClient) {
+                        if (generation.get() == epoch) {
+                            _connectionState.value = ConnectionState.Error(e.message ?: "Connection lost")
+                        }
+                    }
+                } finally {
+                    current.close()
+                    synchronized(this@WifiGatewayClient) {
+                        if (generation.get() == epoch) {
+                            output = null
+                            socket = null
+                            _isTelemetryFresh.value = false
+                        }
+                    }
+                }
+                // Read timeouts also close the session: a partial TCP frame cannot
+                // safely be resumed at its length prefix after a timeout.
+                delay(retryMs)
+                retryMs = (retryMs * 2).coerceAtMost(MAX_RECONNECT_DELAY_MS)
+            }
+        }
+    }
 
-                    // Read message type
-                    val type = input.readByte()
-                    
-                    // Read payload
-                    val payload = ByteArray(length - 1)
-                    input.readFully(payload)
-                    
-                    // Process message
-                    processMessage(type, payload)
-                    
-                } catch (e: java.net.SocketTimeoutException) {
-                    // Timeout - check if we should continue
-                    if (!isRunning.get()) break
-                } catch (e: java.io.EOFException) {
-                    Log.i(TAG, "Server disconnected")
-                    break
+    private fun process(frame: WifiHudProtocol.Frame) {
+        when (frame.type) {
+            MSG_TYPE_TELEMETRY -> WifiHudProtocol.telemetry(frame.payload)?.let {
+                _telemetry.value = it
+                lastTelemetryMs = SystemClock.elapsedRealtime()
+                _isTelemetryFresh.value = true
+            }
+            MSG_TYPE_TIME -> if (frame.payload.size >= 4) {
+                _timeData.value = TimeData.fromBytes(frame.payload)
+            }
+            MSG_TYPE_DISPLAY_PREFS -> _displayPrefs.value = DisplayPrefs.fromBytes(frame.payload)
+            MSG_TYPE_HEARTBEAT -> if (frame.payload.size >= 8) {
+                latencyMs = (System.currentTimeMillis() - ByteBuffer.wrap(frame.payload).long).coerceAtLeast(0)
+                _signalStrength.value = when {
+                    latencyMs < 10 -> SignalStrength.Excellent
+                    latencyMs < 30 -> SignalStrength.Good
+                    latencyMs < 100 -> SignalStrength.Fair
+                    else -> SignalStrength.Poor
                 }
             }
-            
-        } catch (e: Exception) {
-            if (isRunning.get()) {
-                Log.e(TAG, "Receive loop error", e)
-            }
-        } finally {
-            handleDisconnection()
         }
     }
-    
-    /**
-     * Process incoming message
-     */
-    private fun processMessage(type: Byte, payload: ByteArray) {
-        when (type) {
-            MSG_TYPE_TELEMETRY -> {
-                parseTelemetry(payload)
-            }
-            MSG_TYPE_TIME -> {
-                parseTimeData(payload)
-            }
-            MSG_TYPE_HEARTBEAT -> {
-                // Calculate latency from heartbeat response
-                if (payload.size >= 8) {
-                    val buffer = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
-                    val sentTime = buffer.long
-                    lastHeartbeatLatencyMs = System.currentTimeMillis() - sentTime
-                    updateSignalStrength(lastHeartbeatLatencyMs)
-                }
-            }
-            else -> {
-                Log.w(TAG, "Unknown message type: $type")
-            }
+
+    private fun send(writer: DataOutputStream, type: Byte, payload: ByteArray) {
+        synchronized(writer) {
+            writer.writeInt(payload.size + 1)
+            writer.writeByte(type.toInt())
+            writer.write(payload)
+            writer.flush()
         }
     }
-    
-    /**
-     * Parse telemetry data (same format as BLE)
-     */
-    private fun parseTelemetry(payload: ByteArray) {
-        if (payload.size < TELEMETRY_DATA_SIZE) {
-            Log.w(TAG, "Invalid telemetry size: ${payload.size}")
-            return
-        }
-        
-        val now = System.currentTimeMillis()
-        telemetryUpdateCount++
-        
-        // Log stats every 5 seconds
-        if (now - lastLogTimeMs >= 5000L && lastLogTimeMs > 0) {
-            val rate = telemetryUpdateCount * 1000.0 / (now - lastLogTimeMs)
-            Log.d(TAG, "WIFI STATS: ${String.format("%.1f", rate)} updates/sec, latency: ${lastHeartbeatLatencyMs}ms")
-            telemetryUpdateCount = 0
-            lastLogTimeMs = now
-        }
-        if (lastLogTimeMs == 0L) lastLogTimeMs = now
-        lastTelemetryUpdateMs = now
-        _isTelemetryFresh.value = true
-        
-        // Parse data
-        val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
-        
-        val data = TelemetryData(
-            speedKmh = buffer.short.toInt() / 100f,
-            scooterBattery = buffer.get().toInt() and 0xFF,
-            temperatureC = buffer.short.toInt() / 10f,
-            totalMileageM = buffer.int.toLong(),
-            avgSpeedKmh = buffer.short.toInt() / 100f,
-            remainingRangeKm = buffer.short.toInt() / 10f,
-            connectionState = buffer.get().toInt(),
-            tripMeters = buffer.short.toInt(),
-            tripSeconds = buffer.short.toInt()
-        )
-        
-        _telemetry.value = data
-    }
-    
-    /**
-     * Parse time data
-     */
-    private fun parseTimeData(payload: ByteArray) {
-        if (payload.size < TIME_DATA_SIZE) {
-            Log.w(TAG, "Invalid time data size: ${payload.size}")
-            return
-        }
-        
-        val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
-        
-        val data = TimeData(
-            hour = buffer.get().toInt() and 0xFF,
-            minute = buffer.get().toInt() and 0xFF,
-            second = buffer.get().toInt() and 0xFF,
-            phoneBattery = buffer.get().toInt() and 0xFF
-        )
-        
-        _timeData.value = data
-    }
-    
-    /**
-     * Update signal strength based on latency
-     */
-    private fun updateSignalStrength(latencyMs: Long) {
-        _signalStrength.value = when {
-            latencyMs < 10 -> SignalStrength.Excellent
-            latencyMs < 30 -> SignalStrength.Good
-            latencyMs < 100 -> SignalStrength.Fair
-            else -> SignalStrength.Poor
-        }
-    }
-    
-    /**
-     * Start heartbeat coroutine
-     */
-    private fun startHeartbeat() {
+
+    fun sendGlassesBattery(level: Int) {
+        val writer = output ?: return
         scope.launch {
-            while (isRunning.get()) {
-                delay(HEARTBEAT_INTERVAL_MS)
-                sendHeartbeat()
-            }
+            try { send(writer, MSG_TYPE_GLASSES_BATTERY, byteArrayOf(level.coerceIn(0, 100).toByte())) }
+            catch (e: Exception) { Log.w(TAG, "Battery report failed", e) }
         }
     }
-    
-    /**
-     * Send heartbeat to server
-     */
-    private fun sendHeartbeat() {
-        try {
-            val output = outputStream ?: return
-            val timestamp = System.currentTimeMillis()
-            val buffer = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN)
-            buffer.putLong(timestamp)
-            
-            synchronized(output) {
-                output.writeInt(9)  // 1 byte type + 8 bytes timestamp
-                output.writeByte(MSG_TYPE_HEARTBEAT.toInt())
-                output.write(buffer.array())
-                output.flush()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send heartbeat", e)
-        }
-    }
-    
-    /**
-     * Send glasses battery level to server
-     */
-    fun sendGlassesBattery(batteryLevel: Int) {
-        try {
-            val output = outputStream ?: return
-            
-            synchronized(output) {
-                output.writeInt(2)  // 1 byte type + 1 byte battery
-                output.writeByte(MSG_TYPE_GLASSES_BATTERY.toInt())
-                output.writeByte(batteryLevel)
-                output.flush()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send glasses battery", e)
-        }
-    }
-    
-    /**
-     * Handle disconnection and trigger reconnection
-     */
-    private fun handleDisconnection() {
-        val wasRunning = isRunning.getAndSet(false)
-        
-        // Cleanup
-        try {
-            socket?.close()
-        } catch (e: Exception) { }
-        socket = null
-        outputStream = null
-        inputStream = null
-        
-        _isTelemetryFresh.value = false
-        _connectionState.value = ConnectionState.Disconnected
-        
-        // Reconnect if should
-        if (wasRunning && shouldReconnect && gatewayAddress != null) {
-            scope.launch {
-                Log.i(TAG, "Reconnecting in ${reconnectDelay}ms...")
-                delay(reconnectDelay)
-                
-                // Exponential backoff
-                reconnectDelay = (reconnectDelay * 2).coerceAtMost(MAX_RECONNECT_DELAY_MS)
-                
-                gatewayAddress?.let { address ->
-                    connectInternal(address, gatewayPort)
-                }
-            }
-        }
-    }
-    
-    /**
-     * Disconnect and stop
-     */
+
+    @Synchronized
     fun disconnect() {
-        Log.i(TAG, "Disconnecting...")
-        shouldReconnect = false
-        isRunning.set(false)
-        
-        // Stop discovery
-        try {
-            discoveryListener?.let { listener ->
-                nsdManager?.stopServiceDiscovery(listener)
-            }
-        } catch (e: Exception) { }
-        
-        // Close socket
-        try {
-            socket?.close()
-        } catch (e: Exception) { }
-        
-        socket = null
-        outputStream = null
-        inputStream = null
-        nsdManager = null
-        discoveryListener = null
-        resolveListener = null
-        
+        generation.incrementAndGet()
+        discovery?.let { listener ->
+            try { nsd?.stopServiceDiscovery(listener) }
+            catch (e: Exception) { Log.w(TAG, "NSD cleanup failed", e) }
+        }
+        discovery = null
+        nsd = null
         scope.cancel()
-        // Recreate so the client can be reconnected later.
+        socket?.close()
+        socket = null
+        output = null
+        connectionJob = null
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        isConnecting.set(false)
         _connectionState.value = ConnectionState.Disconnected
+        _isTelemetryFresh.value = false
+        _telemetry.value = TelemetryData()
+        _timeData.value = TimeData()
+        _displayPrefs.value = DisplayPrefs()
+        _signalStrength.value = SignalStrength.Poor
     }
-    
-    /**
-     * Check if connected
-     */
-    fun isConnected(): Boolean = isRunning.get() && socket?.isConnected == true
-    
-    /**
-     * Get last known latency
-     */
-    fun getLatencyMs(): Long = lastHeartbeatLatencyMs
+
+    fun isConnected(): Boolean = connectionState.value is ConnectionState.Connected
+    fun getLatencyMs(): Long = latencyMs
 }

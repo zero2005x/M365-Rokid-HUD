@@ -1,4 +1,10 @@
-use super::{MiSession, Payload};
+// The `MiSession` methods at the bottom drive a real radio; the info types and
+// their payload decoders above are pure protocol and stay available without the
+// `ble` feature, so the multi-model register tables can be tested on a host.
+#[cfg(feature = "ble")]
+use super::MiSession;
+use super::Payload;
+#[cfg(feature = "ble")]
 use super::commands::{ScooterCommand, Direction, Attribute, ReadWrite};
 
 use std::time::Duration;
@@ -47,29 +53,39 @@ impl TryFrom<Payload> for MotorInfo {
   type Error = anyhow::Error;
 
   fn try_from(payload: Payload) -> Result<Self, Self::Error> {
-    Self::from_profile(payload, &crate::profile::M365Profile)
+    let mut payload = payload;
+    payload.pop_head()?;
+    payload.pad_bytes(8)?; // ---Var179=¿workmode?=0x0000
+
+    let battery_percent = payload.pop_u16()?; // ---Var180=%batt=0x003d=61%
+    // Speed, trip distance and uptime are unsigned counters on the wire, like
+    // the average-speed field next to them. Reading them as i16 made any value
+    // with bit 15 set wrap negative: speeds above 32.8 km/h became negative,
+    // trips over 32.8 km became negative, and `uptime as u64` turned a negative
+    // uptime into a value near u64::MAX (a Duration of billions of years).
+    let speed_kmh = payload.pop_u16()? as f32 / 1000.0; // ---Var181=¿velocidad metros/h?=0x0000=0km/h
+    let speed_average_kmh = payload.pop_u16()? as f32 / 1000.0; // ---Var182=¿velocidad prom m/h?=0x4650=18km/h
+    let total_distance_m = payload.pop_u32()?; // ---Var183-184=m-total=0x0000088a=2.1km
+    let trip_distance_m = payload.pop_u16()?; // ---Var185=¿?=0x0005=5
+    let uptime_s = payload.pop_u16()?; // ---Var186=¿?=0x027c=636
+    // Temperature is genuinely signed (it can go below 0°C).
+    let frame_temperature = payload.pop_i16()? as f32 / 10.0; // 	---Var187=temp*10=0x0118=28°C
+
+    Ok(
+      MotorInfo {
+        battery_percent,
+        speed_kmh,
+        speed_average_kmh,
+        total_distance_m,
+        trip_distance_m,
+        uptime: Duration::from_secs(uptime_s as u64),
+        frame_temperature
+      }
+    )
   }
 }
 
-impl MotorInfo {
-  /// 舊 API 的輸出型別保留，數值欄位由車款資料表解碼。
-  pub fn from_profile(payload: Payload, profile: &dyn crate::profile::ScooterProfile) -> Result<Self> {
-    let bytes = payload.into_bytes();
-    let data = bytes.get(3..).ok_or_else(|| anyhow::anyhow!("Truncated response header"))?;
-    let t = profile.telemetry_decoder().decode(profile.register_map(), data)
-      .map_err(anyhow::Error::msg)?;
-    Ok(Self {
-      battery_percent: t.battery_percent as u16,
-      speed_kmh: t.speed_kmh as f32,
-      speed_average_kmh: t.average_speed_kmh as f32,
-      total_distance_m: t.odometer_m as u32,
-      trip_distance_m: t.trip_m as u16,
-      uptime: Duration::from_secs(t.uptime_s as u64),
-      frame_temperature: t.temperature_c as f32,
-    })
-  }
-}
-
+#[cfg(feature = "ble")]
 impl MiSession {
   pub async fn general_info(&mut self) -> Result<GeneralInfo> {
     tracing::debug!("Reading general information");
@@ -128,6 +144,6 @@ impl MiSession {
 
     let payload = self.read(3).await?;
 
-    MotorInfo::from_profile(payload, self.profile())
+    MotorInfo::try_from(payload)
   }
 }

@@ -31,6 +31,8 @@
     
     <!-- ConnectDialog -->
     <string name="dialog_connect_title">Connect to %1$s</string>
+    <string name="dialog_connect_known">Ready to connect. This scooter is already paired with your phone, so it will be recognised automatically.</string>
+    <string name="dialog_connect_new">First time connecting to this scooter. It needs to be paired once before it can be used with this app.</string>
     <string name="dialog_address">Address: %1$s</string>
     <string name="dialog_register_checkbox">Register (First Time Binding)</string>
     <string name="dialog_register_warning">WARNING: Registration will unpair this scooter from other apps (e.g., Mi Home). Proceed only if you own this device.</string>
@@ -60,6 +62,12 @@
     <string name="gateway_notification_text">Broadcasting telemetry to Rokid Glasses</string>
     <string name="glasses_connected">Glasses Connected ✓</string>
     <string name="glasses_connect_hint">Turn on to let glasses connect first</string>
+
+    <!-- Demo ride (hardware-free testing) -->
+    <string name="demo_section">Testing</string>
+    <string name="demo_title">Demo ride (no scooter)</string>
+    <string name="demo_running">Simulated telemetry — not a real scooter</string>
+    <string name="demo_hint">Feed fake telemetry to test the HUD without a scooter</string>
     
     <!-- WiFi Gateway -->
     <string name="wifi_gateway_title">WiFi Gateway</string>
@@ -168,4 +176,108 @@
     <string name="battery_optimization_warning">⚠️ Battery optimization is enabled</string>
     <string name="battery_optimization_message">Android may kill the app in background, causing glasses connection to drop. Tap to disable battery optimization for stable connection.</string>
     <string name="battery_optimization_exempt">Disable Optimization</string>
+
+    <!-- Glasses display settings -->
+    <string name="hud_display_title">Glasses Display</string>
+    <string name="hud_display_subtitle">Choose what the glasses show while you ride.</string>
+    <string name="hud_display_section_scooter">Scooter</string>
+    <string name="hud_display_section_glasses">Time &amp; Power</string>
+    <string name="hud_display_section_trip">Trip</string>
+    <string name="hud_display_text_size">Text Size</string>
+    <string name="hud_display_reset">Reset to Default</string>
+    <string name="hud_display_always_on">Always shown while riding</string>
+
+    <string name="hud_field_speed">Speed</string>
+    <string name="hud_field_avg_speed">Average Speed</string>
+    <string name="hud_field_scooter_battery">Scooter Battery</string>
+    <string name="hud_field_remaining_range">Remaining Range</string>
+    <string name="hud_field_temperature">Controller Temperature</string>
+    <string name="hud_field_total_mileage">Total Mileage</string>
+    <string name="hud_field_trip_distance">Trip Distance</string>
+    <string name="hud_field_trip_time">Trip Time</string>
+    <string name="hud_field_time">Clock</string>
+    <string name="hud_field_phone_battery">Phone Battery</string>
+    <string name="hud_field_glasses_battery">Glasses Battery</string>
+    <string name="hud_field_signal_quality">Connection Quality</string>
+
+    <!-- Settings hub -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_display">Display</string>
+    <string name="settings_section_gateway">Glasses Connection</string>
+    <string name="settings_section_advanced">Advanced</string>
+    <string name="settings_section_about">About</string>
+    <string name="settings_feedback">Report an Issue</string>
+    <string name="settings_feedback_subtitle">Opens the project issue tracker</string>
+
+    <!-- Vehicle detail: offline readability -->
+    <string name="value_unknown">—</string>
+    <string name="info_vehicle_section">Vehicle</string>
+    <string name="info_serial">Serial Number</string>
+    <string name="info_firmware">Firmware</string>
+    <string name="info_address">Bluetooth Address</string>
+    <string name="info_data_live">Live — connected to the scooter now.</string>
+    <string name="info_data_none">No data yet. Connect to the scooter once to record its details.</string>
+    <string name="info_data_cached">Last known values, recorded %1$s.</string>
+    <string name="age_just_now">just now</string>
+    <string name="age_minutes">%1$d min ago</string>
+    <string name="age_hours">%1$d h ago</string>
+    <string name="age_days">%1$d d ago</string>
+
+    <!--
+      Ninebot legacy pairing warnings.
+
+      These are not optional niceties. Pairing a legacy Ninebot scooter requires
+      a PHYSICAL power-button press, and the scooter stores only ONE paired
+      client — so registering this app evicts the official vendor app, and
+      re-pairing that app will evict this one. Neither is something the rider can
+      work around, so both must be stated before they commit, not reported as an
+      error afterwards. See doc/NINEBOT_LEGACY_PROTOCOL.md §5.
+    -->
+    <string name="pairing_power_button_title">Press the scooter\'s power button</string>
+    <string name="pairing_power_button_body">The scooter is waiting for you to physically press its power button. A pairing attempt that appears to hang is usually waiting for this.</string>
+    <string name="pairing_single_client_title">This replaces your existing pairing</string>
+    <string name="pairing_single_client_body">This scooter can only remember one paired app. Pairing here will disconnect it from the official vendor app, which you will then need to re-pair. Re-pairing the vendor app will in turn disconnect this one.</string>
+    <string name="pairing_continue">I understand, pair</string>
+
+    <!-- Shown when a scooter answers but its protocol dialect is unknown. -->
+    <string name="protocol_unknown_title">Unrecognised scooter</string>
+    <string name="protocol_unknown_body">This scooter answered, but not in any protocol this app knows. Support for it has not been verified, so no readings will be shown.</string>
+
+    <!--
+      Shown for a scooter whose protocol IS recognised but whose register layout
+      is not published — current-generation models (G2 / F2 / D-series) over
+      Encryption2, and the Ninebot legacy family.
+
+      The wording matters. This is not a failure the rider can retry away, and it
+      must not read like one: the app is deliberately showing nothing rather than
+      showing guessed numbers. A community integration that guessed produced
+      "1924.9 km range" and "1387.5 km/h" — the ASCII bytes of a vehicle
+      identifier read as telemetry. See doc/NINEBOT_LEGACY_PROTOCOL.md and the
+      module docs of ninebot-ble/src/encryption2.rs.
+    -->
+    <string name="telemetry_unsupported_title">Connected, but readings are unavailable</string>
+    <string name="telemetry_unsupported_body">This scooter uses a protocol we understand, but its register layout has not been published. We show no readings rather than guessing at them, because a wrong number is harder to notice than a missing one.</string>
+
+    <!-- Manual model override -->
+    <string name="model_override_title">Scooter Model</string>
+    <string name="model_override_explanation">Not every scooter can be identified from a scan. Choose your model if the app guessed wrong, or if it could not tell.</string>
+    <string name="model_override_automatic">Detect automatically</string>
+    <string name="model_override_no_readings">Recognised, but readings are not available yet</string>
+
+    <!-- Diagnostics share -->
+    <string name="diagnostics_title">Share Connection Diagnostics</string>
+    <string name="diagnostics_subtitle">Which layout, dialect, MTU and model the app detected</string>
+    <string name="settings_protocol_title">Protocol &amp; Connection</string>
+    <string name="diagnostics_no_layout">No known layout</string>
+    <!-- Home controls / feedback -->
+    <string name="control_state_unknown">State unknown</string>
+    <string name="lock_confirm_title">Lock motor?</string>
+    <string name="lock_confirm_message">The scooter cannot report its lock state, so this cannot be verified. Only lock a stationary scooter.</string>
+    <string name="msg_motor_locked">Motor locked</string>
+    <string name="msg_motor_unlocked">Motor unlocked</string>
+    <string name="msg_lock_failed">Lock failed: %1$s</string>
+    <string name="msg_unlock_failed">Unlock failed: %1$s</string>
+    <string name="msg_light_on">Tail light on</string>
+    <string name="msg_light_off">Tail light off</string>
+    <string name="msg_light_failed">Light control failed: %1$s</string>
 </resources>

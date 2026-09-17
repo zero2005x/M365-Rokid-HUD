@@ -1,3 +1,4 @@
+use crate::identity::XIAOMI_SCOOTER_MATCH;
 use std::hash::{Hash, Hasher};
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -11,8 +12,6 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 type Devices = Arc<RwLock<HashSet<TrackedDevice>>>;
-
-use crate::profile::ProfileRegistry;
 
 #[derive(Error, Debug)]
 pub enum ScannerError {
@@ -56,15 +55,15 @@ impl TrackedDevice {
    * Check if current device is possible the scooter
    */
   pub fn is_scooter(&self) -> bool {
+    // Delegates so the rule lives in exactly one place; `has_xiaomi_service` is
+    // precomputed during the scan because the properties call is expensive.
     if self.has_xiaomi_service {
       return true;
     }
-
-    if let Some(name) = &self.name {
-      return ProfileRegistry::available().iter().any(|profile|
-        profile.ble_filter().name_prefixes.iter().any(|prefix| name.starts_with(prefix)));
+    match &self.name {
+      Some(name) => name.starts_with(XIAOMI_SCOOTER_MATCH.name_prefix),
+      None => false,
     }
-    return false;
   }
 }
 
@@ -265,12 +264,11 @@ impl CentralEventsProcessor {
     tracing::debug!("Device name: {}", name);
     tracked_device.name = Some(name);
 
-    // 保留舊欄位供相容呼叫端使用；候選服務由已註冊車款提供。
-    tracked_device.has_xiaomi_service = ProfileRegistry::available().iter().any(|profile| {
-      Uuid::parse_str(profile.ble_filter().service).map(|service|
-        props.service_data.contains_key(&service) || props.services.contains(&service)
-      ).unwrap_or(false)
-    });
+    let xiaomi_uuid = Uuid::parse_str(XIAOMI_SCOOTER_MATCH.service_uuid)
+      .expect("the identity spec carries a valid compile-time UUID");
+    if props.service_data.contains_key(&xiaomi_uuid) || props.services.contains(&xiaomi_uuid) {
+      tracked_device.has_xiaomi_service = true;
+    }
 
     let mut devices = self.devices.write().await;
     // Re-check: another task may have inserted the same address while the
@@ -293,3 +291,4 @@ async fn find_central(manager: &Manager) -> Result<Adapter, ScannerError> {
     Err(ScannerError::MissingCentral)
   }
 }
+

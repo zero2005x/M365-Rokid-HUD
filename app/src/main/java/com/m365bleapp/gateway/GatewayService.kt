@@ -250,8 +250,33 @@ class GatewayService : Service() {
         
         // Start telemetry observation
         startTelemetryObserver()
+
+        // Push the rider's HUD field selection. Started AFTER the GATT server
+        // exists, because setDisplayPrefs() writes through the characteristic.
+        startDisplayPrefsObserver()
         
         Log.i(TAG, "Gateway Service initialized successfully")
+    }
+
+    /**
+     * Mirrors the rider's HUD field selection to the connected glasses.
+     *
+     * The initial emission is the persisted value, so a service restart (or the
+     * glasses reconnecting) restores the saved layout with no user action — the
+     * rider has usually already pocketed the phone by then.
+     */
+    private fun startDisplayPrefsObserver() {
+        val store = DisplayPrefsStore.getInstance(applicationContext)
+        scope.launch {
+            store.mask.collect { mask ->
+                gattServer?.setDisplayPrefs(mask, store.textScalePercent.value)
+            }
+        }
+        scope.launch {
+            store.textScalePercent.collect { scale ->
+                gattServer?.setDisplayPrefs(store.mask.value, scale)
+            }
+        }
     }
     
     private fun startTelemetryObserver() {

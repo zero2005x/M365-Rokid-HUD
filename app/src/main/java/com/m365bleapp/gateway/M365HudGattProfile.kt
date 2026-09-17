@@ -27,10 +27,56 @@ object M365HudGattProfile {
     // Glasses Battery Characteristic (Write only)
     // Glasses write their battery level to this characteristic
     val GLASSES_BATTERY_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
-    
+
     // Client Characteristic Configuration Descriptor (Standard UUID)
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-    
+
+    /**
+     * Display Preferences Characteristic (Read + Notify).
+     *
+     * The phone pushes a bitmask telling the glasses WHICH telemetry fields to
+     * show. Added so the rider can pick the HUD contents from the phone while
+     * the glasses stay in a pocket-free, glance-only role.
+     *
+     * Why a separate characteristic instead of extra bytes inside the telemetry
+     * frame:
+     *
+     *  - The telemetry frame is a fixed 20 bytes with its CRC covering bytes
+     *    0..17. Embedding a bitmask would mean growing the frame and moving the
+     *    CRC, which breaks every glasses build in the field. A new
+     *    characteristic is additive: old glasses never subscribe to it and keep
+     *    working unchanged.
+     *  - Preferences change rarely; telemetry changes ~10x/second. Keeping them
+     *    apart means the bitmask is not re-sent 10 times a second.
+     *  - Read + Notify means the glasses get the current value two ways: they
+     *    read it once on connect (so a reconnect restores the rider's choice
+     *    with no phone-side action), and they are notified whenever it changes.
+     */
+    val DISPLAY_PREFS_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567895")
+
+    /**
+     * Display Preferences payload format (7 bytes, little-endian):
+     *
+     *   Byte 0:      Version (u8) — currently [DISPLAY_PREFS_VERSION]
+     *   Byte 1-4:    Bitmask (u32 LE) — see [DisplayField]
+     *   Byte 5:      Text scale percent (u8) — 100 = normal, range
+     *                [DISPLAY_PREFS_MIN_SCALE]..[DISPLAY_PREFS_MAX_SCALE]
+     *   Byte 6:      Reserved (u8) — MUST be 0; receivers ignore it
+     *
+     * The version byte exists so the format can change later without a flag
+     * day. A receiver that does not recognise the version MUST keep its current
+     * layout rather than guessing.
+     *
+     * A bitmask of 0 is treated as "no preference known" and falls back to
+     * [DisplayField.DEFAULT_MASK] — showing nothing at all is never what a
+     * rider wants, and it is also what a mis-read or an all-zero flash page
+     * would look like.
+     */
+    const val DISPLAY_PREFS_VERSION = 1
+    const val DISPLAY_PREFS_SIZE = 7
+    const val DISPLAY_PREFS_MIN_SCALE = 80
+    const val DISPLAY_PREFS_MAX_SCALE = 140
+
     /**
      * Telemetry Data Format (20 bytes):
      * 
@@ -85,4 +131,68 @@ object M365HudGattProfile {
     const val STATE_DISCONNECTED = 0
     const val STATE_CONNECTING = 1
     const val STATE_READY = 2
+}
+
+/**
+ * Which telemetry fields the glasses HUD renders.
+ *
+ * Bit assignments are part of the wire contract. **Never renumber an existing
+ * bit** — a field that is removed keeps its bit reserved so that an older
+ * glasses build and a newer phone never disagree about what bit 5 means.
+ *
+ * Bits a given glasses build does not know about are ignored when rendering,
+ * which is what makes adding a field below backward compatible.
+ */
+object DisplayField {
+    /** Current speed. The hero element; almost always on. */
+    const val SPEED = 1 shl 0
+
+    /** Scooter battery percentage. */
+    const val SCOOTER_BATTERY = 1 shl 1
+
+    /** Phone battery percentage. */
+    const val PHONE_BATTERY = 1 shl 2
+
+    /** Glasses' own battery percentage. */
+    const val GLASSES_BATTERY = 1 shl 3
+
+    /** Clock (HH:mm). */
+    const val TIME = 1 shl 4
+
+    /** BLE link quality indicator (the signal/stale icon). */
+    const val SIGNAL_QUALITY = 1 shl 5
+
+    /** Controller / frame temperature. */
+    const val TEMPERATURE = 1 shl 6
+
+    /** Total odometer. */
+    const val TOTAL_MILEAGE = 1 shl 7
+
+    /** Remaining range estimate. */
+    const val REMAINING_RANGE = 1 shl 8
+
+    /** Average speed. */
+    const val AVG_SPEED = 1 shl 9
+
+    /** Trip distance. */
+    const val TRIP_DISTANCE = 1 shl 10
+
+    /** Trip time. */
+    const val TRIP_TIME = 1 shl 11
+
+    /**
+     * What a glasses build shows when it has never received a preference, or
+     * receives a mask of 0.
+     *
+     * Matches the historical hard-coded layout (time, phone battery, glasses
+     * battery, speed, scooter battery, signal) so an un-updated phone paired
+     * with an updated glasses produces no visible change.
+     */
+    const val DEFAULT_MASK = SPEED or SCOOTER_BATTERY or PHONE_BATTERY or
+        GLASSES_BATTERY or TIME or SIGNAL_QUALITY
+
+    /** Every field this version knows how to render. */
+    const val ALL_MASK = SPEED or SCOOTER_BATTERY or PHONE_BATTERY or
+        GLASSES_BATTERY or TIME or SIGNAL_QUALITY or TEMPERATURE or
+        TOTAL_MILEAGE or REMAINING_RANGE or AVG_SPEED or TRIP_DISTANCE or TRIP_TIME
 }

@@ -11,6 +11,7 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.m365bleapp.R
+import com.m365bleapp.gateway.DisplayPrefsStore
 import com.m365bleapp.gateway.M365HudGattProfile
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
@@ -154,8 +155,33 @@ class WifiGatewayService : Service() {
         
         // Start telemetry observation
         startTelemetryObserver()
-        
+
+        // Mirror the rider's HUD field selection onto the TCP transport, the
+        // same way GatewayService does for BLE. Started after the server exists
+        // because the observer writes through it.
+        startDisplayPrefsObserver()
+
         Log.i(TAG, "WiFi Gateway Service initialized successfully")
+    }
+
+    /**
+     * Pushes HUD display preferences to TCP clients on every change.
+     *
+     * An initial emission restores the saved layout after a service restart, so
+     * a reconnecting glasses does not fall back to defaults.
+     */
+    private fun startDisplayPrefsObserver() {
+        val store = DisplayPrefsStore.getInstance(applicationContext)
+        scope.launch {
+            store.mask.collect { mask ->
+                wifiServer?.updateDisplayPrefs(mask, store.textScalePercent.value)
+            }
+        }
+        scope.launch {
+            store.textScalePercent.collect { scale ->
+                wifiServer?.updateDisplayPrefs(store.mask.value, scale)
+            }
+        }
     }
     
     private fun startTelemetryObserver() {

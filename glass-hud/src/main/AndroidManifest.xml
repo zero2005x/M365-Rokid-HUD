@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- BLE Permissions for Central Mode -->
     <!--
       neverForLocation tells the platform this app does not derive physical
@@ -38,9 +41,6 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"
         android:maxSdkVersion="30" />
     
-    <!-- 監聽網路狀態以選擇 HUD 連線路徑。 -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
     <!-- Keep screen on for HUD -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     

@@ -14,15 +14,15 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.StateFlow
+import com.m365hud.glass.wifi.UnifiedConnectionManager
 
 /**
- * Foreground Service to maintain BLE connection even when app is in background.
+ * Foreground service to maintain the HUD connection while the app is in background.
  * 
  * This service:
  * - Keeps the app alive via foreground notification
  * - Holds a partial wake lock to prevent CPU sleep during BLE operations
- * - Manages the BleClient lifecycle
+ * - Manages BLE and WiFi client lifecycles
  * - Auto-reconnects when connection is lost
  */
 @SuppressLint("MissingPermission")
@@ -32,23 +32,20 @@ class BleConnectionService : Service() {
         private const val TAG = "BleConnectionService"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "ble_connection_channel"
-        private const val CHANNEL_NAME = "BLE Connection"
+        private const val CHANNEL_NAME = "HUD Connection"
         
         // Wake lock timeout - 4 hours max to prevent battery drain
         private const val WAKE_LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
         
-        // Retry scan after this delay when scan fails to find gateway
-        private const val SCAN_RETRY_DELAY_MS = 5000L
     }
     
-    private var bleClient: BleClient? = null
+    private var _connectionManager: UnifiedConnectionManager? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-    // Single connection-state collector, one pending retry, one wake-lock
-    // renewal loop — so repeated onStartCommand calls cannot stack duplicates.
+    // Single connection-state collector and one wake-lock
+    // renewal loop ??so repeated onStartCommand calls cannot stack duplicates.
     private var monitorJob: Job? = null
-    private var retryJob: Job? = null
     private var wakeLockRenewJob: Job? = null
     
     // Binder for local binding
@@ -56,7 +53,6 @@ class BleConnectionService : Service() {
     
     inner class LocalBinder : Binder() {
         fun getService(): BleConnectionService = this@BleConnectionService
-        fun getBleClient(): BleClient? = bleClient
     }
     
     override fun onCreate() {
@@ -69,8 +65,8 @@ class BleConnectionService : Service() {
         // Acquire wake lock to keep CPU awake for BLE operations
         acquireWakeLock()
         
-        // Initialize BLE client
-        bleClient = BleClient(this)
+        // Initialize the service-owned BLE/WiFi manager
+        _connectionManager = UnifiedConnectionManager(this)
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -80,7 +76,7 @@ class BleConnectionService : Service() {
         // the system checks the runtime permission backing a
         // FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE service at the moment
         // startForeground is called and throws SecurityException if it is
-        // missing — so checking afterwards is too late.
+        // missing ??so checking afterwards is too late.
         //
         // This is not hypothetical: the service is START_STICKY, so the system
         // restarts it with a null intent after a process kill. If the user
@@ -125,7 +121,7 @@ class BleConnectionService : Service() {
             // throws SecurityException without BLUETOOTH_SCAN/CONNECT and
             // would kill the service. hasBlePermissions() above is what
             // actually makes this safe.
-            bleClient?.startScan()
+            _connectionManager?.start()
 
             // Monitor connection state and update notification
             monitorConnectionState()
@@ -143,42 +139,19 @@ class BleConnectionService : Service() {
         Log.i(TAG, "Service destroyed")
         
         serviceScope.cancel()
-        bleClient?.disconnect()
-        bleClient = null
+        _connectionManager?.stop()
+        _connectionManager = null
         releaseWakeLock()
         
         super.onDestroy()
     }
     
-    /**
-     * Get the BleClient instance for UI observation
-     */
-    fun getBleClient(): BleClient? = bleClient
-    
-    /**
-     * Get connection state flow for UI
-     */
-    fun getConnectionState(): StateFlow<BleClient.ConnectionState>? = bleClient?.connectionState
-    
-    /**
-     * Get telemetry flow for UI
-     */
-    fun getTelemetry(): StateFlow<TelemetryData>? = bleClient?.telemetry
-    
-    /**
-     * Get time data flow for UI
-     */
-    fun getTimeData(): StateFlow<TimeData>? = bleClient?.timeData
-    
-    /**
-     * Manually trigger reconnection
-     */
+    val connectionManager: UnifiedConnectionManager? get() = _connectionManager
+
     fun reconnect() {
-        Log.i(TAG, "Manual reconnect requested")
-        bleClient?.disconnect()
-        bleClient?.startScan()
+        _connectionManager?.reconnect()
     }
-    
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -186,7 +159,7 @@ class BleConnectionService : Service() {
                 CHANNEL_NAME,
                 NotificationManager.IMPORTANCE_LOW // Low importance = no sound
             ).apply {
-                description = "Maintains BLE connection to phone"
+                description = "Maintains HUD connection to phone"
                 setShowBadge(false)
             }
             
@@ -275,39 +248,15 @@ class BleConnectionService : Service() {
     private fun monitorConnectionState() {
         monitorJob?.cancel()
         monitorJob = serviceScope.launch {
-            bleClient?.connectionState?.collect { state ->
-                val statusText = when (state) {
+            _connectionManager?.hudState?.collect { snapshot ->
+                val status = when (val state = snapshot.connection) {
                     is BleClient.ConnectionState.Disconnected -> "Disconnected"
-                    is BleClient.ConnectionState.Scanning -> "Scanning..."
+                    is BleClient.ConnectionState.Scanning -> "Searching for phone..."
                     is BleClient.ConnectionState.Connecting -> "Connecting..."
-                    is BleClient.ConnectionState.Connected -> "Connected"
+                    is BleClient.ConnectionState.Connected -> "Connected via ${snapshot.transport}"
                     is BleClient.ConnectionState.Error -> "Error: ${state.message}"
                 }
-                updateNotification(statusText)
-                Log.d(TAG, "Connection state: $statusText")
-
-                // Auto-retry scan when in Error state (e.g., scan timeout,
-                // gateway not found). This handles the case where the glasses
-                // start scanning before the phone starts advertising.
-                //
-                // The retry runs in its own job: delaying inside the collect
-                // lambda blocked the collector for the whole retry window, so
-                // Connecting/Connected transitions during it were conflated
-                // away and the notification went stale.
-                if (state is BleClient.ConnectionState.Error) {
-                    Log.i(TAG, "Connection error detected, will retry scan in ${SCAN_RETRY_DELAY_MS}ms...")
-                    retryJob?.cancel()
-                    retryJob = serviceScope.launch {
-                        delay(SCAN_RETRY_DELAY_MS)
-                        // Only retry if still in error state (not manually reconnected)
-                        if (bleClient?.connectionState?.value is BleClient.ConnectionState.Error &&
-                            hasBlePermissions()
-                        ) {
-                            Log.i(TAG, "Retrying scan after error...")
-                            bleClient?.startScan()
-                        }
-                    }
-                }
+                updateNotification(status)
             }
         }
     }

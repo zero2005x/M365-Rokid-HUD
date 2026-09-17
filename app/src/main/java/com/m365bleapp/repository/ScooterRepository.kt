@@ -1,5 +1,3 @@
-@file:Suppress("DEPRECATION")
-
 package com.m365bleapp.repository
 
 import android.Manifest
@@ -15,11 +13,14 @@ import androidx.core.app.ActivityCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.m365bleapp.R
+import com.m365bleapp.protocol.MtuFragmenter
+import com.m365bleapp.protocol.ModelOverrideStore
+import com.m365bleapp.protocol.EscTelemetryParser
+import com.m365bleapp.protocol.PlaintextRegisterSession
+import com.m365bleapp.protocol.ScooterModelRegistry
+import com.m365bleapp.protocol.WriteRetryPolicy
 import com.m365bleapp.ble.BleManager
 import com.m365bleapp.ffi.M365Native
-import com.m365bleapp.pairing.*
-import com.m365bleapp.ffi.ProfileDescriptor
-import com.m365bleapp.vehicle.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -68,10 +69,54 @@ data class MotorInfo(
     val avgSpeed: Double = 0.0,
     val tripSeconds: Int = 0,
     val tripMeters: Int = 0,
-    val remainingKm: Double = 0.0
+    val remainingKm: Double = 0.0,
+
+    // ---- fields added with the BMS/ESC parsers (stages B1/B2) ----------------
+    // All default to null so an older producer still compiles and a value the
+    // scooter has not reported shows as "unknown" rather than as zero. A zero
+    // that was never measured is indistinguishable from a genuine zero on screen,
+    // which is exactly the ambiguity these types avoid.
+
+    /** ESC `0x1B` error / warning code, when reported. */
+    val errorCode: Int? = null,
+    /** Human description for [errorCode]. */
+    val errorDescription: String? = null,
+    /** Ride mode from ESC `0x75`. */
+    val rideMode: com.m365bleapp.protocol.EscTelemetryParser.RideMode? = null,
+    /** KERS level from ESC `0x7B`. */
+    val kersLevel: com.m365bleapp.protocol.EscTelemetryParser.KersLevel? = null,
+    /** ESC / frame temperature from `0x3E`, 簞C. */
+    val escTemperatureC: Double? = null,
+    /** Battery pack temperature from BMS `0x35`, 簞C. */
+    val batteryTemperatureC: Double? = null,
+    /** Motor phase current from ESC `0x53`, A. */
+    val phaseCurrentA: Double? = null,
+    /** Pack current from BMS `0x31`, A (negative while discharging). */
+    val batteryCurrentA: Double? = null,
+    /** Pack voltage from BMS `0x31`, V. */
+    val packVoltageV: Double? = null,
+    /** Derived pack power, W. */
+    val packPowerW: Double? = null,
+    /** Charge remaining from BMS `0x31`, mAh. */
+    val remainingMah: Int? = null,
+    /** Highest cell voltage from BMS `0x40`, V. */
+    val highestCellV: Double? = null,
+    /** Lowest cell voltage from BMS `0x40`, V. */
+    val lowestCellV: Double? = null,
+    /** Highest-minus-lowest cell, V. The number that shows an unbalanced pack. */
+    val cellSpreadV: Double? = null,
+    /** State of health from BMS `0x3B`, percent. */
+    val batteryHealthPercent: Int? = null,
+    /** True while the BMS reports charging (`0x30` bit 6). */
+    val isCharging: Boolean? = null,
 )
 
-class ScooterRepository private constructor(private val context: Context) {
+class ScooterRepository private constructor(
+    private val context: Context,
+    // Injected (with a production default) so coroutine builders receive a
+    // provided dispatcher instead of a hardcoded one — Sonar S6310.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) {
     
     companion object {
         @Volatile
@@ -88,6 +133,55 @@ class ScooterRepository private constructor(private val context: Context) {
         private const val POLL_INTERVAL_MOVING_MS = 100L    // Speed > threshold
         private const val POLL_INTERVAL_IDLE_MS = 500L      // Speed <= threshold
         private const val SPEED_THRESHOLD_KMH = 5.0
+
+        /**
+         * Tick period for the hardware-free demo ride.
+         *
+         * 1 s matches Scootbatt's base HUD poll rate, so a demo exercises the
+         * same update cadence a real scooter would produce.
+         */
+        const val DEMO_TICK_MS = 1_000L
+
+        // === Plaintext (stage C1) ===
+
+        /**
+         * Gap between plaintext register reads.
+         *
+         * 1 s matches Scootbatt's base HUD poll rate and leaves room for a reply
+         * plus its timeout without stacking requests.
+         */
+        const val PLAINTEXT_POLL_INTERVAL_MS = 1_000L
+
+        /**
+         * How long to wait for a complete reply before moving on.
+         *
+         * Scootbatt uses 300/350/1000 ms per request depending on the parser; a
+         * single 1 s budget is simpler and, on a plaintext link with no crypto
+         * work, generous.
+         */
+        const val PLAINTEXT_REPLY_TIMEOUT_MS = 1_000L
+
+        /** Wait for one notification before re-checking the overall deadline. */
+        const val PLAINTEXT_CHUNK_WAIT_MS = 250L
+
+        /**
+         * Consecutive failures before the link is declared dead.
+         *
+         * Scootbatt has no such counter: it drops a request after three attempts
+         * and keeps polling a link that may be gone, relying on the GATT callback
+         * alone. Counting here is a deliberate improvement, because a HUD that
+         * silently shows stale data is worse than one that reconnects.
+         */
+        const val PLAINTEXT_FAILURES_BEFORE_RECONNECT = 5
+
+        /**
+         * Handshake frames to send before declaring NinebotCrypto pairing failed.
+         *
+         * Each stage is retried at its own interval, so this bounds the whole
+         * exchange rather than a single step. NinebotCrypto pairing normally needs
+         * a power-button press, so a handful of attempts is generous.
+         */
+        const val NINEBOT_HANDSHAKE_MAX_ATTEMPTS = 12
         
         // === Tiered Query Strategy ===
         // Different data types have different update frequency requirements
@@ -98,7 +192,7 @@ class ScooterRepository private constructor(private val context: Context) {
     
     private val native = M365Native()
     private val bleManager = BleManager(context)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(ioDispatcher + SupervisorJob())
     
     // Helper function to get localized strings
     private fun getString(resId: Int): String = context.getString(resId)
@@ -118,6 +212,31 @@ class ScooterRepository private constructor(private val context: Context) {
     private val controlChannel = Channel<ByteArray>(64)
     private val uartRxChannel = Channel<ByteArray>(64)
     
+    /**
+     * Durable last-known vehicle state, so the detail page is readable offline.
+     * See VehicleSnapshotStore for why identity and telemetry are stored
+     * differently.
+     */
+    private val snapshotStore = VehicleSnapshotStore.getInstance(context)
+
+    /**
+     * MAC of the scooter currently (or most recently) connected.
+     *
+     * `activeGatt` is nulled on disconnect, so the snapshot collector needs this
+     * to keep attributing readings to the right scooter during teardown.
+     */
+    @Volatile
+    private var lastConnectedMac: String? = null
+
+    /**
+     * Advertised name of the scooter that was last connected.
+     *
+     * Kept because the diagnostics block and model resolution both need it, and
+     * `activeGatt` is nulled on disconnect.
+     */
+    @Volatile
+    private var lastConnectedAdvertisedName: String? = null
+
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState = _connectionState.asStateFlow()
 
@@ -147,152 +266,220 @@ class ScooterRepository private constructor(private val context: Context) {
     private var sessionPtr: Long = 0
 
     private val connectionLock = Any()
-    private var connectionJob: Job? = null
-    @Volatile private var vehicleConnection: VehicleConnection? = null
-    private val vehiclePreferences = context.getSharedPreferences("vehicle_options", Context.MODE_PRIVATE)
-    private val _experimentalModels = MutableStateFlow(vehiclePreferences.getBoolean("experimental", false))
-    val experimentalModels = _experimentalModels.asStateFlow()
-    fun setExperimentalModels(enabled: Boolean) {
-        vehiclePreferences.edit().putBoolean("experimental", enabled).apply()
-        _experimentalModels.value = enabled
-    }
-    private val _profiles = MutableStateFlow<List<ProfileDescriptor>>(emptyList())
-    val profiles = _profiles.asStateFlow()
-    private val _activeProfile = MutableStateFlow<ProfileDescriptor?>(null)
-    val activeProfile = _activeProfile.asStateFlow()
-    private val _verificationPrompt = MutableStateFlow<ProfileDescriptor?>(null)
-    val verificationPrompt = _verificationPrompt.asStateFlow()
-    @Volatile private var verificationReply: CompletableDeferred<Boolean>? = null
-    fun confirmUnverified(accept: Boolean) { verificationReply?.complete(accept) }
-    private suspend fun acceptProfile(result: DetectionResult, mac: String) {
-        check(result.accepted) { result.message }
-        val profile = native.availableProfilesSafe().single { it.modelId == result.modelId }
-        if (!profile.verified && !vehiclePreferences.getBoolean(mac + "/verified_prompt/" + profile.modelId, false)) {
-            val reply = CompletableDeferred<Boolean>()
-            verificationReply = reply; _verificationPrompt.value = profile
-            try {
-                check(withTimeout(120_000) { reply.await() }) { "已取消未驗證車款連線" }
-                vehiclePreferences.edit().putBoolean(mac + "/verified_prompt/" + profile.modelId, true).apply()
-            } finally { verificationReply = null; _verificationPrompt.value = null }
-        }
-        _activeProfile.value = profile
-    }
 
-    private fun createVehicleConnection(handle: Long, encrypted: Boolean): VehicleConnection =
-        VehicleConnection(native, handle, encrypted,
-            send = { bytes ->
-                val gatt = checkNotNull(activeGatt) { "藍牙已斷線" }
-                for (chunk in bytes.asList().chunked(20)) {
-                    check(bleManager.write(gatt, UART_SERVICE, UART_TX, chunk.toByteArray(), true)) { "車輛資料傳送失敗" }
-                }
-            }, receive = { uartRxChannel.receive() })
+    /**
+     * Job feeding synthetic telemetry while the hardware-free demo runs.
+     *
+     * `null` whenever the demo is stopped, which is the normal state. Only ever
+     * non-null through [startDemo], so a real connection never sees demo data:
+     * [connect] and [disconnect] both stop the demo first.
+     */
+    @Volatile
+    private var demoJob: Job? = null
 
-    private suspend fun connectVehicle(mac: String, name: String, expected: Int, plaintext: Boolean, probePlain: Boolean) {
-        var connection: VehicleConnection? = null
-        var detected: DetectionResult? = null
-        if (plaintext || probePlain) {
-            val gatt = checkNotNull(activeGatt)
-            check(bleManager.enableNotifications(gatt, UART_SERVICE, UART_RX) { }) { "無法訂閱車輛資料" }
-            val candidate = createVehicleConnection(native.openVehicleSafe(0), false)
-            vehicleConnection = candidate
-            try {
-                _connectionState.value = ConnectionState.Handshaking("正在以唯讀查詢辨識舊版車輛")
-                detected = candidate.identify(expected, _experimentalModels.value)
-                connection = candidate
-            } catch (timeout: TimeoutCancellationException) {
-                candidate.close(); vehicleConnection = null
-                if (plaintext) throw timeout
-                currentCoroutineContext().ensureActive()
-                while (uartRxChannel.tryReceive().isSuccess) { }
-            }
-        }
-        if (connection == null) {
-            performNinebotPairing(mac, name)
-            val handle = checkNotNull(pairingCoordinator).transferSession(native::openVehicleSafe)
-            pairingCoordinator = null
-            connection = createVehicleConnection(handle, true)
-            vehicleConnection = connection
-            _connectionState.value = ConnectionState.Handshaking("正在讀取車輛識別暫存器")
-            detected = connection.identify(expected, _experimentalModels.value)
-        }
-        acceptProfile(checkNotNull(detected), mac)
-        updateNormalizedTelemetry(connection.telemetry())
-        _connectionState.value = ConnectionState.Ready
-        while (currentCoroutineContext().isActive) {
-            delay(if ((_motorInfo.value?.speed ?: 0.0) > SPEED_THRESHOLD_KMH) POLL_INTERVAL_MOVING_MS else POLL_INTERVAL_IDLE_MS)
-            updateNormalizedTelemetry(connection.telemetry())
-        }
-    }
-    private fun updateNormalizedTelemetry(values: DoubleArray) {
-        _motorInfo.value = MotorInfo(speed = values[1], battery = values[0].toInt(), temp = values[6], mileage = values[3] / 1000.0,
-            avgSpeed = values[2], tripSeconds = values[5].toInt(), tripMeters = values[4].toInt())
-    }
-    private suspend fun controlVehicle(feature: Int, value: Int): Result<Unit> = runCatching {
-        check(_connectionState.value == ConnectionState.Ready) { "車輛尚未就緒" }
-        checkNotNull(vehicleConnection).control(feature, value)
-        if (feature == 0) _isLocked.value = value == 1
-        if (feature == 1) _isLightOn.value = value == 1
-    }
-    suspend fun setRideMode(mode: Int): Result<Unit> = controlVehicle(2, mode)
-    @Volatile private var pairingCoordinator: PairingCoordinator? = null
-    @Volatile private var serialReply: CompletableDeferred<Unit>? = null
-    private val _pairingDevice = MutableStateFlow<String?>(null)
-    val pairingDevice = _pairingDevice.asStateFlow()
+    /** True while [startDemo] is feeding synthetic telemetry. */
+    val isDemoRunning: Boolean get() = demoJob?.isActive == true
 
-    fun submitPairingSerial(serial: String): Boolean {
-        val accepted = pairingCoordinator?.submitSerial(serial) == true
-        if (accepted) { _pairingDevice.value = null; serialReply?.complete(Unit) }
-        return accepted
-    }
+    /**
+     * Plaintext register session, or `null` on a crypto scooter.
+     *
+     * Stage C1: scooters that speak plain `5A A5` framing never run the crypto
+     * handshake, so they need their own request path. [PlaintextRegisterSession]
+     * owns that framing and is the only consumer of [FrameCodec], which otherwise
+     * had no call sites.
+     */
+    @Volatile
+    private var plaintextSession: com.m365bleapp.protocol.PlaintextRegisterSession? = null
 
-    private suspend fun performNinebotPairing(mac: String, name: String) {
-        val gatt = checkNotNull(activeGatt)
-        check(bleManager.enableNotifications(gatt, UART_SERVICE, UART_RX) { }) { "無法訂閱車輛資料" }
-        val coordinator = PairingCoordinator(NativePairingAdapter(native), EncryptedPairingStore(context), mac, name)
-        pairingCoordinator = coordinator
-        try {
-            PairingTransport(coordinator,
-                send = { bytes ->
-                    for (chunk in bytes.asList().chunked(20)) {
-                        check(bleManager.write(gatt, UART_SERVICE, UART_TX, chunk.toByteArray(), false)) { "配對資料傳送失敗" }
-                        delay(20)
-                    }
-                },
-                receive = { uartRxChannel.receive() },
-                requestSerial = {
-                    val reply = CompletableDeferred<Unit>()
-                    serialReply = reply
-                    _pairingDevice.value = name
-                    try { reply.await() } finally { _pairingDevice.value = null; serialReply = null }
-                },
-                onStage = { stage ->
-                    _connectionState.value = ConnectionState.Handshaking(when (stage) {
-                        PairingStage.SerialRequired -> "請輸入車身序號"
-                        PairingStage.AwaitingButton -> "請按一下車輛電源鍵確認配對"
-                        PairingStage.Paired -> "配對完成，正在辨識車款"
-                        else -> "正在與車輛配對"
-                    })
-                },
-            ).pair()
-        } catch (failure: Throwable) {
-            coordinator.close()
-            pairingCoordinator = null
-            throw failure
-        }
-    }
+    /** True when the current connection is using plaintext framing. */
+    val isPlaintextMode: Boolean get() = plaintextSession != null
     
     // Single channel for all incoming data for now.
     // In strict implementation we might separate them, but sequential flow allows this.
     // private val incomingData = Channel<ByteArray>(Channel.UNLIMITED) // Original, now deprecated
 
-    // UUIDs from BleManager
-    private val UART_SERVICE = BleManager.UART_SERVICE
-    private val UART_TX = BleManager.UART_TX
-    private val UART_RX = BleManager.UART_RX
-    
+    // Data-plane UUIDs.
+    //
+    // These start at Nordic UART (the M365 layout) and are REPLACED after
+    // service discovery with whatever the device actually exposes. Three layouts
+    // exist in the field and they are not interchangeable: the Ninebot custom
+    // profile notifies on `??004` rather than `??003`, so code that hard-codes
+    // NUS subscribes to a characteristic that never emits.
+    //
+    // `@Volatile` because they are written once during connect and read from the
+    // telemetry coroutine.
+    @Volatile private var uartService: UUID = BleManager.UART_SERVICE
+    @Volatile private var uartTx: UUID = BleManager.UART_TX
+    @Volatile private var uartRx: UUID = BleManager.UART_RX
+
+    /**
+     * Which GATT layout the connected scooter answered on, once known.
+     *
+     * Exposed so a bug report can state it: "connected via Ninebot Custom" is the
+     * first thing needed to explain a scooter that connects but never yields
+     * telemetry.
+     */
+    private val _activeProfile = MutableStateFlow<com.m365bleapp.protocol.GattProfileKind?>(null)
+    val activeProfile = _activeProfile.asStateFlow()
+
+    /**
+     * Protocol dialect detection, with its result cached per MAC.
+     *
+     * Detection is a probe ??attempting a handshake and seeing what answers ??
+     * because nothing observable before connecting identifies a dialect. Xiaomi,
+     * Ninebot and current Segway models all advertise the same Nordic UART
+     * service, and the same model name spans several wire generations.
+     */
+    private val protocolProbe by lazy { com.m365bleapp.protocol.ProtocolProbe(context) }
+
+    private val _detectedProtocol =
+        MutableStateFlow(com.m365bleapp.protocol.ScooterProtocol.UNKNOWN)
+
+    /**
+     * The dialect this scooter was found to speak, or [ScooterProtocol.UNKNOWN].
+     *
+     * Only ever set from evidence ??a completed handshake ??never from a name or
+     * a service UUID.
+     */
+    val detectedProtocol = _detectedProtocol.asStateFlow()
+
+    // Auth-plane UUIDs. These belong to the Xiaomi Mi auth handshake and are
+    // only meaningful on the Xiaomi family; other families do not use them.
     private val AUTH_SERVICE = BleManager.AUTH_SERVICE
     private val AUTH_UPNP = BleManager.AUTH_UPNP
     private val AUTH_AVDTP = BleManager.AUTH_AVDTP
+
+    /**
+     * Points the data plane at the layout the device actually exposes.
+     *
+     * Called after service discovery. With no discovered profile the NUS defaults
+     * stand, which preserves the previous behaviour exactly ??this is additive,
+     * not a rewrite of the working M365 path.
+     *
+     * The **first** profile in the returned order is chosen, and that order puts
+     * Nordic UART first deliberately: devices that advertise both layouts may
+     * answer on only NUS (a Max G3 does), so preferring the manufacturer-specific
+     * service would connect to something that never replies.
+     */
+    /**
+     * Drives the NinebotCrypto `5B/5C/5D` pairing exchange (stage C2).
+     *
+     * @return true once the scooter has acknowledged the UID.
+     *
+     * The state machine in [NinebotHandshake] decides what to send; this method
+     * owns the radio and the clock. A timeout marks the stage failed rather than
+     * simply retrying forever, because a stage that never fails would report
+     * "pairing" indefinitely and the caller would never surface an error.
+     */
+    private suspend fun runNinebotHandshake(
+        gatt: android.bluetooth.BluetoothGatt,
+        advertisedName: ByteArray,
+    ): Boolean {
+        val handshake = com.m365bleapp.protocol.NinebotHandshake(advertisedName)
+
+        // Drain anything left from service discovery so the first reply belongs to
+        // the first request.
+        while (controlChannel.tryReceive().isSuccess) { /* discard */ }
+
+        var attempts = 0
+        while (currentCoroutineContext().isActive &&
+            activeGatt === gatt &&
+            !handshake.isPaired
+        ) {
+            val frame = handshake.nextFrame()
+            if (frame == null) break
+
+            if (attempts >= NINEBOT_HANDSHAKE_MAX_ATTEMPTS) {
+                handshake.fail("no reply after $attempts attempts")
+                break
+            }
+            attempts++
+
+            try {
+                writeChar(uartService, uartTx, frame, waitForResponse = false)
+                val reply = withTimeoutOrNull(handshake.retryIntervalMs) {
+                    controlChannel.receive()
+                }
+                if (reply == null) {
+                    Log.d(
+                        "ScooterRepo",
+                        "NinebotCrypto: no reply in ${handshake.retryIntervalMs} ms, " +
+                            "resending (attempt $attempts)"
+                    )
+                    continue
+                }
+                // A reply may be a full frame or just the counted bytes; the state
+                // machine only inspects the payload region, so both are passed
+                // through unchanged and it validates the length itself.
+                if (!handshake.acceptReply(reply)) {
+                    Log.d(
+                        "ScooterRepo",
+                        "NinebotCrypto: reply did not advance stage " +
+                            "${handshake.stage} (${reply.size} bytes)"
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w("ScooterRepo", "NinebotCrypto: handshake write failed: ${e.message}")
+            }
+        }
+
+        return if (handshake.isPaired) {
+            Log.i("ScooterRepo", "NinebotCrypto: paired")
+            true
+        } else {
+            val reason = handshake.failureReason ?: "handshake did not complete"
+            Log.e("ScooterRepo", "NinebotCrypto: pairing failed: $reason")
+            _connectionState.value = ConnectionState.Error("Pairing failed: $reason")
+            false
+        }
+    }
+
+    /**
+     * The dialect to use for the connection currently being established.
+     *
+     * Falls back to [ScooterProtocol.XIAOMI_MI] because a probe has not yet run at
+     * this point in `connect()` and the Xiaomi path is the historically implemented
+     * one. This is the single place that decision is made, so a future probe can
+     * change the outcome without touching the branch that consumes it.
+     */
+    private fun detectedProtocolOrPlaintext(): com.m365bleapp.protocol.ScooterProtocol {
+        val detected = _detectedProtocol.value
+        return if (detected == com.m365bleapp.protocol.ScooterProtocol.UNKNOWN) {
+            // No probe result yet: keep the previous behaviour of assuming the
+            // Xiaomi path rather than guessing plaintext, because a wrong
+            // plaintext guess would also skip the handshake a Xiaomi scooter needs.
+            com.m365bleapp.protocol.ScooterProtocol.XIAOMI_MI
+        } else {
+            detected
+        }
+    }
+
+    private fun adoptDiscoveredProfile() {
+        val profiles = bleManager.discoveredProfiles.value
+        val chosen = profiles.firstOrNull()
+
+        if (chosen == null) {
+            Log.w(
+                "ScooterRepo",
+                "No known GATT layout discovered; keeping Nordic UART defaults. " +
+                    "If telemetry never arrives, this scooter's layout is unsupported."
+            )
+            _activeProfile.value = null
+            return
+        }
+
+        uartService = chosen.service
+        uartTx = chosen.write
+        uartRx = chosen.notify
+        _activeProfile.value = chosen.kind
+
+        Log.i(
+            "ScooterRepo",
+            "Using ${chosen.kind.displayName}: service=${chosen.service} " +
+                "write=${chosen.write} notify=${chosen.notify} " +
+                "(layouts available: ${profiles.joinToString { it.kind.name }})"
+        )
+    }
     
     // Security status (P3: Root detection warning)
     private val _securityStatus = MutableStateFlow<com.m365bleapp.utils.SecurityChecker.SecurityStatus?>(null)
@@ -304,7 +491,7 @@ class ScooterRepository private constructor(private val context: Context) {
      */
     fun init() {
         // Load native library and initialize in background to prevent UI blocking
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             try {
                 val startTime = System.currentTimeMillis()
                 Log.d("ScooterRepo", "Initializing native library on background thread...")
@@ -312,7 +499,6 @@ class ScooterRepository private constructor(private val context: Context) {
                 // Load native library asynchronously
                 if (M365Native.loadLibraryAsync()) {
                     native.initSafe()  // Call instance init after library is loaded
-                    _profiles.value = native.availableProfilesSafe()
                     val elapsed = System.currentTimeMillis() - startTime
                     Log.i("ScooterRepo", "Native library initialized in ${elapsed}ms")
                 } else {
@@ -324,11 +510,37 @@ class ScooterRepository private constructor(private val context: Context) {
         }
         
         // P3: Check device security status on init (non-blocking warning)
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             val status = com.m365bleapp.utils.SecurityChecker.checkSecurity()
             _securityStatus.value = status
             if (status.hasWarnings) {
                 Log.w("ScooterRepo", "Security check: ${status.getWarningMessage()}")
+            }
+        }
+
+        // Record every telemetry reading into the durable snapshot.
+        //
+        // Done by observing the flow rather than by writing at each of the four
+        // places that assign `_motorInfo` ??those assignments are easy to add
+        // to and miss, and a missed one silently means a stale offline page.
+        // One collector here cannot be bypassed.
+        scope.launch(ioDispatcher) {
+            _motorInfo.collect { info ->
+                if (info != null) {
+                    snapshotStore.updateTelemetry(
+                        mac = activeGatt?.device?.address ?: lastConnectedMac,
+                        update = VehicleSnapshotStore.TelemetryUpdate(
+                            speedKmh = info.speed,
+                            batteryPercent = info.battery,
+                            temperatureC = info.temp,
+                            totalMileageKm = info.mileage,
+                            averageSpeedKmh = info.avgSpeed,
+                            remainingKm = info.remainingKm,
+                            tripMeters = info.tripMeters,
+                            tripSeconds = info.tripSeconds
+                        )
+                    )
+                }
             }
         }
     }
@@ -343,189 +555,331 @@ class ScooterRepository private constructor(private val context: Context) {
             .onCompletion { _isScanning.value = false }
     }
 
-    fun connect(mac: String, register: Boolean = false, expectedModel: Int = -1, useEncrypted: Boolean = false, plaintext: Boolean = false) {
-        if (connectionJob?.isActive == true || activeGatt != null) return
+    // ------------------------------------------------------------------ demo
+
+    /**
+     * Starts the hardware-free demo ride.
+     *
+     * ## Why this exists
+     *
+     * A phone's BLE stack cannot impersonate a scooter peripheral, so with no
+     * scooter present there is no way to put a value on screen and therefore no
+     * way to exercise the display path on a real device. This feeds a synthetic
+     * [MotorInfo] stream into [_motorInfo] ??the same flow the real parser writes
+     * to ??so one demo run covers the phone UI, the BLE gateway and the glasses
+     * HUD.
+     *
+     * ## What it does NOT prove
+     *
+     * It bypasses [com.m365bleapp.protocol.FrameCodec], the crypto session and
+     * every register parser. A clean demo run says nothing about whether real
+     * scooter frames decode correctly. Telemetry produced here is marked
+     * [com.m365bleapp.protocol.DemoRideSource.DEMO_MARKER] so it is never mistaken
+     * for live data.
+     *
+     * Safe to call repeatedly: an in-flight demo is replaced rather than stacked.
+     * [connect] stops the demo, so demo data can never reach a real session.
+     */
+    fun startDemo(
+        seed: Int = com.m365bleapp.protocol.DemoRideSource.DEFAULT_SEED,
+        tickMs: Long = DEMO_TICK_MS,
+    ) {
+        stopDemo()
+        _connectionState.value = ConnectionState.Ready
+        val source = com.m365bleapp.protocol.DemoRideSource(seed = seed)
+        demoJob = scope.launch(ioDispatcher) {
+            Log.i("ScooterRepo", "${com.m365bleapp.protocol.DemoRideSource.DEMO_MARKER}: ride started (seed=$seed)")
+            var last = System.currentTimeMillis()
+            try {
+                while (isActive) {
+                    val now = System.currentTimeMillis()
+                    val elapsed = now - last
+                    last = now
+                    _motorInfo.value = source.step(elapsed)
+                    delay(tickMs)
+                }
+            } finally {
+                // Reached on cancellation as well as normal completion, so a
+                // stopped demo can never leave a stale sample on screen.
+                Log.i("ScooterRepo", "${com.m365bleapp.protocol.DemoRideSource.DEMO_MARKER}: ride stopped")
+            }
+        }
+    }
+
+    /**
+     * Stops the demo ride and clears the synthetic sample.
+     *
+     * Idempotent. Does not touch a real connection's state beyond clearing the
+     * sample, so calling it while disconnected is harmless.
+     */
+    fun stopDemo() {
+        val wasRunning = demoJob?.isActive == true
+        demoJob?.cancel()
+        demoJob = null
+        // Only clear the state if this call actually stopped a demo. Otherwise a
+        // stray stopDemo() during a real session would flip a live connection to
+        // Disconnected, which is exactly the kind of bug a demo mode must not
+        // introduce.
+        if (wasRunning && _connectionState.value is ConnectionState.Ready) {
+            _connectionState.value = ConnectionState.Disconnected
+        }
+    }
+
+    // NOSONAR kotlin:S3776 — this is a single sequential BLE connect procedure:
+    // permission gate, GATT connect, MTU, then one of three mutually exclusive
+    // dialect branches (plaintext / NinebotCrypto / Xiaomi auth), each with its
+    // own early exit. Splitting it across the return@launch boundaries would hide
+    // the strict ordering the handshake depends on. Behaviour is covered by the
+    // protocol unit tests; any restructure must be verified on real hardware.
+    fun connect(mac: String, register: Boolean = false) { // NOSONAR
+        // A real session must never inherit synthetic samples, so the demo is
+        // stopped before anything else happens.
+        stopDemo()
         // Normalize MAC address to uppercase to ensure consistent token lookup
         val normalizedMac = mac.uppercase()
-        connectionJob = scope.launch @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
+        lastConnectedMac = normalizedMac
+
+        // Record which scooter this session belongs to, before any telemetry is
+        // logged. Resolved from the advertised name because that is all that is
+        // available pre-connection; the confidence field records that this is a
+        // hint, not a fact, so a capture sent for diagnosis is not mistaken for
+        // ground truth.
+        runCatching {
+            val device = bleManager.getDevice(normalizedMac)
+            @SuppressLint("MissingPermission")
+            val advertisedName = device?.name
+            // The snapshot needs the name too: the detail screen derives which
+            // rows to render from the model that resolves from it.
+            lastConnectedAdvertisedName = advertisedName
+            snapshotStore.updateAdvertisedName(advertisedName)
+
+            // A manual override beats the advertisement. The rider is looking at
+            // the scooter; this code is matching a string. It is persisted so it
+            // survives the restart that follows a language change or a crash.
+            val manual = ModelOverrideStore.getInstance(context).override.value
+            logger.setActiveModel(ScooterModelRegistry.resolve(advertisedName, manual))
+        }.onFailure {
+            Log.w("ScooterRepo", "Could not resolve scooter model: ${it.message}")
+            logger.setActiveModel(null)
+        }
+        scope.launch(ioDispatcher) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
             _connectionState.value = ConnectionState.Connecting
             try {
-                // 在工作入口確認權限，涵蓋連線與錯誤清理的呼叫點。
-                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                // Every BLE call below (getDevice, connect, requestMtu,
+                // enableNotifications, requestPriority) throws SecurityException
+                // on Android 12+ without this permission. The @RequiresPermission
+                // annotation is compile-time only, so check it for real and fail
+                // with a clear message instead of an opaque crash.
+                if (ActivityCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.BLUETOOTH_CONNECT
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
                     throw SecurityException(getString(R.string.bluetooth_permission_required))
                 }
-                connectSession(normalizedMac, register, expectedModel, useEncrypted, plaintext)
-            } catch (timeout: TimeoutCancellationException) {
-                disconnect()
-                _connectionState.value = ConnectionState.Error("車輛連線逾時，請確認電源、序號與配對按鍵後重試")
-            } catch (cancelled: CancellationException) {
-                throw cancelled
+
+                val device = bleManager.getDevice(normalizedMac)
+                
+                // Clear old data from channels
+                while(controlChannel.tryReceive().isSuccess) {}
+                while(uartRxChannel.tryReceive().isSuccess) {}
+                
+                // Set up disconnection callback to detect scooter power-off
+                bleManager.setOnDisconnectCallback {
+                    Log.w("ScooterRepo", "BLE disconnection detected - scooter may have powered off")
+                    handleUnexpectedDisconnection()
+                }
+
+                val gatt = bleManager.connect(device) { uuid, data ->
+                    Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
+                    
+                    // Log BLE receive to CSV
+                    val charName = when (uuid) {
+                        uartRx -> "UART_RX"
+                        BleManager.AUTH_AVDTP -> "AUTH_AVDTP"
+                        BleManager.AUTH_UPNP -> "AUTH_UPNP"
+                        else -> uuid.toString().takeLast(8)
+                    }
+                    logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
+                    
+                    // trySend fails silently when the bounded channel is full.
+                    // Dropping an AUTH frame causes a spurious handshake
+                    // timeout, and dropping telemetry loses a sample, so at
+                    // least make the loss visible instead of invisible.
+                    // Route by "is this the data plane?" rather than by an
+                    // exact UUID. The data-plane UUID depends on the discovered
+                    // layout, which is only known after service discovery ??and
+                    // the auth characteristics are the only other thing this app
+                    // subscribes to, so treating everything else as telemetry is
+                    // both correct and immune to a late profile switch.
+                    val isDataPlane = uuid != BleManager.AUTH_UPNP &&
+                        uuid != BleManager.AUTH_AVDTP
+                    val delivered = if (isDataPlane) {
+                        uartRxChannel.trySend(data).isSuccess
+                    } else {
+                        controlChannel.trySend(data).isSuccess
+                    }
+                    if (!delivered) {
+                        Log.w("ScooterRepo", "Dropped ${data.size}-byte notification from $charName: channel full")
+                    }
+                } 
+                if (gatt == null) throw Exception(getString(R.string.error_gatt_failed))
+                activeGatt = gatt
+
+                // Service discovery has completed by the time connect() returns,
+                // so the layout is known here. Everything below uses the
+                // resolved data plane instead of assuming Nordic UART.
+                adoptDiscoveredProfile()
+                
+                // Request high priority for faster handshake
+                Log.d("ScooterRepo", "Requesting High Connection Priority")
+                bleManager.requestPriority(gatt, BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+                
+                // Request MTU for larger packets (Optional but helps)
+                // Permission is already verified at the top of connect(); this
+                // re-check is belt-and-braces for the lint annotation.
+                Log.d("ScooterRepo", "Requesting MTU 512")
+                if (androidx.core.app.ActivityCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.BLUETOOTH_CONNECT
+                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    Log.w("ScooterRepo", "Missing BLUETOOTH_CONNECT permission")
+                }
+                gatt.requestMtu(512)
+                delay(200)
+
+                // ---- Plaintext branch (stage C1) ------------------------------
+                // A plaintext scooter does not run the Xiaomi auth handshake at
+                // all: no `fe95` login, no session key, no encrypted UART. Sending
+                // it auth traffic would at best be ignored and at worst put the
+                // link into a state the plaintext loop cannot read from, so it is
+                // branched away before any of that is attempted.
+                if (detectedProtocolOrPlaintext() ==
+                    com.m365bleapp.protocol.ScooterProtocol.NINEBOT_PLAIN
+                ) {
+                    val session = PlaintextRegisterSession(
+                        // NINEBOT_PLAIN is the `5A A5` generation, which is P2 in
+                        // FrameCodec's naming (P1 is the older `55 AA`).
+                        protocol = com.m365bleapp.protocol.FrameCodec.Protocol.P2,
+                        write = PlaintextRegisterSession.Write { frame ->
+                            writeChar(uartService, uartTx, frame, waitForResponse = false)
+                        },
+                    )
+                    plaintextSession = session
+                    rememberProtocol(com.m365bleapp.protocol.ScooterProtocol.NINEBOT_PLAIN)
+
+                    Log.d("ScooterRepo", "Enabling UART RX for plaintext telemetry")
+                    bleManager.enableNotifications(gatt, uartService, uartRx) { }
+
+                    _connectionState.value = ConnectionState.Ready
+                    startPlaintextTelemetryLoop(session, gatt)
+                    return@launch
+                }
+
+                // ---- NinebotCrypto branch (stage C2) --------------------------
+                // A NinebotCrypto scooter runs the `5B/5C/5D` pairing exchange
+                // instead of the Xiaomi auth handshake. It is a different protocol
+                // on the same GATT layout, so it branches here rather than sharing
+                // the Xiaomi registration/login path.
+                if (detectedProtocolOrPlaintext() ==
+                    com.m365bleapp.protocol.ScooterProtocol.NINEBOT_CRYPTO
+                ) {
+                    Log.i("ScooterRepo", "NinebotCrypto dialect: starting 5B/5C/5D pairing")
+                    val name = runCatching {
+                        activeGatt?.device?.name?.toByteArray(Charsets.ISO_8859_1)
+                    }.getOrNull()
+                    if (name == null || name.isEmpty()) {
+                        // The session key is derived from the advertised name, so
+                        // without it no frame can ever be decrypted.
+                        _connectionState.value =
+                            ConnectionState.Error("NinebotCrypto needs the advertised name")
+                        return@launch
+                    }
+
+                    _connectionState.value =
+                        ConnectionState.Handshaking(getString(R.string.connecting))
+                    bleManager.enableNotifications(gatt, uartService, uartRx) { }
+                    val paired = runNinebotHandshake(gatt, name)
+                    if (!paired) {
+                        return@launch
+                    }
+                    _connectionState.value = ConnectionState.Ready
+                    // The handshake installs the session cipher; the telemetry loop
+                    // still needs the fallback path until an encrypted plaintext loop
+                    // exists, which is the next piece of work.
+                    Log.i("ScooterRepo", "NinebotCrypto: paired; encrypted telemetry pending")
+                    startPlaintextTelemetryLoop(
+                        PlaintextRegisterSession(
+                            protocol = com.m365bleapp.protocol.FrameCodec.Protocol.P2,
+                            write = PlaintextRegisterSession.Write { frame ->
+                                writeChar(uartService, uartTx, frame, waitForResponse = false)
+                            },
+                        ),
+                        gatt,
+                    )
+                    return@launch
+                }
+
+                // Enable Notifications on Handshake chars
+                Log.d("ScooterRepo", "Enabling AUTH UPNP")
+                bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_UPNP) { }
+                // delay(300) removed
+                
+                Log.d("ScooterRepo", "Enabling AUTH AVDTP")
+                bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_AVDTP) { }
+                // delay(500) removed
+
+                _connectionState.value = ConnectionState.Handshaking(getString(R.string.connecting))
+
+                if (register) {
+                    performRegistration()
+                    // Registration successful. Chain to Login immediately for seamless experience.
+                    Log.d("ScooterRepo", "Registration complete. Proceeding to Login.")
+                    _connectionState.value = ConnectionState.Handshaking(getString(R.string.state_logging_in))
+                    
+                    // Retrieve the token we just saved
+                    val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
+                        ?: throw Exception(getString(R.string.error_token_missing))
+                    
+                    // Give scooter a moment to persist the new token and reset auth state
+                    delay(1000)
+                    
+                    performLogin(tokenStr.hexToBytes())
+                } else {
+                    val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
+                    Log.d("ScooterRepo", "Token retrieved: ${tokenStr != null}")
+                    if (tokenStr == null) throw Exception(getString(R.string.error_no_token))
+                    performLogin(tokenStr.hexToBytes())
+                }
+                
+                Log.d("ScooterRepo", "Enabling UART RX...")
+                val uartOk = bleManager.enableNotifications(gatt, uartService, uartRx) { }
+                Log.d("ScooterRepo", "UART RX Status: $uartOk")
+                
+                _connectionState.value = ConnectionState.Ready
+                // Beep to confirm connection (Optional but nice)
+                beep()
+                
+                // Read initial states (light, etc.) to sync UI with scooter
+                delay(500)  // Wait for connection to stabilize
+                readInitialStates()
+                
+                startTelemetryLoop()
+
             } catch (e: Exception) {
                 Log.e("ScooterRepo", "Connection error", e)
+                // The handshake failed, so whatever dialect was cached for this
+                // scooter is either wrong or no longer true (a reflash changes it
+                // while the MAC stays the same). Drop it so the next attempt
+                // re-probes instead of repeating a known-bad guess.
+                forgetProtocol(e.message ?: "handshake failed")
                 // Clean up first: disconnect() sets state to Disconnected, so
                 // setting Error before it meant the UI never saw the failure.
                 disconnect()
                 _connectionState.value = ConnectionState.Error(e.message ?: getString(R.string.state_unknown_error))
             }
         }
-    }
-
-    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-    private suspend fun connectSession(normalizedMac: String, register: Boolean, expectedModel: Int, useEncrypted: Boolean, plaintext: Boolean) {
-        val gatt = openGatt(normalizedMac)
-        if (useEncrypted || plaintext || gatt.getService(AUTH_SERVICE)?.getCharacteristic(AUTH_UPNP) == null) {
-            check(_experimentalModels.value) { "請先啟用「實驗性車款」再連線新車款" }
-            connectVehicle(normalizedMac, gatt.device.name ?: error("車輛未提供配對所需的藍牙名稱"), expectedModel, plaintext, probePlain = !useEncrypted && !plaintext)
-            return
-        }
-
-        loginLegacy(gatt, normalizedMac, register)
-        val detected = readLegacyIdentification(expectedModel)
-        if (detected.accepted && native.availableProfilesSafe().single { it.modelId == detected.modelId }.cryptoStrategy == 2) {
-            // 登入後才確認為新一代車款時，以全新連線切換加密策略。
-            disconnect()
-            connectionJob = null
-            connect(normalizedMac, expectedModel = detected.modelId, useEncrypted = true)
-            return
-        }
-        acceptProfile(detected, normalizedMac)
-        check(_activeProfile.value?.cryptoStrategy == 1) { "請選擇此車款的加密配對設定後重新連線" }
-        _connectionState.value = ConnectionState.Ready
-        // Beep to confirm connection (Optional but nice)
-        beep()
-
-        // Read initial states (light, etc.) to sync UI with scooter
-        delay(500)  // Wait for connection to stabilize
-        readInitialStates()
-
-        startTelemetryLoop()
-
-    }
-
-    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-    private suspend fun openGatt(normalizedMac: String): BluetoothGatt {
-        // Every BLE call below (getDevice, connect, requestMtu,
-        // enableNotifications, requestPriority) throws SecurityException
-        // on Android 12+ without this permission. The @RequiresPermission
-        // annotation is compile-time only, so check it for real and fail
-        // with a clear message instead of an opaque crash.
-        if (ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.BLUETOOTH_CONNECT
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            throw SecurityException(getString(R.string.bluetooth_permission_required))
-        }
-
-        val device = bleManager.getDevice(normalizedMac)
-
-        // Clear old data from channels
-        while(controlChannel.tryReceive().isSuccess) {}
-        while(uartRxChannel.tryReceive().isSuccess) {}
-
-        // Set up disconnection callback to detect scooter power-off
-        bleManager.setOnDisconnectCallback {
-            Log.w("ScooterRepo", "BLE disconnection detected - scooter may have powered off")
-            handleUnexpectedDisconnection()
-        }
-
-        val gatt = bleManager.connect(device, ::handleNotification)
-        if (gatt == null) throw Exception(getString(R.string.error_gatt_failed))
-        activeGatt = gatt
-
-        // Request high priority for faster handshake
-        Log.d("ScooterRepo", "Requesting High Connection Priority")
-        bleManager.requestPriority(gatt, BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-
-        // Request MTU for larger packets (Optional but helps)
-        // Permission is already verified at the top of connect(); this
-        // re-check is belt-and-braces for the lint annotation.
-        Log.d("ScooterRepo", "Requesting MTU 512")
-        if (androidx.core.app.ActivityCompat.checkSelfPermission(
-                context,
-                android.Manifest.permission.BLUETOOTH_CONNECT
-            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            Log.w("ScooterRepo", "Missing BLUETOOTH_CONNECT permission")
-        }
-        gatt.requestMtu(512)
-        delay(200)
-
-        return gatt
-    }
-
-    private fun handleNotification(uuid: UUID, data: ByteArray) {
-        if (_connectionState.value == ConnectionState.Ready) Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
-
-        // Log BLE receive to CSV
-        val charName = when (uuid) {
-            BleManager.UART_RX -> "UART_RX"
-            BleManager.AUTH_AVDTP -> "AUTH_AVDTP"
-            BleManager.AUTH_UPNP -> "AUTH_UPNP"
-            else -> uuid.toString().takeLast(8)
-        }
-        if (_connectionState.value == ConnectionState.Ready) logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
-
-        // trySend fails silently when the bounded channel is full.
-        // Dropping an AUTH frame causes a spurious handshake
-        // timeout, and dropping telemetry loses a sample, so at
-        // least make the loss visible instead of invisible.
-        val delivered = if (uuid == BleManager.UART_RX) {
-            uartRxChannel.trySend(data).isSuccess
-        } else {
-            controlChannel.trySend(data).isSuccess
-        }
-        if (!delivered) {
-            Log.w("ScooterRepo", "Dropped ${data.size}-byte notification from $charName: channel full")
-        }
-    }
-
-    private suspend fun loginLegacy(gatt: BluetoothGatt, normalizedMac: String, register: Boolean) {
-        // Enable Notifications on Handshake chars
-        Log.d("ScooterRepo", "Enabling AUTH UPNP")
-        bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_UPNP) { }
-        // delay(300) removed
-
-        Log.d("ScooterRepo", "Enabling AUTH AVDTP")
-        bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_AVDTP) { }
-        // delay(500) removed
-
-        _connectionState.value = ConnectionState.Handshaking(getString(R.string.connecting))
-
-        if (register) {
-            performRegistration()
-            // Registration successful. Chain to Login immediately for seamless experience.
-            Log.d("ScooterRepo", "Registration complete. Proceeding to Login.")
-            _connectionState.value = ConnectionState.Handshaking(getString(R.string.state_logging_in))
-
-            // Retrieve the token we just saved
-            val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
-                ?: throw Exception(getString(R.string.error_token_missing))
-
-            // Give scooter a moment to persist the new token and reset auth state
-            delay(1000)
-
-            performLogin(tokenStr.hexToBytes())
-        } else {
-            val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
-            Log.d("ScooterRepo", "Token retrieved: ${tokenStr != null}")
-            if (tokenStr == null) throw Exception(getString(R.string.error_no_token))
-            performLogin(tokenStr.hexToBytes())
-        }
-
-        Log.d("ScooterRepo", "Enabling UART RX...")
-        val uartOk = bleManager.enableNotifications(gatt, UART_SERVICE, UART_RX) { }
-        Log.d("ScooterRepo", "UART RX Status: $uartOk")
-
-    }
-
-    private suspend fun readLegacyIdentification(expectedModel: Int): DetectionResult {
-        _connectionState.value = ConnectionState.Handshaking("正在讀取車輛識別暫存器")
-        val serialRequest = buildPacket(0x20, 1, 0x10, byteArrayOf(14))
-        writeUartEncrypted(native.encryptSafe(sessionPtr, serialRequest, 0))
-        val serialFrame = native.decryptSafe(sessionPtr, readEncryptedFrame())
-        check(serialFrame.size >= 17 && serialFrame[0] == 0x23.toByte() && serialFrame[1] == 1.toByte() && serialFrame[2] == 0x10.toByte()) { "無法讀取車輛識別暫存器" }
-        return DetectionResult.decode(native.resolveIdentificationSafe(serialFrame.copyOfRange(3, 17), expectedModel, _experimentalModels.value))
     }
 
     private suspend fun performRegistration() {
@@ -654,12 +1008,284 @@ class ScooterRepository private constructor(private val context: Context) {
         
         // 6. Confirm
         waitForCmd("21000000")
-        
+
+        // The Mi handshake completed, which is positive evidence for exactly one
+        // dialect. Recorded rather than inferred: reaching this line means the
+        // scooter understood `fe95` + ECDH + AES-CCM, and nothing else does.
+        rememberProtocol(com.m365bleapp.protocol.ScooterProtocol.XIAOMI_MI)
+
         // Give scooter time to finalize login state before UART communication
         delay(500)
     }
+
+    /**
+     * The resolved model for the connected scooter.
+     *
+     * Single place where "what is this scooter?" is answered, so a screen cannot
+     * get it wrong by forgetting the manual override or by inventing a name.
+     * Deliberately shares [lastConnectedAdvertisedName] with the diagnostics
+     * block, so what the UI shows and what a bug report contains cannot differ.
+     */
+    fun currentIdentification(): com.m365bleapp.protocol.Identification =
+        com.m365bleapp.protocol.ScooterModelRegistry.resolve(
+            advertisedName = lastConnectedAdvertisedName,
+            override = com.m365bleapp.protocol.ModelOverrideStore.getInstance(context).override.value,
+        )
+
+    /**
+     * What the connected scooter can report and be controlled for.
+     *
+     * The UI asks this rather than checking a model name, so adding a model does
+     * not require editing every screen.
+     */
+    fun currentCapabilities(): com.m365bleapp.protocol.ModelCapabilities =
+        currentIdentification().model.capabilities
+
+    /**
+     * A one-block summary of what the app believes about the current connection.
+     *
+     * Built for pasting into a bug report. Every line here has been the first
+     * question in diagnosing a "connects but shows nothing" report:
+     *
+     *  - **which GATT layout** the device answered on, because three exist and
+     *    they are not interchangeable;
+     *  - **which dialect** a completed handshake proved, because a name or a
+     *    service UUID cannot establish it;
+     *  - **the MTU**, because a wrongly-sized write is discarded silently and
+     *    looks exactly like a scooter that refuses commands;
+     *  - **which model** was identified and how confidently, because a name-prefix
+     *    guess must not be read as ground truth.
+     *
+     * Returns a plain string rather than structured data on purpose: its purpose
+     * is to leave the app through a share sheet.
+     */
+    fun connectionDiagnostics(): String {
+        val profiles = bleManager.discoveredProfiles.value
+        val model = com.m365bleapp.protocol.ScooterModelRegistry.resolve(
+            lastConnectedAdvertisedName,
+            com.m365bleapp.protocol.ModelOverrideStore.getInstance(context).override.value,
+        )
+
+        return buildString {
+            appendLine("== Scooter connection diagnostics ==")
+            appendLine("App: ${com.m365bleapp.BuildConfig.VERSION_NAME} (${com.m365bleapp.BuildConfig.VERSION_CODE})")
+            appendLine("Model: ${model.model.displayName} (${model.model.rustId})")
+            appendLine("Model confidence: ${model.confidence.label}")
+            appendLine("Model source: ${model.source}")
+            appendLine("MAC: ${lastConnectedMac ?: "not connected"}")
+            appendLine("Advertised name: ${lastConnectedAdvertisedName ?: "unknown"}")
+            appendLine("GATT layout: ${_activeProfile.value?.displayName ?: "none recognised"}")
+            appendLine(
+                "GATT layouts available: " +
+                    if (profiles.isEmpty()) "none"
+                    else profiles.joinToString { it.kind.name }
+            )
+            appendLine("Protocol dialect: ${_detectedProtocol.value.label}")
+            appendLine("Protocol cached: ${lastConnectedMac?.let { protocolProbe.hasCached(it) } ?: false}")
+            appendLine("Negotiated MTU: ${bleManager.negotiatedMtu} (usable ${bleManager.usableChunkSize} bytes)")
+            appendLine("Connection state: ${_connectionState.value}")
+            appendLine(
+                "Cached vehicle: serial=${snapshotStore.snapshot.value.serial ?: "-"} " +
+                    "firmware=${snapshotStore.snapshot.value.firmware ?: "-"}"
+            )
+        }
+    }
+
+    /**
+     * Caches a dialect that a completed handshake proved.
+     *
+     * Written through [com.m365bleapp.protocol.ProtocolProbe] so a later connect
+     * can try the known dialect first instead of re-probing blindly.
+     */
+    private fun rememberProtocol(protocol: com.m365bleapp.protocol.ScooterProtocol) {
+        lastConnectedMac?.let { protocolProbe.remember(it, protocol) }
+        _detectedProtocol.value = protocol
+        Log.i("ScooterRepo", "Protocol dialect detected: ${protocol.label} (${protocol.id})")
+    }
+
+    /**
+     * Drops the cached dialect after a failed handshake.
+     *
+     * A scooter can be reflashed and change dialect while keeping its MAC, so a
+     * stale entry must not be trusted forever: without this the app would retry
+     * a dialect that can no longer work and never re-probe.
+     */
+    private fun forgetProtocol(reason: String) {
+        lastConnectedMac?.let {
+            if (protocolProbe.hasCached(it)) {
+                Log.w("ScooterRepo", "Forgetting cached protocol for $it: $reason")
+            }
+            protocolProbe.forget(it)
+        }
+        _detectedProtocol.value = com.m365bleapp.protocol.ScooterProtocol.UNKNOWN
+    }
     
     // ... startTelemetryLoop uses writeNbParcel (raw) which is correct for UART ...
+
+    // ------------------------------------------------------------- plaintext
+    // Stage C1: scooters that speak plain `5A A5` framing never run the crypto
+    // handshake. Everything below is that path. It is deliberately separate from
+    // the encrypted loop rather than woven into it: the two share no state except
+    // `motorInfo`, and a single loop with crypto branches is how the wrong offset
+    // got into `parseTelemetry` in the first place.
+
+    /**
+     * Registers polled on a plaintext connection.
+     *
+     * Each entry is the register byte and the number of bytes to ask for, which is
+     * the frame's argument. Read lengths come from what Scootbatt requests for the
+     * same registers.
+     */
+    private val plaintextRegisters: List<Pair<Int, Int>> = listOf(
+        0xB5 to 2,   // speed
+        0x1B to 2,   // error code
+        0x3E to 2,   // frame temperature
+        0x3B to 1,   // battery state of health
+    )
+
+    /**
+     * Starts the plaintext telemetry loop.
+     *
+     * Polls one register per tick, matching Scootbatt's one-outstanding-request
+     * discipline: a second request is only sent after the first has been answered
+     * or has timed out.
+     */
+    // NOSONAR kotlin:S3776 — a single polling loop with one-outstanding-request
+    // discipline: per-register scheduling, timeout/retry and reconnect-on-death
+    // are one cohesive control flow. Extracting parts would split the request/
+    // reply invariant across functions. Restructure needs on-hardware checking.
+    private fun startPlaintextTelemetryLoop(session: PlaintextRegisterSession, gatt: android.bluetooth.BluetoothGatt) { // NOSONAR
+        scope.launch(ioDispatcher) {
+            Log.i("ScooterRepo", "Plaintext telemetry loop starting (${session.protocol.label})")
+
+            // Drain anything left over from the handshake attempt so the first
+            // reply we read belongs to the first request we send.
+            while (controlChannel.tryReceive().isSuccess) { /* discard */ }
+
+            var index = 0
+            var consecutiveFailures = 0
+
+            while (currentCoroutineContext().isActive && activeGatt === gatt) {
+                val (register, readLength) = plaintextRegisters[index % plaintextRegisters.size]
+                index++
+
+                try {
+                    // The request is framed by PlaintextRegisterSession, which is
+                    // what puts FrameCodec on a live path: it supplies the sync
+                    // word, the length byte and the checksum.
+                    val request = session.buildRead(
+                        register = register.toByte(),
+                        argument = readLength.toByte(),
+                        destination = PlaintextRegisterSession.ADDRESS_ESC,
+                    )
+                    writeChar(uartService, uartTx, request, waitForResponse = false)
+
+                    // Collect notifications until the frame is complete rather than
+                    // assuming one notification carries the whole reply: a reply
+                    // longer than the negotiated chunk size arrives in pieces.
+                    val deadline = System.currentTimeMillis() + PLAINTEXT_REPLY_TIMEOUT_MS
+                    var assembled: ByteArray? = null
+                    while (System.currentTimeMillis() < deadline && assembled == null) {
+                        val chunk = withTimeoutOrNull(PLAINTEXT_CHUNK_WAIT_MS) {
+                            controlChannel.receive()
+                        } ?: continue
+                        val complete = session.isComplete(chunk)
+                        if (complete == true) {
+                            assembled = chunk
+                        } else if (complete == false) {
+                            // Keep the partial frame and try to extend it.
+                            val more = withTimeoutOrNull(PLAINTEXT_CHUNK_WAIT_MS) {
+                                controlChannel.receive()
+                            }
+                            if (more != null) {
+                                val joined = session.reassemble(listOf(chunk, more))
+                                if (session.isComplete(joined) == true) assembled = joined
+                            }
+                        }
+                        // complete == null means the length byte is not here yet.
+                    }
+
+                    val frame = assembled
+                    if (frame == null) {
+                        consecutiveFailures++
+                        Log.w(
+                            "ScooterRepo",
+                            "Plaintext: no complete reply for 0x${register.toString(16)} " +
+                                "(failure $consecutiveFailures)"
+                        )
+                    } else {
+                        val decoded = session.accept(frame)
+                        if (session.isReplyFor(decoded, register.toByte())) {
+                            applyPlaintextReply(decoded)
+                            consecutiveFailures = 0
+                        } else {
+                            Log.w(
+                                "ScooterRepo",
+                                "Plaintext: reply for 0x${decoded.command.toString(16)} " +
+                                    "while waiting for 0x${register.toString(16)}"
+                            )
+                        }
+                    }
+                } catch (e: com.m365bleapp.protocol.FrameCodec.FrameException) {
+                    // A malformed frame is dropped, not guessed at. The next tick
+                    // re-requests the same register, so nothing is lost but a tick.
+                    consecutiveFailures++
+                    Log.w("ScooterRepo", "Plaintext: dropped malformed frame: ${e.message}")
+                } catch (e: Exception) {
+                    consecutiveFailures++
+                    Log.w("ScooterRepo", "Plaintext: request failed: ${e.message}")
+                }
+
+                if (consecutiveFailures >= PLAINTEXT_FAILURES_BEFORE_RECONNECT) {
+                    Log.e(
+                        "ScooterRepo",
+                        "Plaintext: $consecutiveFailures consecutive failures; " +
+                            "declaring the link dead"
+                    )
+                    // The encrypted path has no equivalent of this: Scootbatt never
+                    // counts timeouts and relies on the GATT callback alone.
+                    disconnect()
+                    return@launch
+                }
+
+                delay(PLAINTEXT_POLL_INTERVAL_MS)
+            }
+
+            Log.i("ScooterRepo", "Plaintext telemetry loop ended")
+        }
+    }
+
+    /**
+     * Applies one decoded plaintext reply to the telemetry state.
+     *
+     * The register?ield mapping itself lives in [PlaintextTelemetryMapper], where
+     * it is unit-tested; this method only performs the side effects. Duplicating the
+     * switch here is what made the original `parseTelemetry` offsets unverifiable.
+     */
+    private fun applyPlaintextReply(frame: com.m365bleapp.protocol.FrameCodec.Frame) {
+        val update = com.m365bleapp.protocol.PlaintextTelemetryMapper.decode(
+            register = frame.command.toInt() and 0xFF,
+            payload = frame.payload,
+            // Only the Xiaomi family uses the 0.001 speed scale on 0xB5, and this
+            // loop only runs for plaintext scooters, so the default scale applies.
+            xiaomi = false,
+        )
+        if (update is com.m365bleapp.protocol.PlaintextTelemetryMapper.Update.Ignored) {
+            Log.d(
+                "ScooterRepo",
+                "Plaintext: nothing to apply from register 0x${(frame.command.toInt() and 0xFF).toString(16)}"
+            )
+            return
+        }
+
+        val updated = com.m365bleapp.protocol.PlaintextTelemetryMapper.apply(
+            current = _motorInfo.value,
+            update = update,
+        ) ?: return
+
+        _motorInfo.value = updated
+        logger.log(updated)
+    }
 
     private suspend fun startTelemetryLoop() {
         logger.startSession()
@@ -845,18 +1471,75 @@ class ScooterRepository private constructor(private val context: Context) {
         return commandBytes
     }
     
-    private suspend fun writeUartEncrypted(data: ByteArray) {
+    // NOSONAR kotlin:S3776 — MTU-chunked encrypted write with per-chunk retry/
+    // give-up policy; the loop, the WriteRetryPolicy decision and its logging are
+    // one unit. Only 2 over the threshold; kept whole to avoid splitting the
+    // accepted/rejected/give-up handling of an untestable BLE write path.
+    private suspend fun writeUartEncrypted(data: ByteArray) { // NOSONAR
         val gatt = activeGatt ?: return
-        // MTU is 23, so payload is 20 bytes.
-        val mtu = 20 
-        for (i in 0 until data.size step mtu) {
-            val end = (i + mtu).coerceAtMost(data.size)
-            val chunk = data.copyOfRange(i, end)
-            Log.d("ScooterRepo", "Tx Chunk ($i-$end): ${chunk.toHex()}")
-            // Use Write With Response (true) to ensure delivery and correct pacing
-            bleManager.write(gatt, UART_SERVICE, UART_TX, chunk, true)
-            // No strict delay needed if waiting for response, but a small one helps stability
-            delay(5) 
+        // Chunk by the MTU the scooter actually granted, not a guess. `write()`
+        // asks for MTU 512, but a peripheral may grant as little as the 23-byte
+        // minimum, and a write larger than ATT_MTU - 3 is dropped by the peer
+        // with no error at all ??indistinguishable from the command being
+        // refused. bleManager.negotiatedMtu tracks what came back.
+        val chunks = MtuFragmenter.fragment(data, bleManager.negotiatedMtu)
+
+        for ((index, chunk) in chunks.withIndex()) {
+            // Retry this chunk only. The previous code discarded the boolean
+            // returned by write() entirely, so a rejected write was silently
+            // treated as delivered and the caller then waited out its full
+            // read timeout for a reply that could never come.
+            var attemptsMade = 0
+
+            while (true) {
+                attemptsMade++
+                val accepted = bleManager.write(gatt, uartService, uartTx, chunk, true)
+
+                val outcome = if (accepted) {
+                    WriteRetryPolicy.Outcome.ACCEPTED
+                } else {
+                    WriteRetryPolicy.Outcome.REJECTED
+                }
+
+                when (val decision = WriteRetryPolicy.decide(outcome, attemptsMade)) {
+                    is WriteRetryPolicy.Decision.Retry -> {
+                        Log.w(
+                            "ScooterRepo",
+                            "Chunk ${index + 1}/${chunks.size} rejected; retrying in " +
+                                "${decision.delayMs}ms (attempt ${decision.attempt}/" +
+                                "${WriteRetryPolicy.maxAttempts()})"
+                        )
+                        delay(decision.delayMs)
+                    }
+
+                    is WriteRetryPolicy.Decision.GiveUp -> {
+                        if (!accepted) {
+                            // Report rather than absorb. A persistent write
+                            // failure used to look like an idle scooter,
+                            // because the telemetry loop counted it as a
+                            // missing reply and simply tried again.
+                            Log.e(
+                                "ScooterRepo",
+                                "Chunk ${index + 1}/${chunks.size} could not be written: " +
+                                    decision.reason
+                            )
+                        } else {
+                            Log.d(
+                                "ScooterRepo",
+                                "Chunk ${index + 1}/${chunks.size} written " +
+                                    "(${chunk.size} bytes, mtu ${bleManager.negotiatedMtu})"
+                            )
+                        }
+                        break
+                    }
+                }
+            }
+
+            // Small pacing delay between chunks; the scooter's UART bridge needs
+            // a gap to drain each ATT write before the next arrives.
+            if (index < chunks.lastIndex) {
+                delay(5)
+            }
         }
     }
     
@@ -869,15 +1552,18 @@ class ScooterRepository private constructor(private val context: Context) {
      * Protocol: Write 0x0001 to address 0x70
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun lock(): Result<Unit> = withContext(Dispatchers.IO) {
-        if (vehicleConnection != null) return@withContext controlVehicle(0, 1)
+    suspend fun lock(): Result<Unit> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
             Log.d("ScooterRepo", "Locking scooter motor")
-            val packet = native.profileControlSafe(checkNotNull(_activeProfile.value).modelId, 0, 1)
-            check(packet.isNotEmpty()) { "此車款未定義這項控制" }
+            val packet = buildPacket(
+                dest = 0x20.toByte(),    // Master to Motor
+                rw = 0x03.toByte(),      // Write
+                attr = 0x70.toByte(),    // Lock address
+                payload = byteArrayOf(0x01, 0x00)  // Value 0x0001 (little-endian: LSB first)
+            )
             sendCommand(packet, "Lock Motor")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -893,15 +1579,18 @@ class ScooterRepository private constructor(private val context: Context) {
      * Protocol: Write 0x0001 to address 0x71
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun unlock(): Result<Unit> = withContext(Dispatchers.IO) {
-        if (vehicleConnection != null) return@withContext controlVehicle(0, 0)
+    suspend fun unlock(): Result<Unit> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
             Log.d("ScooterRepo", "Unlocking scooter motor")
-            val packet = native.profileControlSafe(checkNotNull(_activeProfile.value).modelId, 0, 0)
-            check(packet.isNotEmpty()) { "此車款未定義這項控制" }
+            val packet = buildPacket(
+                dest = 0x20.toByte(),    // Master to Motor
+                rw = 0x03.toByte(),      // Write
+                attr = 0x71.toByte(),    // Unlock address
+                payload = byteArrayOf(0x01, 0x00)  // Value 0x0001 (little-endian: LSB first)
+            )
             sendCommand(packet, "Unlock Motor")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -926,14 +1615,19 @@ class ScooterRepository private constructor(private val context: Context) {
      * Protocol: Write 0x0002 to address 0x7D
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun lightOn(): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun lightOn(): Result<Unit> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
             Log.d("ScooterRepo", "Turning tail light on (0x7D = 0x0002)")
-            val packet = native.profileControlSafe(checkNotNull(_activeProfile.value).modelId, 1, 1)
-            check(packet.isNotEmpty()) { "此車款未定義這項控制" }
+            val packet = buildPacket(
+                dest = 0x20.toByte(),    // Master to Motor
+                rw = 0x03.toByte(),      // Write
+                attr = 0x7D.toByte(),    // TailLight address
+                payload = byteArrayOf(0x02, 0x00)  // Value 0x0002 (little-endian: LSB first)
+            )
+            Log.d("ScooterRepo", "Tail light packet: ${packet.toHex()}")
             sendCommand(packet, "Tail Light On")
             
             // Wait for scooter to process the command
@@ -956,14 +1650,19 @@ class ScooterRepository private constructor(private val context: Context) {
      * Protocol: Write 0x0000 to address 0x7D
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun lightOff(): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun lightOff(): Result<Unit> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
             Log.d("ScooterRepo", "Turning tail light off (0x7D = 0x0000)")
-            val packet = native.profileControlSafe(checkNotNull(_activeProfile.value).modelId, 1, 0)
-            check(packet.isNotEmpty()) { "此車款未定義這項控制" }
+            val packet = buildPacket(
+                dest = 0x20.toByte(),    // Master to Motor
+                rw = 0x03.toByte(),      // Write
+                attr = 0x7D.toByte(),    // TailLight address
+                payload = byteArrayOf(0x00, 0x00)  // Value 0x0000 = Off
+            )
+            Log.d("ScooterRepo", "Tail light packet: ${packet.toHex()}")
             sendCommand(packet, "Tail Light Off")
             
             // Wait for scooter to process the command
@@ -985,7 +1684,6 @@ class ScooterRepository private constructor(private val context: Context) {
      * @param on true to turn on, false to turn off
      */
     suspend fun setLight(on: Boolean): Result<Unit> {
-        if (vehicleConnection != null) return controlVehicle(1, if (on) 1 else 0)
         return if (on) lightOn() else lightOff()
     }
     
@@ -996,7 +1694,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * Direction: Master to Motor (0x20), Command: Read (0x01)
      * Response: 0x0000=off, 0x0001=on brake, 0x0002=always on
      */
-    suspend fun readLightState(): Result<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun readLightState(): Result<Boolean> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
@@ -1040,7 +1738,6 @@ class ScooterRepository private constructor(private val context: Context) {
      * Encrypts the packet and sends it via UART
      */
     private suspend fun sendCommand(packet: ByteArray, commandName: String = "Command") {
-        check(_connectionState.value == ConnectionState.Ready && _activeProfile.value != null) { "車輛尚未辨識或未就緒" }
         val counter = 0L  // Always use counter=0 (scooter doesn't track)
         val encrypted = native.encryptSafe(sessionPtr, packet, counter)
         Log.d("ScooterRepo", "Command Encrypted (${encrypted.size} bytes): ${encrypted.toHex()}")
@@ -1061,28 +1758,22 @@ class ScooterRepository private constructor(private val context: Context) {
         } catch (e: Exception) {}
     }
 
-    private fun tryLegacyParse(data: ByteArray) {
-        // Legacy fallback for frames without proper 55 AA header
-        // Try to detect the attribute byte in the first few bytes
-        for (i in 0 until minOf(data.size, 5)) {
-            val attr = data[i].toUByte().toInt()
-            when (attr) {
-                0xB0 -> {
-                    if (data.size > i + 22) {
-                        parseMotorInfoFromData(data.sliceArray(i + 1 until data.size))
-                        return
-                    }
-                }
-                0xB5 -> {
-                    if (data.size > i + 2) {
-                        parseSpeedFromData(data.sliceArray(i + 1 until data.size))
-                        return
-                    }
-                }
-            }
-        }
-        Log.d("ScooterRepo", "Legacy parse failed for: ${data.toHex()}")
-    }
+    // NOTE (stage A3): a `tryLegacyParse` fallback used to live here. It scanned
+    // the first five bytes for a value that looked like an attribute (0xB0/0xB5)
+    // and then handed *everything after it* ??including the encryptor's random
+    // tail ??to the register parser.
+    //
+    // It was removed rather than fixed, for three reasons:
+    //   1. It had no call sites; it was dead code.
+    //   2. Its heuristic is unsound: any payload byte that happens to equal 0xB0
+    //      starts a parse anchored at the wrong offset, and the parser then reads
+    //      plausible-looking garbage. That is a silent wrong value on a HUD, which
+    //      is worse than no value.
+    //   3. No supported format needs it. Plaintext scooters use the 55 AA / 5A A5
+    //      envelope handled by FrameCodec, and encrypted ones always carry a size
+    //      byte, so there is no "frame without a header" to recover from.
+    //
+    // Malformed frames are now dropped with a logged reason by parseTelemetry.
 
     // Helpers
     // Changed to default waitForResponse=false (Fire and Forget) + Pacing Delay
@@ -1091,13 +1782,13 @@ class ScooterRepository private constructor(private val context: Context) {
         
         // Log to CSV
         val serviceName = when (service) {
-            UART_SERVICE -> "UART"
+            uartService -> "UART"
             AUTH_SERVICE -> "AUTH"
             else -> service.toString().takeLast(8)
         }
         val charName = when (char) {
-            UART_TX -> "TX"
-            UART_RX -> "RX"
+            uartTx -> "TX"
+            uartRx -> "RX"
             AUTH_UPNP -> "UPNP"
             AUTH_AVDTP -> "AVDTP"
             else -> char.toString().takeLast(8)
@@ -1113,15 +1804,12 @@ class ScooterRepository private constructor(private val context: Context) {
     
     // Write Raw Chunks (NbParcel)
     private suspend fun writeNbParcel(service: UUID, char: UUID, data: ByteArray) {
-         val chunkSize = 20
-         var offset = 0
-         while (offset < data.size) {
-             val end = (offset + chunkSize).coerceAtMost(data.size)
-             val chunk = data.sliceArray(offset until end)
-             writeChar(service, char, chunk)
-             offset += chunkSize
-             delay(20)
-         }
+        // Same MTU-3 rule as writeUartEncrypted: this used a hard-coded 20 as
+        // well, so a larger granted MTU was never taken advantage of.
+        for (chunk in MtuFragmenter.fragment(data, bleManager.negotiatedMtu)) {
+            writeChar(service, char, chunk)
+            delay(20)
+        }
     }
     
     // Write Mi Protocol Chunks (Index + 0x00 + payload)
@@ -1261,53 +1949,70 @@ class ScooterRepository private constructor(private val context: Context) {
     }
 
 
+    /**
+     * Parses one decrypted reply and dispatches it to the register parser.
+     *
+     * ## Two things fixed here (stage A3)
+     *
+     * 1. **A missing size byte.** The previous comment claimed the decrypted data
+     *    had "NO size byte at the start", but [buildPacket] shows the encrypted
+     *    message begins with one (`[size][direction][rw][attr][payload]`). The old
+     *    code therefore read the *size byte* as the direction and shifted every
+     *    field by one, which sent `0xB0`-style registers down the wrong branch and
+     *    mislabelled the rest.
+     *
+     * 2. **No real length validation.** The old guard was a bare
+     *    `packet.size < 7`, so a reply announcing 32 bytes and carrying one still
+     *    reached a parser and read past the end of its data. [ScooterReply.parse]
+     *    now rejects that before any offset is computed. A dropped frame leaves a
+     *    stale value on screen; a mis-parsed one shows a wrong value, and a wrong
+     *    speed on a HUD is the worse failure.
+     *
+     * The four trailing bytes are the random tail `encrypt_uart` appends; they are
+     * excluded by the size byte rather than by arithmetic on the frame length.
+     */
     private fun parseTelemetry(packet: ByteArray) {
-        if (packet.isEmpty()) return
-        
-        // ENCRYPTED UART Response Format (from decrypt_uart):
-        // The decrypted data does NOT include size byte or 55 AA header!
-        // 
-        // Actual format (from ninebot-ble/src/session/payload.rs):
-        // [0]: direction (0x23 = motor to master, 0x25 = battery to master)
-        // [1]: type (0x01 = read response)
-        // [2]: attribute (e.g., 0xB0)
-        // [3...n-4]: response data
-        // [last 4 bytes]: random padding from encryption (should be ignored)
-        //
-        // Reference: pop_head() in payload.rs removes first 3 bytes (dir, type, attr)
-        
+        if (packet.isEmpty()) {
+            Log.w("ScooterRepo", "Empty telemetry packet")
+            return
+        }
+
         Log.d("ScooterRepo", "Parsing telemetry: ${packet.toHex()}")
-        
-        if (packet.size < 7) { // At least dir + type + attr + some data + 4 padding
-            Log.w("ScooterRepo", "Packet too short: ${packet.size} bytes")
-            return
-        }
-        
-        // Parse the header (NO size byte at the start!)
-        val direction = packet[0].toUByte().toInt()  // 0x23 = motor to master, 0x25 = battery to master
-        val rw = packet[1].toUByte().toInt()         // 0x01 = read response
-        val attr = packet[2].toUByte().toInt()       // Attribute (0xB0, 0x3A, 0x25, etc.)
-        
-        // Data starts at index 3, ends 4 bytes before the end (random padding)
-        val dataEnd = packet.size - 4  // Exclude 4 bytes of random padding
-        val dataLen = dataEnd - 3      // Subtract 3 for header (dir, type, attr)
-        
-        if (dataLen <= 0) {
-            Log.w("ScooterRepo", "No data in response, packetSize=${packet.size}")
-            return
-        }
-        
-        val data = packet.sliceArray(3 until dataEnd)
-        Log.d("ScooterRepo", "Response: Dir=0x${direction.toString(16)}, RW=0x${rw.toString(16)}, Attr=0x${attr.toString(16)}, DataLen=${data.size}, Data=${data.toHex()}")
-        
-        when (attr) {
-            0xB0 -> parseMotorInfoFromData(data)
-            0x3A -> parseTripInfo(data)
-            0x25 -> parseRemainingKm(data)
-            0xB5 -> parseSpeedFromData(data)
-            0x7D -> parseTailLightState(data)
-            0x7C -> parseCruiseState(data)
-            else -> Log.d("ScooterRepo", "Unknown attribute: 0x${attr.toString(16)}")
+
+        // `ScooterReply` expects the frame including its size byte, which is what
+        // the crypto layer hands us. The previous revision stripped it first and
+        // then mis-read every field; keeping it is what makes the validator and
+        // the parser agree.
+        when (val validation = com.m365bleapp.protocol.ScooterReply.parse(packet)) {
+            is com.m365bleapp.protocol.ScooterReplyValidation.Rejected -> {
+                Log.w("ScooterRepo", "Dropped malformed reply: ${validation.reason}")
+                return
+            }
+
+            is com.m365bleapp.protocol.ScooterReplyValidation.Valid -> {
+                val reply = validation.reply
+                val data = reply.data
+                Log.d(
+                    "ScooterRepo",
+                    "Response: Dir=0x${reply.direction.toString(16)}, " +
+                        "Type=0x${reply.type.toString(16)}, " +
+                        "Attr=0x${reply.attribute.toString(16)}, " +
+                        "DataLen=${data.size}, Data=${data.toHex()}"
+                )
+
+                when (reply.attribute) {
+                    0xB0 -> parseMotorInfoFromData(data)
+                    0x3A -> parseTripInfo(data)
+                    0x25 -> parseRemainingKm(data)
+                    0xB5 -> parseSpeedFromData(data)
+                    0x7D -> parseTailLightState(data)
+                    0x7C -> parseCruiseState(data)
+                    else -> Log.d(
+                        "ScooterRepo",
+                        "Unknown attribute: 0x${reply.attribute.toString(16)}"
+                    )
+                }
+            }
         }
     }
     
@@ -1371,27 +2076,15 @@ class ScooterRepository private constructor(private val context: Context) {
             return
         }
         
-        val model = _activeProfile.value?.modelId ?: return
-        val values = native.decodeLegacyMotorInfoSafe(model, data)
-        if (values.size != 7) return
-        val finalBattery = values[0].toInt()
-        val speedKmh = values[1]
-        val avgSpeedKmh = values[2]
-        val totalDistanceKm = values[3] / 1000.0
-        val tempC = values[6]
-
-        // Preserve existing trip/remaining values
-        val existing = _motorInfo.value
-        val info = MotorInfo(
-            speed = speedKmh.toDouble(),
-            battery = finalBattery,
-            temp = tempC.toDouble(),
-            mileage = totalDistanceKm,
-            avgSpeed = avgSpeedKmh.toDouble(),
-            tripSeconds = existing?.tripSeconds ?: 0,
-            tripMeters = existing?.tripMeters ?: 0,
-            remainingKm = existing?.remainingKm ?: 0.0
-        )
+        // Debug: dump all u16 values at each offset
+        val bb = ByteBuffer.wrap(data).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        for (i in 0 until minOf(data.size - 1, 24) step 2) {
+            val v = bb.getShort(i).toInt() and 0xFFFF
+            Log.d("ScooterRepo", "  offset $i: 0x${v.toString(16)} = $v")
+        }
+        
+        val info = MotorInfoParser.parse(data, _motorInfo.value) ?: return
+        Log.d("ScooterRepo", "Parsed motor info: $info")
         _motorInfo.value = info
         logger.log(info)
     }
@@ -1472,18 +2165,6 @@ class ScooterRepository private constructor(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     private fun releaseConnection(closeGatt: Boolean = true) {
-        vehicleConnection?.close()
-        vehicleConnection = null
-        verificationReply?.cancel()
-        verificationReply = null
-        _verificationPrompt.value = null
-        _activeProfile.value = null
-        connectionJob?.cancel()
-        serialReply?.cancel()
-        serialReply = null
-        _pairingDevice.value = null
-        pairingCoordinator?.close()
-        pairingCoordinator = null
         val (gatt, ptr) = synchronized(connectionLock) {
             val g = activeGatt
             val p = sessionPtr
@@ -1543,6 +2224,9 @@ class ScooterRepository private constructor(private val context: Context) {
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun disconnect() {
+        // Stopping the demo here means the UI's existing "disconnect" action also
+        // ends a demo ride, so there is no separate control to discover.
+        stopDemo()
         // Clear the disconnect callback first to avoid recursive calls
         bleManager.clearOnDisconnectCallback()
         

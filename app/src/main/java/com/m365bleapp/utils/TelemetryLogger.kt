@@ -22,6 +22,27 @@ class TelemetryLogger(private val context: Context) {
     @Volatile private var currentBleLogFile: File? = null
     @Volatile private var isLogging = false
 
+    /**
+     * Which scooter the current session belongs to.
+     *
+     * Written once per connection by [setActiveModel] and stamped on every row.
+     *
+     * ## Why a log needs this
+     *
+     * A capture with no model is close to useless for diagnosing another
+     * vehicle. Register offsets, scalings and even the framing differ per
+     * family, so a log that does not say what it came from cannot be compared
+     * against a reference — which is the whole purpose of the BLE log.
+     *
+     * The **confidence** is recorded too, not just the name. A row attributed to
+     * "Xiaomi M365" that was actually a name-prefix guess would otherwise be
+     * read as ground truth, and the point of sending a capture is to establish
+     * ground truth.
+     */
+    @Volatile private var activeModel: String = "unknown"
+    @Volatile private var activeModelId: String = "Unknown"
+    @Volatile private var activeModelConfidence: String = "Unverified"
+
     private val writeLock = Any()
 
     // SimpleDateFormat is not thread-safe: a shared instance produces corrupted
@@ -56,6 +77,29 @@ class TelemetryLogger(private val context: Context) {
     fun setLoggingEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_LOGGING_ENABLED, enabled).apply()
     }
+
+    /**
+     * Records which scooter subsequent rows belong to.
+     *
+     * Called on connect. Safe to call at any time; rows written before the
+     * identity is known carry `unknown`, which is itself informative — it says
+     * the capture started before a model was established.
+     *
+     * @param model the resolved model, or null if none was identified
+     */
+    fun setActiveModel(model: com.m365bleapp.protocol.Identification?) {
+        if (model == null) {
+            activeModel = "unknown"
+            activeModelId = "Unknown"
+            activeModelConfidence = "Unverified"
+            return
+        }
+        activeModel = model.model.displayName
+        // The stable Rust id, so a report can be matched to a register profile
+        // without depending on a translated display name.
+        activeModelId = model.model.rustId
+        activeModelConfidence = model.confidence.label
+    }
     
     /**
      * Start a new logging session for both telemetry and BLE communication.
@@ -85,13 +129,13 @@ class TelemetryLogger(private val context: Context) {
             // Telemetry log file
             val telemetryFile = File(dir, "m365_telemetry_${stamp}.csv")
             FileWriter(telemetryFile, true).use { writer ->
-                writer.append("Timestamp,Speed,Battery,Temperature,AvgSpeed,TripSeconds,TripMeters,RemainingKm,Mileage\n")
+                writer.append("Timestamp,Model,ModelId,Confidence,Speed,Battery,Temperature,AvgSpeed,TripSeconds,TripMeters,RemainingKm,Mileage\n")
             }
 
             // BLE communication log file
             val bleFile = File(dir, "m365_ble_${stamp}.csv")
             FileWriter(bleFile, true).use { writer ->
-                writer.append("Timestamp,Direction,Type,Service,Characteristic,DataHex,DataLength,Description\n")
+                writer.append("Timestamp,Model,ModelId,Confidence,Direction,Type,Service,Characteristic,DataHex,DataLength,Description\n")
             }
 
             // Only publish the session once both files exist, so a failure
@@ -112,7 +156,14 @@ class TelemetryLogger(private val context: Context) {
      */
     fun log(info: MotorInfo) {
         // Format outside the lock; only the write is serialised.
-        val line = "${timestamp()},${info.speed},${info.battery},${info.temp}," +
+        // Read the model fields once so a mid-write setActiveModel cannot produce
+        // a row whose columns disagree with each other.
+        val model = activeModel
+        val modelId = activeModelId
+        val confidence = activeModelConfidence
+
+        val line = "${timestamp()},${csvEscape(model)},${csvEscape(modelId)},${csvEscape(confidence)}," +
+                "${info.speed},${info.battery},${info.temp}," +
                 "${info.avgSpeed},${info.tripSeconds},${info.tripMeters},${info.remainingKm},${info.mileage}\n"
 
         synchronized(writeLock) {
@@ -152,7 +203,14 @@ class TelemetryLogger(private val context: Context) {
         description: String = ""
     ) {
         val dataHex = data.joinToString("") { "%02X".format(it) }
-        val line = "${timestamp()},${csvEscape(direction)},${csvEscape(type)}," +
+        // Snapshot the model fields once, as in log(), so a row cannot straddle
+        // a model change and end up internally inconsistent.
+        val model = activeModel
+        val modelId = activeModelId
+        val confidence = activeModelConfidence
+
+        val line = "${timestamp()},${csvEscape(model)},${csvEscape(modelId)},${csvEscape(confidence)}," +
+                "${csvEscape(direction)},${csvEscape(type)}," +
                 "${csvEscape(service)},${csvEscape(characteristic)},$dataHex,${data.size}," +
                 "${csvEscape(description)}\n"
 

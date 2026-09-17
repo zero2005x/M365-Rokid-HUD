@@ -124,7 +124,8 @@ M365-Rokid-HUD/
 
 ## 🔐 Protocol Overview
 
-The app implements the Xiaomi M365 encrypted BLE protocol:
+This app implements the **Xiaomi Mi authentication** protocol, which is what the
+M365 and its close relatives use:
 
 | Component      | Algorithm        | Description                            |
 | -------------- | ---------------- | -------------------------------------- |
@@ -133,13 +134,43 @@ The app implements the Xiaomi M365 encrypted BLE protocol:
 | Authentication | HMAC-SHA256      | Message authentication                 |
 | Encryption     | AES-128-CCM      | Authenticated encryption for UART data |
 
+The app also **identifies** two further protocol families so it can say what a
+scooter is instead of misreading it, but does not yet produce telemetry for them:
+
+| Family | Framing / crypto | Status |
+| ------ | ---------------- | ------ |
+| **Xiaomi Mi auth** | `fe95` + ECDH + AES-CCM | Telemetry implemented |
+| **Ninebot legacy** | `5AA5` + chained AES (`0x5B/0x5C/0x5D` pairing) | Cipher implemented, **unverified**; telemetry withheld |
+| **Encryption2** (current gen) | `5AA5` + AES-CTR + CBC-MAC | Handshake implemented; telemetry withheld — no published register map |
+
+See [`doc/PROTOCOL_FAMILIES.md`](doc/PROTOCOL_FAMILIES.md) for the full
+comparison and [`doc/NINEBOT_LEGACY_PROTOCOL.md`](doc/NINEBOT_LEGACY_PROTOCOL.md)
+for the legacy cipher.
+
 ### Telemetry Data
+
+Register addresses are defined once, in the model registry
+([`ninebot-ble/src/model/mod.rs`](ninebot-ble/src/model/mod.rs)), rather than
+inline at each call site:
 
 | Query      | Address | Data                                             |
 | ---------- | ------- | ------------------------------------------------ |
 | Motor Info | `0xB0`  | Speed, battery %, controller temp, total mileage |
 | Trip Info  | `0x3A`  | Current trip time, distance                      |
 | Range      | `0x25`  | Estimated remaining range (km)                   |
+
+> ⚠️ **One open question about these offsets.** The shipped Android parser and
+> the Rust decoder read the **same bytes** — they quote different numbers only
+> because they count from different base pointers (`rust_offset == android_offset
+> + 3`). What is unresolved is whether that shared position matches the wire: both
+> reach the battery 8 bytes past the 3-byte header, while the published register
+> map places it at offset 4.
+>
+> Either the response carries a 4-byte prefix and both parsers are right, or both
+> are wrong. Scaling is agreed by every source; only the offset is in question.
+> **One captured `0xB0` response settles it.** Until then the question is
+> recorded and asserted by tests rather than papered over — see
+> [`doc/MODEL_SUPPORT.md`](doc/MODEL_SUPPORT.md) §8.
 
 ## 🛠️ Requirements
 
@@ -161,12 +192,49 @@ The app implements the Xiaomi M365 encrypted BLE protocol:
 
 ### BLE Scanning Strategy
 
-The app identifies M365 scooters using:
+The scan-time identity rule lives in **exactly one place**:
+[`ninebot-ble/src/identity.rs`](ninebot-ble/src/identity.rs), as
+`XIAOMI_SCOOTER_MATCH`. It is two values, and the documentation points at them
+rather than restating them — three copies of an identity rule means two are
+eventually wrong, and a scanner that matches nothing looks like a scooter that is
+switched off.
 
-1. **Device Name**: Starts with `MIScooter` (advertised name priority)
-2. **Service UUID**: Contains Xiaomi service `0000fe95-0000-1000-8000-00805f9b34fb`
+A device is treated as a Xiaomi-lineage scooter when **either**:
 
-Devices are sorted by: Registered → Scooter → Has Name → Signal Strength (RSSI)
+- its advertised name starts with `XIAOMI_SCOOTER_MATCH.name_prefix`, **or**
+- its advertisement or service list contains `XIAOMI_SCOOTER_MATCH.service_uuid`.
+
+Either signal alone is sufficient: many devices advertise the service with no
+name, and vice versa.
+
+> ⚠️ **This identifies a lineage, not a model and not a protocol.** The name
+> prefix covers M365 / Pro / Pro2 / 1S / Lite / Mi 3 alike, and the service list
+> is not a protocol discriminator in general — Xiaomi, Ninebot and current Segway
+> models all expose the same Nordic UART service, and some answer on only one of
+> the services they advertise. Deciding which dialect a device speaks requires
+> probing it. See [`doc/PROTOCOL_FAMILIES.md`](doc/PROTOCOL_FAMILIES.md).
+
+A scooter that cannot be identified is still connectable: the scan screen offers
+a **manual model override**, because on untested hardware automatic
+identification can fail and there would otherwise be no recourse.
+
+Devices are sorted by: Registered → Looks like a scooter → Has Name → Signal
+Strength (RSSI)
+
+### Model Support
+
+Which scooters this app can actually read is tracked in
+[**`doc/MODEL_SUPPORT.md`**](doc/MODEL_SUPPORT.md) — a model × capability ×
+verification-status matrix. It is the authoritative answer to "does my scooter
+work?", and it distinguishes *recognised* from *readable*.
+
+Two things worth knowing up front:
+
+- **Readings are withheld rather than guessed** for models whose register layout
+  is not published. A wrong number is harder to notice than a missing one.
+- **Nothing is marked verified yet**, because no capture from real hardware has
+  been supplied for any model. Manual override does not change that: choosing a
+  model says which layout to *try*, not that it is correct.
 
 ## 🚀 Getting Started
 

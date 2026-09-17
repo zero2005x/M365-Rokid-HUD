@@ -51,6 +51,15 @@ class MainActivity : ComponentActivity() {
     private val timeDataState = mutableStateOf(TimeData())
     private val signalStrengthState = mutableStateOf(BleClient.SignalStrength.Good)
     private val isTelemetryFreshState = mutableStateOf(true)
+
+    /**
+     * Which fields to render, as chosen on the phone.
+     *
+     * Starts at [DisplayPrefs] defaults (the historical layout) and is replaced
+     * as soon as the phone pushes its selection over the display-prefs
+     * characteristic, so the HUD is never blank while waiting.
+     */
+    private val displayPrefsState = mutableStateOf(DisplayPrefs())
     
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -121,6 +130,7 @@ class MainActivity : ComponentActivity() {
                     val currentTimeData by timeDataState
                     val currentSignalStrength by signalStrengthState
                     val currentIsTelemetryFresh by isTelemetryFreshState
+                    val currentDisplayPrefs by displayPrefsState
                     
                     HudScreen(
                         telemetry = currentTelemetry,
@@ -128,6 +138,7 @@ class MainActivity : ComponentActivity() {
                         connectionState = currentConnectionState,
                         signalStrength = currentSignalStrength,
                         isTelemetryFresh = currentIsTelemetryFresh,
+                        displayPrefs = currentDisplayPrefs,
                         onRetryClick = { retryConnection() }
                     )
                 }
@@ -142,7 +153,7 @@ class MainActivity : ComponentActivity() {
      * Puts the HUD in true full-screen (immersive sticky) mode.
      *
      * Why this replaces the old approach: apps targeting Android 15 (API 35)
-     * and above are laid out edge-to-edge and CANNOT opt out — Android 16
+     * and above are laid out edge-to-edge and CANNOT opt out ??Android 16
      * deleted `windowOptOutEdgeToEdgeEnforcement`. At the same time
      * `android:statusBarColor` and `android:navigationBarColor` became no-ops,
      * so the black bars themes.xml used to paint no longer exist and the
@@ -172,6 +183,16 @@ class MainActivity : ComponentActivity() {
         if (hasFocus) applyImmersiveMode()
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Collectors are normally registered from onServiceConnected. Only
+        // re-register if this Activity restarted while already bound; the
+        // observeJob guard means this can never stack duplicates.
+        if (serviceBound && observeJob?.isActive != true) {
+            observeServiceState()
+        }
+    }
+    
     override fun onDestroy() {
         super.onDestroy()
         observeJob?.cancel()
@@ -189,7 +210,7 @@ class MainActivity : ComponentActivity() {
         // The list must match the running platform version, not just the
         // target. BLUETOOTH_SCAN/BLUETOOTH_CONNECT do not exist below API 31,
         // so requesting them on Android 9-11 (this module's minSdk is 28)
-        // returned "denied" for permissions the OS has never heard of — every
+        // returned "denied" for permissions the OS has never heard of ??every
         // check failed and the HUD service simply never started. Rokid ships
         // Android 12, which is why this went unnoticed.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -198,8 +219,8 @@ class MainActivity : ComponentActivity() {
             // No ACCESS_FINE_LOCATION here: BLUETOOTH_SCAN is declared
             // neverForLocation in the manifest, so the platform does not
             // require a location grant to scan. Prompting for location on a
-            // pair of glasses — where dismissing a system dialog is genuinely
-            // awkward — for a permission the scan does not need is the worst
+            // pair of glasses ??where dismissing a system dialog is genuinely
+            // awkward ??for a permission the scan does not need is the worst
             // of both worlds.
         } else {
             // API 28-30: the legacy install-time Bluetooth permissions are
@@ -220,7 +241,7 @@ class MainActivity : ComponentActivity() {
 
         // NOTE: FOREGROUND_SERVICE is deliberately NOT in this list. It is a
         // normal (install-time) permission, so requestPermissions() cannot
-        // grant it and checkSelfPermission() always reports it granted —
+        // grant it and checkSelfPermission() always reports it granted ??
         // including it was a no-op that made the intent of this block unclear.
 
         val allGranted = permissions.all {
@@ -250,37 +271,32 @@ class MainActivity : ComponentActivity() {
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
     
-    /** 服務綁定時註冊一次；repeatOnLifecycle 負責停止／恢復收集，重新綁定時取消舊工作。 */
+    /**
+     * Collects the client's state flows into the Compose state holders.
+     *
+     * Uses [lifecycleScope] + [repeatOnLifecycle] rather than `MainScope()`.
+     * `MainScope()` created a brand-new scope per call that was never
+     * cancelled, so each of these collectors ran forever while capturing this
+     * Activity ??leaking the Activity (and the bound service/BLE client) across
+     * every stop/start and configuration change. Because this method is called
+     * from both onServiceConnected and onStart, those leaked collectors also
+     * accumulated, so every emission triggered N redundant state writes.
+     *
+     * [observeJob] guarantees only one set of collectors is ever active.
+     */
     private fun observeServiceState() {
-        val client = bleService?.getBleClient() ?: return
+        val client = bleService?.connectionManager ?: return
 
         observeJob?.cancel()
         observeJob = lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch {
-                    client.connectionState.collect { state ->
-                        connectionState.value = state
-                    }
-                }
-                launch {
-                    client.telemetry.collect { data ->
-                        telemetryState.value = data
-                    }
-                }
-                launch {
-                    client.timeData.collect { data ->
-                        timeDataState.value = data
-                    }
-                }
-                launch {
-                    client.signalStrength.collect { strength ->
-                        signalStrengthState.value = strength
-                    }
-                }
-                launch {
-                    client.isTelemetryFresh.collect { fresh ->
-                        isTelemetryFreshState.value = fresh
-                    }
+                client.hudState.collect { snapshot ->
+                    connectionState.value = snapshot.connection
+                    telemetryState.value = snapshot.telemetry
+                    timeDataState.value = snapshot.time
+                    signalStrengthState.value = snapshot.signal
+                    isTelemetryFreshState.value = snapshot.fresh
+                    displayPrefsState.value = snapshot.preferences
                 }
             }
         }

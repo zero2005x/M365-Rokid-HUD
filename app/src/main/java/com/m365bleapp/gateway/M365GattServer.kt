@@ -61,11 +61,36 @@ class M365GattServer(
     private lateinit var statusCharacteristic: BluetoothGattCharacteristic
     private lateinit var timeCharacteristic: BluetoothGattCharacteristic
     private lateinit var glassesBatteryCharacteristic: BluetoothGattCharacteristic
+    private lateinit var displayPrefsCharacteristic: BluetoothGattCharacteristic
     
     // Current data
     @Volatile private var currentTelemetry: ByteArray = ByteArray(M365HudGattProfile.TELEMETRY_DATA_SIZE)
     @Volatile private var currentTime: ByteArray = ByteArray(M365HudGattProfile.TIME_DATA_SIZE)
     @Volatile private var glassesBatteryLevel: Int = -1  // -1 means not received yet
+
+    /**
+     * Current HUD field selection, as the phone wants the glasses to render it.
+     *
+     * Starts at [DisplayField.DEFAULT_MASK] — the historical layout — so a
+     * glasses build that connects before the rider has ever opened the display
+     * settings sees exactly what it always saw.
+     */
+    @Volatile private var displayFieldMask: Int = DisplayField.DEFAULT_MASK
+    @Volatile private var displayTextScalePercent: Int = 100
+
+    /** Encoded [M365HudGattProfile.DISPLAY_PREFS_SIZE]-byte payload; see the profile. */
+    private fun buildDisplayPrefsPayload(): ByteArray {
+        val mask = displayFieldMask
+        val scale = displayTextScalePercent
+            .coerceIn(M365HudGattProfile.DISPLAY_PREFS_MIN_SCALE, M365HudGattProfile.DISPLAY_PREFS_MAX_SCALE)
+        return ByteBuffer.allocate(M365HudGattProfile.DISPLAY_PREFS_SIZE)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .put(M365HudGattProfile.DISPLAY_PREFS_VERSION.toByte())      // 0: version
+            .putInt(mask)                                                // 1-4: bitmask LE
+            .put(scale.toByte())                                         // 5: text scale %
+            .put(0)                                                      // 6: reserved, must be 0
+            .array()
+    }
     
     // Written by start()/stop(), read from the telemetry threads.
     @Volatile private var isRunning = false
@@ -140,6 +165,18 @@ class M365GattServer(
                 value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) -> {
                     subscribersOf(charUuid)[address] = device
                     Log.i(TAG, "Notifications ENABLED for $address on $charUuid, total subscribers: ${subscriberCount()}")
+
+                    // Push the current HUD field selection the moment the
+                    // glasses subscribe to it.
+                    //
+                    // A notification only fires when the value CHANGES, so
+                    // without this a freshly connected (or reconnected) glasses
+                    // would sit on its default layout until the rider next
+                    // touched the setting on the phone. Sending on subscribe
+                    // makes the rider's saved choice take effect immediately.
+                    if (charUuid == M365HudGattProfile.DISPLAY_PREFS_CHAR_UUID) {
+                        notifyDisplayPrefsTo(address)
+                    }
                     BluetoothGatt.GATT_SUCCESS
                 }
 
@@ -191,6 +228,10 @@ class M365GattServer(
                     // Return current glasses battery level (or -1 if not received yet)
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0,
                         byteArrayOf(glassesBatteryLevel.toByte()))
+                }
+                M365HudGattProfile.DISPLAY_PREFS_CHAR_UUID -> {
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0,
+                        buildDisplayPrefsPayload())
                 }
             }
         }
@@ -301,10 +342,29 @@ class M365GattServer(
             BluetoothGattCharacteristic.PERMISSION_WRITE
         )
         
+        // Display Preferences Characteristic (Read + Notify)
+        //
+        // Read so a glasses build can fetch the current selection without
+        // waiting for a change; Notify so edits made on the phone take effect
+        // live. See M365HudGattProfile.DISPLAY_PREFS_CHAR_UUID for why this is a
+        // separate characteristic rather than extra bytes in the telemetry
+        // frame.
+        displayPrefsCharacteristic = BluetoothGattCharacteristic(
+            M365HudGattProfile.DISPLAY_PREFS_CHAR_UUID,
+            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+            BluetoothGattCharacteristic.PERMISSION_READ
+        ).apply {
+            addDescriptor(BluetoothGattDescriptor(
+                M365HudGattProfile.CCCD_UUID,
+                BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
+            ))
+        }
+
         service.addCharacteristic(telemetryCharacteristic)
         service.addCharacteristic(statusCharacteristic)
         service.addCharacteristic(timeCharacteristic)
         service.addCharacteristic(glassesBatteryCharacteristic)
+        service.addCharacteristic(displayPrefsCharacteristic)
         
         // Reset service added flag before adding
         serviceAdded = false
@@ -513,6 +573,58 @@ class M365GattServer(
     private fun getPhoneBatteryLevel(): Int {
         val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    }
+
+    // ========== HUD display preferences ==========
+
+    /**
+     * Update which fields the glasses render, and push it to every subscriber.
+     *
+     * Safe to call when the gateway is stopped or nothing is subscribed: the
+     * value is remembered and delivered on the next subscription (see the CCCD
+     * enable branch above), so a rider can set this up before connecting.
+     *
+     * @param mask bitmask built from [DisplayField]
+     * @param textScalePercent 100 = normal; clamped to the range the profile declares
+     */
+    fun setDisplayPrefs(mask: Int, textScalePercent: Int) {
+        displayFieldMask = mask
+        displayTextScalePercent = textScalePercent.coerceIn(
+            M365HudGattProfile.DISPLAY_PREFS_MIN_SCALE,
+            M365HudGattProfile.DISPLAY_PREFS_MAX_SCALE
+        )
+        Log.i(TAG, "Display prefs updated: mask=0x${mask.toString(16)}, scale=$displayTextScalePercent%")
+
+        // Lateinit guard: the characteristic does not exist until start() has
+        // built the service.
+        if (isRunning) {
+            broadcastDisplayPrefs()
+        }
+    }
+
+    /** Sends the current selection to every subscribed glasses. */
+    private fun broadcastDisplayPrefs() {
+        @Suppress("DEPRECATION")
+        displayPrefsCharacteristic.value = buildDisplayPrefsPayload()
+        subscribersOf(M365HudGattProfile.DISPLAY_PREFS_CHAR_UUID).values.forEach { device ->
+            @Suppress("DEPRECATION")
+            gattServer?.notifyCharacteristicChanged(device, displayPrefsCharacteristic, false)
+        }
+    }
+
+    /**
+     * Sends the current selection to one device.
+     *
+     * Called from the CCCD-enable path, where the subscription was just
+     * recorded — hence the direct send rather than [broadcastDisplayPrefs].
+     */
+    private fun notifyDisplayPrefsTo(address: String) {
+        val device = subscribersOf(M365HudGattProfile.DISPLAY_PREFS_CHAR_UUID)[address] ?: return
+        @Suppress("DEPRECATION")
+        displayPrefsCharacteristic.value = buildDisplayPrefsPayload()
+        @Suppress("DEPRECATION")
+        gattServer?.notifyCharacteristicChanged(device, displayPrefsCharacteristic, false)
+        Log.d(TAG, "Sent display prefs to $address on subscribe")
     }
     
     private fun calculateCrc16(data: ByteArray, offset: Int, length: Int): Short {

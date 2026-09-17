@@ -1,0 +1,14 @@
+====== M365 1s cooking guide ======
+
+<font 20px/inherit;;inherit;;inherit>Xiaomi 1s generator has been discontinued</font>
+
+1s owners are advised to use [[https://pro2.cfw.sh|Pro2 CFW generator]]. Everything stays the same for patching via ScooterHacking Utility and DownG.
+
+For ScooterCompanion, follow the instructions below
+
+  - Open ZIP file
+  - Extract and edit info.txt
+  - Replace 'pro2' on line 1 with '1s'
+  - Save and add file back to archive
+  - Flash
+

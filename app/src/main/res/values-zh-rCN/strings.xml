@@ -167,4 +167,15 @@
     <string name="battery_optimization_warning">⚠️ 电池优化已开启</string>
     <string name="battery_optimization_message">Android 可能会在后台关闭应用程序，导致眼镜连接中断。点击以关闭电池优化，确保连接稳定。</string>
     <string name="battery_optimization_exempt">关闭优化</string>
+    <!-- Home controls / feedback -->
+    <string name="control_state_unknown">状态未知</string>
+    <string name="lock_confirm_title">要锁定电机吗？</string>
+    <string name="lock_confirm_message">滑板车无法回报锁定状态，因此无法验证。请仅在静止时锁定。</string>
+    <string name="msg_motor_locked">电机已锁定</string>
+    <string name="msg_motor_unlocked">电机已解锁</string>
+    <string name="msg_lock_failed">锁定失败：%1$s</string>
+    <string name="msg_unlock_failed">解锁失败：%1$s</string>
+    <string name="msg_light_on">尾灯开启</string>
+    <string name="msg_light_off">尾灯关闭</string>
+    <string name="msg_light_failed">灯光控制失败：%1$s</string>
 </resources>

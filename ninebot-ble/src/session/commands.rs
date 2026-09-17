@@ -36,8 +36,7 @@ impl ReadWrite {
   }
 }
 
-#[derive(Clone, Copy)]
-#[repr(usize)]
+#[derive(Clone)]
 pub enum Attribute {
   GeneralInfo,
   MotorInfo,
@@ -54,6 +53,28 @@ pub enum Attribute {
   BatteryInfo,
   Lock,
   Unlock
+}
+
+impl Attribute {
+  fn value(&self) -> u8 {
+    match self {
+      Attribute::GeneralInfo          => 0x10,
+      Attribute::DistanceLeft         => 0x25,
+      Attribute::Speed                => 0xB5,
+      Attribute::TripDistance         => 0xB9,
+      Attribute::BatteryVoltage       => 0x34,
+      Attribute::BatteryCurrent       => 0x33,
+      Attribute::BatteryPercent       => 0x32,
+      Attribute::MotorInfo            => 0xB0,
+      Attribute::BatteryCellVoltages  => 0x40,
+      Attribute::Supplementary        => 0x7B,
+      Attribute::Cruise               => 0x7C,
+      Attribute::TailLight            => 0x7D,
+      Attribute::BatteryInfo          => 0x31,
+      Attribute::Lock                 => 0x70,
+      Attribute::Unlock               => 0x71
+    }
+  }
 }
 
 #[derive(Clone)]
@@ -74,8 +95,6 @@ pub const MAX_PAYLOAD_LEN: usize = u8::MAX as usize - 2;
 pub enum CommandError {
   #[error("Payload is {0} bytes, but the length field can only encode up to {MAX_PAYLOAD_LEN}")]
   PayloadTooLong(usize),
-  #[error("Command is not defined by this profile")]
-  UnsupportedCommand,
 }
 
 impl Debug for ScooterCommand {
@@ -94,11 +113,6 @@ impl ScooterCommand {
   /// oversized payload is rejected instead of being silently truncated (or
   /// wrapping around) into a corrupt frame.
   pub fn as_bytes(&self) -> Result<Vec<u8>, CommandError> {
-    self.as_bytes_for(&crate::profile::M365Profile)
-  }
-
-  /// 依連線綁定的車款查表，不回退到其他車款。
-  pub fn as_bytes_for(&self, profile: &dyn crate::profile::ScooterProfile) -> Result<Vec<u8>, CommandError> {
     if self.payload.len() > MAX_PAYLOAD_LEN {
       return Err(CommandError::PayloadTooLong(self.payload.len()));
     }
@@ -110,8 +124,7 @@ impl ScooterCommand {
     bytes.push(len);
     bytes.push(self.direction.value());
     bytes.push(self.read_write.value());
-    bytes.push(*profile.register_map().legacy_addresses.get(self.attribute as usize)
-      .ok_or(CommandError::UnsupportedCommand)?);
+    bytes.push(self.attribute.value());
     bytes.extend_from_slice(&self.payload);
     Ok(bytes)
   }

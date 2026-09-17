@@ -158,9 +158,6 @@ private data class ScannedDevice(
 fun ScanScreen(
     repository: ScooterRepository,
     onNavigateToDashboard: () -> Unit,
-    onNavigateToLanguage: () -> Unit = {},
-    onNavigateToLogViewer: () -> Unit = {},
-    onNavigateToHudDisplay: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {}
 ) {
     // val bleManager = BleManager(repository.context) // Removed

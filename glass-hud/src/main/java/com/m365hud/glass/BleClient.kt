@@ -1,4 +1,4 @@
-package com.m365hud.glass
+﻿package com.m365hud.glass
 
 import android.annotation.SuppressLint
 import android.bluetooth.*
@@ -55,7 +55,11 @@ class BleClient(private val context: Context) {
     
     // === COROUTINE SCOPE for BLE operations ===
     // Uses IO dispatcher for BLE operations to prevent blocking UI thread
-    private val bleScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // Injected rather than hardcoded at each call site so the dispatchers can be
+    // swapped in tests and there is a single place to change them.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main
+    private val bleScope = CoroutineScope(ioDispatcher + SupervisorJob())
     
     // CONNECTION HEALTH: Count consecutive stale checks
     @Volatile private var consecutiveStaleChecks = 0
@@ -143,7 +147,7 @@ class BleClient(private val context: Context) {
         // Reset the connection flag only. Do NOT clear failedDevices here:
         // onServicesDiscovered adds a device to that list and restarts the
         // scan, so wiping it on every scan made the very same device get
-        // retried immediately — an endless connect / discover-fail / rescan
+        // retried immediately ??an endless connect / discover-fail / rescan
         // loop. The list is already cleared on a successful connection.
         isConnecting = false
 
@@ -173,7 +177,7 @@ class BleClient(private val context: Context) {
         bleScope.launch {
             // Fallback: Try scanning without UUID filter after 5 seconds if nothing found
             delay(SCAN_RETRY_WITHOUT_FILTER_MS)
-            withContext(Dispatchers.Main) {
+            withContext(mainDispatcher) {
                 if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
                     Log.w(TAG, "No device found with UUID filter, retrying without filter...")
                     stopScan()
@@ -185,7 +189,7 @@ class BleClient(private val context: Context) {
         // Auto-stop scan after timeout (using coroutine)
         bleScope.launch {
             delay(SCAN_TIMEOUT_MS)
-            withContext(Dispatchers.Main) {
+            withContext(mainDispatcher) {
                 if (_connectionState.value == ConnectionState.Scanning) {
                     stopScan()
                     Log.e(TAG, "Scan timeout - Gateway not found after ${SCAN_TIMEOUT_MS}ms")
@@ -331,7 +335,7 @@ class BleClient(private val context: Context) {
             // Wait briefly for disconnect to complete before closing (using coroutine)
             bleScope.launch {
                 delay(100)
-                withContext(Dispatchers.Main) {
+                withContext(mainDispatcher) {
                     try {
                         g.close()
                     } catch (e: Exception) {
@@ -454,7 +458,7 @@ class BleClient(private val context: Context) {
                     // Small delay after refresh before discovering services (using coroutine)
                     bleScope.launch {
                         delay(200)
-                        withContext(Dispatchers.Main) {
+                        withContext(mainDispatcher) {
                             gatt.discoverServices()
                         }
                     }
@@ -507,7 +511,7 @@ class BleClient(private val context: Context) {
                         Log.i(TAG, "AUTO-RECONNECT: Will attempt to reconnect in 2 seconds...")
                         bleScope.launch {
                             delay(2000)
-                            withContext(Dispatchers.Main) {
+                            withContext(mainDispatcher) {
                                 if (_connectionState.value == ConnectionState.Disconnected) {
                                     Log.i(TAG, "AUTO-RECONNECT: Starting scan...")
                                     startScan()
@@ -556,7 +560,7 @@ class BleClient(private val context: Context) {
                 _connectionState.value = ConnectionState.Scanning
                 bleScope.launch {
                     delay(500) // Brief delay before restarting scan
-                    withContext(Dispatchers.Main) {
+                    withContext(mainDispatcher) {
                         startScan()
                     }
                 }
@@ -596,7 +600,7 @@ class BleClient(private val context: Context) {
             if (timeChar != null) {
                 bleScope.launch {
                     delay(500)
-                    withContext(Dispatchers.Main) {
+                    withContext(mainDispatcher) {
                         enableNotification(gatt, timeChar)
                     }
                 }
@@ -607,7 +611,7 @@ class BleClient(private val context: Context) {
             // their default layout. So a missing characteristic is logged at
             // debug level and never treated as a connection failure.
             //
-            // Subscribe only — no explicit read. A GATT read issued while the
+            // Subscribe only ??no explicit read. A GATT read issued while the
             // CCCD descriptor write is still in flight gets dropped by some
             // Android stacks (the stack serialises GATT operations and does not
             // queue a read behind a descriptor write reliably). The phone side
@@ -617,7 +621,7 @@ class BleClient(private val context: Context) {
             if (prefsChar != null) {
                 bleScope.launch {
                     delay(750)
-                    withContext(Dispatchers.Main) {
+                    withContext(mainDispatcher) {
                         enableNotification(gatt, prefsChar)
                     }
                 }
@@ -789,7 +793,7 @@ class BleClient(private val context: Context) {
                     // Auto-reconnect if too many stale checks
                     if (consecutiveStaleChecks >= STALE_CHECKS_BEFORE_RECONNECT && autoReconnectEnabled) {
                         Log.e(TAG, "CONNECTION HEALTH: Connection appears lost after $consecutiveStaleChecks stale checks. Initiating auto-reconnect...")
-                        withContext(Dispatchers.Main) {
+                        withContext(mainDispatcher) {
                             initiateAutoReconnect()
                         }
                         break // Stop this watchdog, new one will start after reconnect
@@ -827,7 +831,7 @@ class BleClient(private val context: Context) {
         // Wait 2 seconds for BLE stack to fully reset before reconnecting (using coroutine)
         bleScope.launch {
             delay(2000) // 2 second delay before reconnect
-            withContext(Dispatchers.Main) {
+            withContext(mainDispatcher) {
                 // Re-enable auto-reconnect
                 autoReconnectEnabled = wasAutoReconnectEnabled
                 
@@ -887,14 +891,14 @@ class BleClient(private val context: Context) {
         
         batterySendJob = bleScope.launch {
             // Send immediately
-            withContext(Dispatchers.Main) {
+            withContext(mainDispatcher) {
                 sendGlassesBattery()
             }
             
             // Then periodic sending
             while (isActive && _connectionState.value == ConnectionState.Connected) {
                 delay(BATTERY_SEND_INTERVAL_MS)
-                withContext(Dispatchers.Main) {
+                withContext(mainDispatcher) {
                     sendGlassesBattery()
                 }
             }
@@ -970,7 +974,7 @@ class BleClient(private val context: Context) {
             
             while (isActive && _connectionState.value == ConnectionState.Connected) {
                 // Request RSSI update from the connected device
-                withContext(Dispatchers.Main) {
+                withContext(mainDispatcher) {
                     gatt?.readRemoteRssi()
                 }
                 delay(RSSI_CHECK_INTERVAL_MS)
@@ -1048,7 +1052,7 @@ class BleClient(private val context: Context) {
 
         // Close the GATT client synchronously first. disconnect() defers
         // gatt.close() onto bleScope, and cancelling the scope below would
-        // abort that coroutine before it runs — leaking the BluetoothGatt (and
+        // abort that coroutine before it runs ??leaking the BluetoothGatt (and
         // its BLE stack resources) on every close.
         try {
             gatt?.close()

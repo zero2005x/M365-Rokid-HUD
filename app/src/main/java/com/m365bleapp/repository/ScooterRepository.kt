@@ -1,4 +1,4 @@
-package com.m365bleapp.repository
+﻿package com.m365bleapp.repository
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -85,9 +85,9 @@ data class MotorInfo(
     val rideMode: com.m365bleapp.protocol.EscTelemetryParser.RideMode? = null,
     /** KERS level from ESC `0x7B`. */
     val kersLevel: com.m365bleapp.protocol.EscTelemetryParser.KersLevel? = null,
-    /** ESC / frame temperature from `0x3E`, °C. */
+    /** ESC / frame temperature from `0x3E`, 簞C. */
     val escTemperatureC: Double? = null,
-    /** Battery pack temperature from BMS `0x35`, °C. */
+    /** Battery pack temperature from BMS `0x35`, 簞C. */
     val batteryTemperatureC: Double? = null,
     /** Motor phase current from ESC `0x53`, A. */
     val phaseCurrentA: Double? = null,
@@ -187,7 +187,10 @@ class ScooterRepository private constructor(private val context: Context) {
     
     private val native = M365Native()
     private val bleManager = BleManager(context)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // Injected rather than hardcoded at each call site so the IO dispatcher can
+    // be swapped in tests and there is a single place to change it.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val scope = CoroutineScope(ioDispatcher + SupervisorJob())
     
     // Helper function to get localized strings
     private fun getString(resId: Int): String = context.getString(resId)
@@ -298,7 +301,7 @@ class ScooterRepository private constructor(private val context: Context) {
     // These start at Nordic UART (the M365 layout) and are REPLACED after
     // service discovery with whatever the device actually exposes. Three layouts
     // exist in the field and they are not interchangeable: the Ninebot custom
-    // profile notifies on `…0004` rather than `…0003`, so code that hard-codes
+    // profile notifies on `??004` rather than `??003`, so code that hard-codes
     // NUS subscribes to a characteristic that never emits.
     //
     // `@Volatile` because they are written once during connect and read from the
@@ -320,7 +323,7 @@ class ScooterRepository private constructor(private val context: Context) {
     /**
      * Protocol dialect detection, with its result cached per MAC.
      *
-     * Detection is a probe — attempting a handshake and seeing what answers —
+     * Detection is a probe ??attempting a handshake and seeing what answers ??
      * because nothing observable before connecting identifies a dialect. Xiaomi,
      * Ninebot and current Segway models all advertise the same Nordic UART
      * service, and the same model name spans several wire generations.
@@ -333,7 +336,7 @@ class ScooterRepository private constructor(private val context: Context) {
     /**
      * The dialect this scooter was found to speak, or [ScooterProtocol.UNKNOWN].
      *
-     * Only ever set from evidence — a completed handshake — never from a name or
+     * Only ever set from evidence ??a completed handshake ??never from a name or
      * a service UUID.
      */
     val detectedProtocol = _detectedProtocol.asStateFlow()
@@ -348,7 +351,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * Points the data plane at the layout the device actually exposes.
      *
      * Called after service discovery. With no discovered profile the NUS defaults
-     * stand, which preserves the previous behaviour exactly — this is additive,
+     * stand, which preserves the previous behaviour exactly ??this is additive,
      * not a rewrite of the working M365 path.
      *
      * The **first** profile in the returned order is chosen, and that order puts
@@ -486,7 +489,7 @@ class ScooterRepository private constructor(private val context: Context) {
      */
     fun init() {
         // Load native library and initialize in background to prevent UI blocking
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             try {
                 val startTime = System.currentTimeMillis()
                 Log.d("ScooterRepo", "Initializing native library on background thread...")
@@ -505,7 +508,7 @@ class ScooterRepository private constructor(private val context: Context) {
         }
         
         // P3: Check device security status on init (non-blocking warning)
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             val status = com.m365bleapp.utils.SecurityChecker.checkSecurity()
             _securityStatus.value = status
             if (status.hasWarnings) {
@@ -516,22 +519,24 @@ class ScooterRepository private constructor(private val context: Context) {
         // Record every telemetry reading into the durable snapshot.
         //
         // Done by observing the flow rather than by writing at each of the four
-        // places that assign `_motorInfo` — those assignments are easy to add
+        // places that assign `_motorInfo` ??those assignments are easy to add
         // to and miss, and a missed one silently means a stale offline page.
         // One collector here cannot be bypassed.
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             _motorInfo.collect { info ->
                 if (info != null) {
                     snapshotStore.updateTelemetry(
                         mac = activeGatt?.device?.address ?: lastConnectedMac,
-                        speedKmh = info.speed,
-                        batteryPercent = info.battery,
-                        temperatureC = info.temp,
-                        totalMileageKm = info.mileage,
-                        averageSpeedKmh = info.avgSpeed,
-                        remainingKm = info.remainingKm,
-                        tripMeters = info.tripMeters,
-                        tripSeconds = info.tripSeconds
+                        update = VehicleSnapshotStore.TelemetryUpdate(
+                            speedKmh = info.speed,
+                            batteryPercent = info.battery,
+                            temperatureC = info.temp,
+                            totalMileageKm = info.mileage,
+                            averageSpeedKmh = info.avgSpeed,
+                            remainingKm = info.remainingKm,
+                            tripMeters = info.tripMeters,
+                            tripSeconds = info.tripSeconds
+                        )
                     )
                 }
             }
@@ -558,8 +563,8 @@ class ScooterRepository private constructor(private val context: Context) {
      * A phone's BLE stack cannot impersonate a scooter peripheral, so with no
      * scooter present there is no way to put a value on screen and therefore no
      * way to exercise the display path on a real device. This feeds a synthetic
-     * [MotorInfo] stream into [_motorInfo] — the same flow the real parser writes
-     * to — so one demo run covers the phone UI, the BLE gateway and the glasses
+     * [MotorInfo] stream into [_motorInfo] ??the same flow the real parser writes
+     * to ??so one demo run covers the phone UI, the BLE gateway and the glasses
      * HUD.
      *
      * ## What it does NOT prove
@@ -580,7 +585,7 @@ class ScooterRepository private constructor(private val context: Context) {
         stopDemo()
         _connectionState.value = ConnectionState.Ready
         val source = com.m365bleapp.protocol.DemoRideSource(seed = seed)
-        demoJob = scope.launch(Dispatchers.IO) {
+        demoJob = scope.launch(ioDispatcher) {
             Log.i("ScooterRepo", "${com.m365bleapp.protocol.DemoRideSource.DEMO_MARKER}: ride started (seed=$seed)")
             var last = System.currentTimeMillis()
             try {
@@ -649,7 +654,7 @@ class ScooterRepository private constructor(private val context: Context) {
             Log.w("ScooterRepo", "Could not resolve scooter model: ${it.message}")
             logger.setActiveModel(null)
         }
-        scope.launch(Dispatchers.IO) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
+        scope.launch(ioDispatcher) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
             _connectionState.value = ConnectionState.Connecting
             try {
                 // Every BLE call below (getDevice, connect, requestMtu,
@@ -695,7 +700,7 @@ class ScooterRepository private constructor(private val context: Context) {
                     // least make the loss visible instead of invisible.
                     // Route by "is this the data plane?" rather than by an
                     // exact UUID. The data-plane UUID depends on the discovered
-                    // layout, which is only known after service discovery — and
+                    // layout, which is only known after service discovery ??and
                     // the auth characteristics are the only other thing this app
                     // subscribes to, so treating everything else as telemetry is
                     // both correct and immune to a late profile switch.
@@ -1138,7 +1143,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * or has timed out.
      */
     private fun startPlaintextTelemetryLoop(session: PlaintextRegisterSession, gatt: android.bluetooth.BluetoothGatt) {
-        scope.launch(Dispatchers.IO) {
+        scope.launch(ioDispatcher) {
             Log.i("ScooterRepo", "Plaintext telemetry loop starting (${session.protocol.label})")
 
             // Drain anything left over from the handshake attempt so the first
@@ -1241,7 +1246,7 @@ class ScooterRepository private constructor(private val context: Context) {
     /**
      * Applies one decoded plaintext reply to the telemetry state.
      *
-     * The register→field mapping itself lives in [PlaintextTelemetryMapper], where
+     * The register?ield mapping itself lives in [PlaintextTelemetryMapper], where
      * it is unit-tested; this method only performs the side effects. Duplicating the
      * switch here is what made the original `parseTelemetry` offsets unverifiable.
      */
@@ -1459,7 +1464,7 @@ class ScooterRepository private constructor(private val context: Context) {
         // Chunk by the MTU the scooter actually granted, not a guess. `write()`
         // asks for MTU 512, but a peripheral may grant as little as the 23-byte
         // minimum, and a write larger than ATT_MTU - 3 is dropped by the peer
-        // with no error at all — indistinguishable from the command being
+        // with no error at all ??indistinguishable from the command being
         // refused. bleManager.negotiatedMtu tracks what came back.
         val chunks = MtuFragmenter.fragment(data, bleManager.negotiatedMtu)
 
@@ -1531,7 +1536,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * Protocol: Write 0x0001 to address 0x70
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun lock(): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun lock(): Result<Unit> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
@@ -1558,7 +1563,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * Protocol: Write 0x0001 to address 0x71
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun unlock(): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun unlock(): Result<Unit> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
@@ -1594,7 +1599,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * Protocol: Write 0x0002 to address 0x7D
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun lightOn(): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun lightOn(): Result<Unit> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
@@ -1629,7 +1634,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * Protocol: Write 0x0000 to address 0x7D
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun lightOff(): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun lightOff(): Result<Unit> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
@@ -1673,7 +1678,7 @@ class ScooterRepository private constructor(private val context: Context) {
      * Direction: Master to Motor (0x20), Command: Read (0x01)
      * Response: 0x0000=off, 0x0001=on brake, 0x0002=always on
      */
-    suspend fun readLightState(): Result<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun readLightState(): Result<Boolean> = withContext(ioDispatcher) {
         if (sessionPtr == 0L) {
             return@withContext Result.failure(Exception("No active session"))
         }
@@ -1739,8 +1744,8 @@ class ScooterRepository private constructor(private val context: Context) {
 
     // NOTE (stage A3): a `tryLegacyParse` fallback used to live here. It scanned
     // the first five bytes for a value that looked like an attribute (0xB0/0xB5)
-    // and then handed *everything after it* — including the encryptor's random
-    // tail — to the register parser.
+    // and then handed *everything after it* ??including the encryptor's random
+    // tail ??to the register parser.
     //
     // It was removed rather than fixed, for three reasons:
     //   1. It had no call sites; it was dead code.

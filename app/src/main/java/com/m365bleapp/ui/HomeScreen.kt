@@ -92,9 +92,7 @@ import com.m365bleapp.ui.theme.TextSecondary
 fun HomeScreen(
     repository: ScooterRepository,
     onOpenSettings: () -> Unit,
-    onOpenHudDisplay: () -> Unit,
-    onOpenScooterInfo: () -> Unit,
-    onOpenLogViewer: () -> Unit
+    onOpenScooterInfo: () -> Unit
 ) {
     val connState by repository.connectionState.collectAsState()
 
@@ -119,10 +117,7 @@ fun HomeScreen(
                 // The connected transition is owned here by the Crossfade now, so
                 // ScanScreen must not also push a route when a link goes Ready.
                 onNavigateToDashboard = {},
-                onNavigateToSettings = onOpenSettings,
-                onNavigateToLanguage = onOpenSettings,
-                onNavigateToLogViewer = onOpenLogViewer,
-                onNavigateToHudDisplay = onOpenHudDisplay
+                onNavigateToSettings = onOpenSettings
             )
         }
     }

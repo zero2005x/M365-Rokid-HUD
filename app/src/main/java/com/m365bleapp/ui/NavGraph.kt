@@ -31,9 +31,7 @@ fun NavHostContainer(repository: ScooterRepository) {
             HomeScreen(
                 repository = repository,
                 onOpenSettings = { navController.navigate("settings") },
-                onOpenHudDisplay = { navController.navigate("hudDisplay") },
-                onOpenScooterInfo = { navController.navigate("scooterInfo") },
-                onOpenLogViewer = { navController.navigate("logViewer") }
+                onOpenScooterInfo = { navController.navigate("scooterInfo") }
             )
         }
         composable("settings") {

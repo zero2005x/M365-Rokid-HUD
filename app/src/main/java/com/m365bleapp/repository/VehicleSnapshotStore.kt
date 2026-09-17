@@ -105,28 +105,30 @@ class VehicleSnapshotStore private constructor(context: Context) {
      * to disk when they actually change, so a steady ride performs no writes
      * while `serial`/`firmware` stay put.
      */
-    fun updateTelemetry(
-        mac: String?,
-        speedKmh: Double,
-        batteryPercent: Int,
-        temperatureC: Double,
-        totalMileageKm: Double,
-        averageSpeedKmh: Double,
-        remainingKm: Double,
-        tripMeters: Int,
-        tripSeconds: Int
-    ) {
+    /** The mutable telemetry fields merged by [updateTelemetry], as one value. */
+    data class TelemetryUpdate(
+        val speedKmh: Double,
+        val batteryPercent: Int,
+        val temperatureC: Double,
+        val totalMileageKm: Double,
+        val averageSpeedKmh: Double,
+        val remainingKm: Double,
+        val tripMeters: Int,
+        val tripSeconds: Int,
+    )
+
+    fun updateTelemetry(mac: String?, update: TelemetryUpdate) {
         val previous = _snapshot.value
         _snapshot.value = previous.copy(
             mac = mac ?: previous.mac,
-            speedKmh = speedKmh,
-            batteryPercent = batteryPercent,
-            temperatureC = temperatureC,
-            totalMileageKm = totalMileageKm,
-            averageSpeedKmh = averageSpeedKmh,
-            remainingKm = remainingKm,
-            tripMeters = tripMeters,
-            tripSeconds = tripSeconds,
+            speedKmh = update.speedKmh,
+            batteryPercent = update.batteryPercent,
+            temperatureC = update.temperatureC,
+            totalMileageKm = update.totalMileageKm,
+            averageSpeedKmh = update.averageSpeedKmh,
+            remainingKm = update.remainingKm,
+            tripMeters = update.tripMeters,
+            tripSeconds = update.tripSeconds,
             capturedAtMs = System.currentTimeMillis()
         )
     }

@@ -1,4 +1,4 @@
-package com.m365hud.glass
+﻿package com.m365hud.glass
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -39,12 +39,12 @@ class BleConnectionService : Service() {
         
     }
     
-    private var connectionManager: UnifiedConnectionManager? = null
+    private var _connectionManager: UnifiedConnectionManager? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Single connection-state collector and one wake-lock
-    // renewal loop — so repeated onStartCommand calls cannot stack duplicates.
+    // renewal loop ??so repeated onStartCommand calls cannot stack duplicates.
     private var monitorJob: Job? = null
     private var wakeLockRenewJob: Job? = null
     
@@ -66,7 +66,7 @@ class BleConnectionService : Service() {
         acquireWakeLock()
         
         // Initialize the service-owned BLE/WiFi manager
-        connectionManager = UnifiedConnectionManager(this)
+        _connectionManager = UnifiedConnectionManager(this)
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -76,7 +76,7 @@ class BleConnectionService : Service() {
         // the system checks the runtime permission backing a
         // FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE service at the moment
         // startForeground is called and throws SecurityException if it is
-        // missing — so checking afterwards is too late.
+        // missing ??so checking afterwards is too late.
         //
         // This is not hypothetical: the service is START_STICKY, so the system
         // restarts it with a null intent after a process kill. If the user
@@ -121,7 +121,7 @@ class BleConnectionService : Service() {
             // throws SecurityException without BLUETOOTH_SCAN/CONNECT and
             // would kill the service. hasBlePermissions() above is what
             // actually makes this safe.
-            connectionManager?.start()
+            _connectionManager?.start()
 
             // Monitor connection state and update notification
             monitorConnectionState()
@@ -139,17 +139,17 @@ class BleConnectionService : Service() {
         Log.i(TAG, "Service destroyed")
         
         serviceScope.cancel()
-        connectionManager?.stop()
-        connectionManager = null
+        _connectionManager?.stop()
+        _connectionManager = null
         releaseWakeLock()
         
         super.onDestroy()
     }
     
-    fun getConnectionManager(): UnifiedConnectionManager? = connectionManager
+    val connectionManager: UnifiedConnectionManager? get() = _connectionManager
 
     fun reconnect() {
-        connectionManager?.reconnect()
+        _connectionManager?.reconnect()
     }
 
     private fun createNotificationChannel() {
@@ -248,7 +248,7 @@ class BleConnectionService : Service() {
     private fun monitorConnectionState() {
         monitorJob?.cancel()
         monitorJob = serviceScope.launch {
-            connectionManager?.hudState?.collect { snapshot ->
+            _connectionManager?.hudState?.collect { snapshot ->
                 val status = when (val state = snapshot.connection) {
                     is BleClient.ConnectionState.Disconnected -> "Disconnected"
                     is BleClient.ConnectionState.Scanning -> "Searching for phone..."

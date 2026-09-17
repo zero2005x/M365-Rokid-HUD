@@ -1,5 +1,8 @@
 package com.m365bleapp.protocol
 
+/** Advertised-name prefixes shared by every Xiaomi/Mi model entry. */
+private val XIAOMI_NAME_PREFIXES = listOf("MIScooter", "Mi Scooter")
+
 /**
  * How much a model identification can be trusted.
  *
@@ -122,7 +125,7 @@ enum class ScooterModel(
     M365(
         rustId = "M365",
         displayName = "Xiaomi M365",
-        namePrefixes = listOf("MIScooter", "Mi Scooter"),
+        namePrefixes = XIAOMI_NAME_PREFIXES,
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
@@ -139,7 +142,7 @@ enum class ScooterModel(
     M365_PRO(
         rustId = "M365Pro",
         displayName = "Xiaomi M365 Pro",
-        namePrefixes = listOf("MIScooter", "Mi Scooter"),
+        namePrefixes = XIAOMI_NAME_PREFIXES,
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
@@ -156,7 +159,7 @@ enum class ScooterModel(
     M365_PRO2(
         rustId = "M365Pro2",
         displayName = "Xiaomi M365 Pro 2",
-        namePrefixes = listOf("MIScooter", "Mi Scooter"),
+        namePrefixes = XIAOMI_NAME_PREFIXES,
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
@@ -173,7 +176,7 @@ enum class ScooterModel(
     MI_1S(
         rustId = "Mi1S",
         displayName = "Xiaomi Mi 1S",
-        namePrefixes = listOf("MIScooter", "Mi Scooter"),
+        namePrefixes = XIAOMI_NAME_PREFIXES,
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
@@ -190,7 +193,7 @@ enum class ScooterModel(
     MI_LITE(
         rustId = "MiLite",
         displayName = "Xiaomi Mi Lite",
-        namePrefixes = listOf("MIScooter", "Mi Scooter"),
+        namePrefixes = XIAOMI_NAME_PREFIXES,
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
@@ -211,7 +214,7 @@ enum class ScooterModel(
     MI3(
         rustId = "Mi3",
         displayName = "Xiaomi Mi 3",
-        namePrefixes = listOf("MIScooter", "Mi Scooter"),
+        namePrefixes = XIAOMI_NAME_PREFIXES,
         capabilities = ModelCapabilities.NONE,
     ),
 

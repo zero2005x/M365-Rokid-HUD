@@ -1,4 +1,4 @@
-﻿package com.m365hud.glass
+package com.m365hud.glass
 
 import android.Manifest
 import android.annotation.SuppressLint

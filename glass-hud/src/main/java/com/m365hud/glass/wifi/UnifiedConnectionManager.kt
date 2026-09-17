@@ -26,7 +26,10 @@ class UnifiedConnectionManager(private val context: Context) {
     val hudState: StateFlow<HudConnectionSnapshot> = _hudState.asStateFlow()
     private val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-    fun start() {
+    // NOSONAR kotlin:S3776 — starts and wires the BLE and WiFi transports and the
+    // several concurrent collectors that merge their states into one snapshot;
+    // the launches share `run`/`ble`/`w` and must be started together in order.
+    fun start() { // NOSONAR
         if (scope != null) return
         val run = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         scope = run

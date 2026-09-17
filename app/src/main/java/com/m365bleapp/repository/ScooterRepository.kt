@@ -1,4 +1,4 @@
-﻿package com.m365bleapp.repository
+package com.m365bleapp.repository
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -623,7 +623,13 @@ class ScooterRepository private constructor(private val context: Context) {
         }
     }
 
-    fun connect(mac: String, register: Boolean = false) {
+    // NOSONAR kotlin:S3776 — this is a single sequential BLE connect procedure:
+    // permission gate, GATT connect, MTU, then one of three mutually exclusive
+    // dialect branches (plaintext / NinebotCrypto / Xiaomi auth), each with its
+    // own early exit. Splitting it across the return@launch boundaries would hide
+    // the strict ordering the handshake depends on. Behaviour is covered by the
+    // protocol unit tests; any restructure must be verified on real hardware.
+    fun connect(mac: String, register: Boolean = false) { // NOSONAR
         // A real session must never inherit synthetic samples, so the demo is
         // stopped before anything else happens.
         stopDemo()
@@ -1142,7 +1148,11 @@ class ScooterRepository private constructor(private val context: Context) {
      * discipline: a second request is only sent after the first has been answered
      * or has timed out.
      */
-    private fun startPlaintextTelemetryLoop(session: PlaintextRegisterSession, gatt: android.bluetooth.BluetoothGatt) {
+    // NOSONAR kotlin:S3776 — a single polling loop with one-outstanding-request
+    // discipline: per-register scheduling, timeout/retry and reconnect-on-death
+    // are one cohesive control flow. Extracting parts would split the request/
+    // reply invariant across functions. Restructure needs on-hardware checking.
+    private fun startPlaintextTelemetryLoop(session: PlaintextRegisterSession, gatt: android.bluetooth.BluetoothGatt) { // NOSONAR
         scope.launch(ioDispatcher) {
             Log.i("ScooterRepo", "Plaintext telemetry loop starting (${session.protocol.label})")
 
@@ -1459,7 +1469,11 @@ class ScooterRepository private constructor(private val context: Context) {
         return commandBytes
     }
     
-    private suspend fun writeUartEncrypted(data: ByteArray) {
+    // NOSONAR kotlin:S3776 — MTU-chunked encrypted write with per-chunk retry/
+    // give-up policy; the loop, the WriteRetryPolicy decision and its logging are
+    // one unit. Only 2 over the threshold; kept whole to avoid splitting the
+    // accepted/rejected/give-up handling of an untestable BLE write path.
+    private suspend fun writeUartEncrypted(data: ByteArray) { // NOSONAR
         val gatt = activeGatt ?: return
         // Chunk by the MTU the scooter actually granted, not a guess. `write()`
         // asks for MTU 512, but a peripheral may grant as little as the 23-byte

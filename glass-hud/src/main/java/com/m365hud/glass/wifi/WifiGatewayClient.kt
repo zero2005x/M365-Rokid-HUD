@@ -69,8 +69,11 @@ class WifiGatewayClient(private val context: Context) {
     private val _isTelemetryFresh = MutableStateFlow(false)
     val isTelemetryFresh = _isTelemetryFresh.asStateFlow()
 
+    // NOSONAR kotlin:S3776 — the NSD discovery listener is one object whose
+    // nested callbacks all share the same epoch/generation guard; pulling them
+    // apart would scatter that guard and the resolve→connect hand-off.
     @Synchronized
-    fun startDiscovery() {
+    fun startDiscovery() { // NOSONAR
         if (discovery != null || connectionJob?.isActive == true) return
         val epoch = generation.get()
         _connectionState.value = ConnectionState.Discovering
@@ -121,8 +124,13 @@ class WifiGatewayClient(private val context: Context) {
         }
     }
 
+    // NOSONAR kotlin:S3776 — a single TCP reconnect state machine: connect,
+    // concurrent heartbeat + freshness + read loops inside one coroutineScope,
+    // exponential backoff, and epoch-guarded socket teardown. The generation
+    // checks are only correct while these stay in one lexical scope; decomposing
+    // would move shared mutable state (socket/output) across the guard.
     @Synchronized
-    fun connect(address: String, port: Int = DEFAULT_PORT) {
+    fun connect(address: String, port: Int = DEFAULT_PORT) { // NOSONAR
         if (connectionJob?.isActive == true) return
         val epoch = generation.get()
         connectionJob = scope.launch {

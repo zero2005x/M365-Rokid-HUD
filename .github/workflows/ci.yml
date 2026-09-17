@@ -100,10 +100,31 @@ jobs:
       # build if the .so is missing or does not match a content hash of the Rust
       # sources, which is what makes "edited Rust but did not rebuild"
       # impossible.
+      #
+      # Each Android module owns its own debug report variant. The root project
+      # has no Android plugin, so `:koverXmlReportDebug` does not exist there —
+      # invoke the two module tasks. They depend on testDebugUnitTest, so this
+      # still fails the job if tests fail, without a second test invocation.
       - name: Run Unit Tests
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon :app:testDebugUnitTest :glass-hud:testDebugUnitTest
+          ./gradlew --no-daemon :app:koverXmlReportDebug :glass-hud:koverXmlReportDebug
+
+      - name: Verify Kover coverage report
+        run: |
+          failed=0
+          for report in \
+            app/build/reports/kover/reportDebug.xml \
+            glass-hud/build/reports/kover/reportDebug.xml
+          do
+            if [ ! -s "$report" ]; then
+              echo "::error::$report is missing or empty; Sonar would show 0% coverage"
+              failed=1
+            else
+              echo "Kover XML report: $report ($(wc -c < "$report") bytes)"
+            fi
+          done
+          exit $failed
 
       - name: Assemble Debug APKs
         run: |

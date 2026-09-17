@@ -6,6 +6,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlinx.kover")
 }
 
 
@@ -543,4 +544,10 @@ dependencies {
     // phone and drives the glasses; the glasses-side counterpart is CXR-S.
     // Transitive deps (Retrofit, OkHttp, ...) are declared by the SDK.
     implementation("com.rokid.cxr:client-m:1.0.4")
+}
+
+kover {
+    reports {
+        filters.excludes.androidGeneratedClasses()
+    }
 }

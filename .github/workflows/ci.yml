@@ -179,7 +179,15 @@ jobs:
           sys.exit(1 if failed else 0)
 
       - name: SonarQube Scan
-        continue-on-error: true
+        # This step now IS the analysis and imports the Kover coverage report
+        # (sonar-project.properties -> sonar.coverage.jacoco.xmlReportPaths), so it
+        # is no longer continue-on-error and gates the job.
+        #
+        # PREREQUISITE: SonarCloud Automatic Analysis must be DISABLED
+        # (Project > Administration > Analysis Method). While it is enabled the
+        # scanner fails with "You are running CI analysis while Automatic Analysis
+        # is enabled", which would now fail the build. Do not merge this until
+        # Automatic Analysis is turned off.
         uses: sonarsource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

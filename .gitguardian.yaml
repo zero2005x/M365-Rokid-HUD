@@ -1,15 +1,12 @@
 # GitGuardian / ggshield configuration.
 #
 # The high-entropy hex string flagged in this repo is the NinebotCrypto firmware
-# constant K_fw = 97CFB802 844143DE 56002B3B 34780A5D. It is a PUBLIC, well-known
-# reverse-engineering constant (the fixed AES input used by every M365/Ninebot
-# tool, e.g. research/references/ninebotcrypto/nbcrypt.c) — not a credential or a
-# leaked secret. It appears only in reverse-engineering documentation.
+# constant K_fw (written in 32-bit groups in the docs). It is a PUBLIC, well-known
+# reverse-engineering constant — the fixed AES input used by every M365/Ninebot
+# tool — not a credential or a leaked secret. It appears only in reverse-
+# engineering documentation, which is ignored by path below.
 version: 2
 secret:
-  ignored-matches:
-    - name: "NinebotCrypto public firmware constant (K_fw) — public RE constant, not a secret"
-      match: "97CFB802844143DE56002B3B34780A5D"
   ignored-paths:
     - "doc/IMPROVEMENT_PLAN.md"
     - "doc/PROTOCOL_FAMILIES.md"

@@ -191,7 +191,8 @@ SHA-1-derived key.
 - **16-bit big-endian monotonically increasing counter, replay-protected.**
 - `aes_key = SHA1(key1_pad16 ‖ key2_pad16)[0:16]`
 - `nonce[13] = counter_BE[4] ‖ auth[0:8] ‖ 0x00`
-- Gen2 static ECB input `fw_data = 97CFB802844143DE56002B3B34780A5D`; Gen3 uses
+- Gen2 static ECB input `fw_data = 97CFB802 844143DE 56002B3B 34780A5D` (public
+  NinebotCrypto constant, written in 32-bit groups); Gen3 uses
   zeros. Gen2 and Gen3 therefore produce **different ciphertext for the same
   plaintext**.
 - 3-phase handshake: `PRE_COMM(0x5B)` → 16-byte `auth_param` + 14-byte serial

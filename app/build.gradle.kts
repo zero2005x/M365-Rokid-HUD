@@ -46,13 +46,15 @@ val rokidAccessKey = rokidProperty("ROKID_ACCESS_KEY")
 val rokidLicenseAsset = localProperties.getProperty("ROKID_LICENSE_ASSET")
     ?: "3c51a56e8deb4dce955122e8d1faaa04.lc"
 
-// Fail the build only for releases: a debug build without credentials is still
-// useful (BLE and WiFi transports work), it just cannot reach the glasses over
-// CXR-M.
+// Credentials are now injected into the debug variant only (see buildTypes), so a
+// release build is *expected* to have none and must not warn about it.
 if (rokidClientId.isEmpty() || rokidAccessKey.isEmpty()) {
-    val message = "Rokid CXR-M credentials are missing. Set ROKID_CLIENT_ID, " +
-        "ROKID_CLIENT_SECRET and ROKID_ACCESS_KEY in local.properties."
-    logger.warn("WARNING: $message")
+    logger.warn(
+        "WARNING: Rokid CXR-M credentials are not configured, so debug builds " +
+            "cannot reach the glasses over CXR-M (BLE and WiFi still work). Set " +
+            "ROKID_CLIENT_ID, ROKID_CLIENT_SECRET and ROKID_ACCESS_KEY in " +
+            "local.properties. Release builds deliberately ship without them."
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -422,11 +424,9 @@ android {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
         }
 
-        // Rokid CXR-M authentication material. Values come from
-        // local.properties; see the block above.
-        buildConfigField("String", "ROKID_CLIENT_ID", "\"$rokidClientId\"")
-        buildConfigField("String", "ROKID_CLIENT_SECRET", "\"$rokidClientSecret\"")
-        buildConfigField("String", "ROKID_ACCESS_KEY", "\"$rokidAccessKey\"")
+        // Only the licence *filename* belongs here: the .lc blob is bound to the
+        // applicationId and the SDK loads it at runtime, so it ships in every
+        // variant. The credentials themselves are per-build-type — see buildTypes.
         buildConfigField("String", "ROKID_LICENSE_ASSET", "\"$rokidLicenseAsset\"")
         // Support 16 KB memory page size (Google Play requirement)
         packaging {
@@ -475,6 +475,19 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Rokid CXR-M credentials are injected for LOCAL builds only.
+            //
+            // BuildConfig string constants are compiled into the DEX as plaintext, so
+            // any credential put here is readable by anyone who downloads the
+            // artifact. That is exactly how a live Client Secret ended up published in
+            // the Play AAB. A mobile app cannot keep a client secret, so the
+            // release variant gets empty values on purpose rather than by
+            // accident.
+            buildConfigField("String", "ROKID_CLIENT_ID", "\"$rokidClientId\"")
+            buildConfigField("String", "ROKID_CLIENT_SECRET", "\"$rokidClientSecret\"")
+            buildConfigField("String", "ROKID_ACCESS_KEY", "\"$rokidAccessKey\"")
+        }
         release {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
@@ -484,6 +497,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+
+            // Declared and empty, not simply omitted: an absent field and an empty
+            // one are indistinguishable at the call site, so omitting them would let
+            // the values quietly reappear. Being explicit also gives
+            // scripts/verify-bundle-secrets.sh something stable to assert against.
+            buildConfigField("String", "ROKID_CLIENT_ID", "\"\"")
+            buildConfigField("String", "ROKID_CLIENT_SECRET", "\"\"")
+            buildConfigField("String", "ROKID_ACCESS_KEY", "\"\"")
         }
     }
     compileOptions {

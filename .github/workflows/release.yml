@@ -198,6 +198,47 @@ jobs:
           (cd dist && sha256sum *.apk *.aab > SHA256SUMS.txt)
           ls -la dist
 
+      - name: Verify no Rokid credential reached the staged artifacts
+        # BuildConfig string constants are compiled into the DEX as plaintext, so a
+        # credential injected at build time is readable by anyone who downloads the
+        # artifact. That is how a live Rokid Client Secret reached this project's
+        # Play AAB.
+        #
+        # app/build.gradle.kts now injects the credentials into the debug variant
+        # only, so a release artifact must never contain them. This scans exactly
+        # what is about to be published. Exit code 2 means "nothing configured to
+        # look for", which is the expected state in CI and not a failure.
+        run: |
+          failed=0
+          for artifact in dist/*.apk dist/*.aab; do
+            bash scripts/verify-bundle-secrets.sh "$artifact"
+            rc=$?
+            case "$rc" in
+              0|2) ;;   # 0 = clean, 2 = no credentials configured
+              *)   failed=1 ;;
+            esac
+          done
+          exit $failed
+
+      - name: Verify release builds ignore configured credentials
+        # The scan above is vacuous in CI because no credentials are configured
+        # here, and a vacuous check is worse than no check. This proves the
+        # invariant instead: rebuild the release bundle with deliberately fake
+        # credentials in the environment and assert none of them reach the DEX. If
+        # the injection is ever moved out of `buildTypes { debug { ... } }` and back
+        # into defaultConfig, the canaries show up in the AAB and this fails.
+        #
+        # Ordering matters: dist/ was filled by the staging step above, so this
+        # rebuild overwrites only the build directory and the canaries can never
+        # reach the published artifacts.
+        run: |
+          export ROKID_CLIENT_ID="CANARY_$(openssl rand -hex 16)"
+          export ROKID_CLIENT_SECRET="CANARY_$(openssl rand -hex 16)"
+          export ROKID_ACCESS_KEY="CANARY_$(openssl rand -hex 16)"
+          ./gradlew --no-daemon :app:bundleRelease
+          bash scripts/verify-bundle-secrets.sh \
+            app/build/outputs/bundle/release/app-release.aab
+
       - name: Upload to the GitHub Release
         # Uses doc/RELEASE_NOTES_<tag>.md as the release body when that file
         # exists, so notes are reviewed in the repository rather than typed into

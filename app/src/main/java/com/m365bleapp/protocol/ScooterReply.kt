@@ -19,27 +19,40 @@ package com.m365bleapp.protocol
  *
  * ## Layout
  *
- * After decryption the plaintext is the *inner* frame — no sync word and no
- * checksum, both of which the crypto layer already handled:
+ * After decryption the plaintext is the *inner* message: no sync word, no size
+ * byte and no checksum — the crypto layer handled the first two, and verified
+ * the third.
  *
  * ```
- * [0]      size byte (total length of everything that follows, including it)
- * [1]      direction / source (0x23 ESC, 0x25 BMS, …)
- * [2]      type (0x01 = read reply)
- * [3]      attribute / register (0xB0, 0x3A, 0x25, …)
- * [4..n-4] data
+ * [0]      direction / source (0x23 ESC, 0x25 BMS, …)
+ * [1]      type (0x01 = read reply)
+ * [2]      attribute / register (0xB0, 0x3A, 0x25, …)
+ * [3..n-4] data
  * [n-4..n] four bytes of random padding added by `encrypt_uart`
  * ```
  *
- * The padding is not payload: `encrypt_uart` appends a random 4-byte tail to the
- * plaintext, so the decryptor cannot tell it apart from data and the length byte
- * is the only reliable way to know where the data ends.
+ * ### There is no size byte in this buffer
  *
- * ## ⚠️ Not verified against real hardware
+ * `encrypt_uart` keeps the size byte *outside* the ciphertext
+ * (`send_data = size ‖ counter ‖ ct`) and `decrypt_uart` returns only the
+ * decrypted `msg[1..] ‖ rand`, so it is never put back. This class used to read
+ * `raw[0]` as that size byte, which actually reads the **direction** byte —
+ * `0x23` = 35 — and so mis-sized every reply:
  *
- * The size-byte convention is inferred from `ninebot-ble/src/session/commands.rs`
- * (`ScooterCommand::as_bytes`) and the existing working loop, not from a capture.
- * No scooter has been attached to this project.
+ * * `0x25` (9 bytes) and `0x3A` (11 bytes) were rejected outright as
+ *   "size byte says 35 bytes but the frame is only N".
+ * * `0xB0` (39 bytes) passed the length check by luck, after which every field
+ *   was shifted one byte; `attribute` read the first *data* byte instead of
+ *   `0xB0`, so the reply fell through to the "unknown attribute" branch and the
+ *   telemetry log stayed empty.
+ *
+ * ## Verified against real hardware — 2026-09-20
+ *
+ * Captured from a Xiaomi M365 (`MIScooter8964`, `C7:B8:DC:3B:A1:B2`) over the
+ * `xiaomi_mi` dialect. Decrypted reply lengths were 9, 11 and 39 bytes for the
+ * `0x25`, `0x3A` and `0xB0` polls, i.e. `HEADER_LEN + payload + PADDING_LEN`
+ * every time. The frame carries no length field, so the data ends at
+ * `raw.size - PADDING_LEN`.
  */
 data class ScooterReply(
     /** Direction / source byte, e.g. `0x23` ESC or `0x25` BMS. */
@@ -56,8 +69,13 @@ data class ScooterReply(
     val register: Int get() = attribute
 
     companion object {
-        /** Bytes of header before the data: size, direction, type, attribute. */
-        const val HEADER_LEN = 4
+        /**
+         * Bytes of header before the data: direction, type, attribute.
+         *
+         * Deliberately 3, not 4 — the size byte never reaches this buffer. See
+         * the class docs; reading it as a length is the bug fixed 2026-09-20.
+         */
+        const val HEADER_LEN = 3
 
         /**
          * Random tail `encrypt_uart` appends to every plaintext.
@@ -68,66 +86,40 @@ data class ScooterReply(
          */
         const val PADDING_LEN = 4
 
-        /** Smallest legal size byte: header plus at least one data byte. */
-        const val MIN_SIZE_BYTE = HEADER_LEN + 1
+        /**
+         * Smallest frame that can carry a header and at least one data byte.
+         *
+         * The frame has no length field of its own, so this is the only
+         * "too short to even slice" guard available.
+         */
+        const val MIN_FRAME_LEN = HEADER_LEN + 1 + PADDING_LEN
 
         /**
          * Validates [raw] and extracts the reply.
          *
-         * Rejects, in order: an empty frame, a frame shorter than
-         * [MIN_SIZE_BYTE] + [PADDING_LEN], a size byte below [MIN_SIZE_BYTE], a
-         * size byte that disagrees with the actual frame length, and a frame with
-         * no data bytes. Every one of those would otherwise reach a field offset
-         * calculation.
+         * Rejects an empty frame and anything shorter than [MIN_FRAME_LEN]. The
+         * data runs from [HEADER_LEN] to `raw.size - PADDING_LEN`, so a frame
+         * that passes the minimum check always yields at least one data byte and
+         * no separate "no data" branch is reachable.
          */
         fun parse(raw: ByteArray): ScooterReplyValidation {
             if (raw.isEmpty()) return ScooterReplyValidation.Rejected("empty frame")
 
-            // Check the header fields in the order that yields the most specific
-            // reason. Reading the size byte first is safe once we know at least
-            // one byte exists, and it keeps a genuinely bad size byte from being
-            // reported as the vaguer "frame too short".
-            val size = raw[0].toInt() and 0xFF
-            if (size < MIN_SIZE_BYTE) {
+            if (raw.size < MIN_FRAME_LEN) {
                 return ScooterReplyValidation.Rejected(
-                    "size byte $size below the $MIN_SIZE_BYTE-byte minimum"
+                    "frame too short: ${raw.size} bytes (minimum $MIN_FRAME_LEN)"
                 )
             }
 
-            // Smallest conceivable frame: size + direction + type + attribute + at
-            // least one data byte, plus the encryptor's random tail.
-            val minimum = MIN_SIZE_BYTE + PADDING_LEN
-            if (raw.size < minimum) {
-                return ScooterReplyValidation.Rejected("frame too short: ${raw.size} bytes (minimum $minimum)")
-            }
-
-            // The size byte counts the original message, which does NOT include
-            // the 4-byte random tail `encrypt_uart` appends after encryption. So
-            // the frame on the wire may legitimately be longer than `size`, and an
-            // equality check would reject every valid reply.
-            //
-            // What can still be checked — and is the truncation guard that
-            // matters — is that the frame is long enough to actually contain the
-            // data the header claims. This is exactly the case that used to slip
-            // through: a 0xB0 reply announcing 32 bytes with one byte present.
-            if (raw.size < size) {
-                return ScooterReplyValidation.Rejected(
-                    "size byte says $size bytes but the frame is only ${raw.size}"
-                )
-            }
-
-            val dataLen = size - HEADER_LEN
-            if (dataLen <= 0) {
-                return ScooterReplyValidation.Rejected("no data bytes after the header")
-            }
-
-            val data = raw.copyOfRange(HEADER_LEN, HEADER_LEN + dataLen)
+            // The padding is indistinguishable from data once decrypted, and no
+            // length field survives, so the tail is the only way to find the end.
+            val dataEnd = raw.size - PADDING_LEN
             return ScooterReplyValidation.Valid(
                 ScooterReply(
-                    direction = raw[1].toInt() and 0xFF,
-                    type = raw[2].toInt() and 0xFF,
-                    attribute = raw[3].toInt() and 0xFF,
-                    data = data,
+                    direction = raw[0].toInt() and 0xFF,
+                    type = raw[1].toInt() and 0xFF,
+                    attribute = raw[2].toInt() and 0xFF,
+                    data = raw.copyOfRange(HEADER_LEN, dataEnd),
                 )
             )
         }
@@ -143,9 +135,10 @@ data class ScooterReply(
         /**
          * Builds a synthetic frame for tests and for the demo mode.
          *
-         * Kept here rather than duplicated in test code so the encoder and the
-         * validator cannot drift apart: a test that builds frames differently from
-         * the parser's expectation would pass while the real path was broken.
+         * Mirrors `decrypt_uart`'s output, *not* the wire frame: no sync word, no
+         * size byte and no counter. Building it any other way is what let the
+         * tests pass while the real path rejected every reply, so the encoder
+         * lives here rather than being duplicated in test code.
          */
         fun build(
             direction: Int,
@@ -154,14 +147,10 @@ data class ScooterReply(
             data: ByteArray,
             padding: ByteArray = ByteArray(PADDING_LEN),
         ): ByteArray {
-            // `size` counts the original message only; the random tail the
-            // encryptor appends is deliberately excluded, mirroring the wire.
-            val size = HEADER_LEN + data.size
-            val out = ByteArray(size + padding.size)
-            out[0] = size.toByte()
-            out[1] = direction.toByte()
-            out[2] = type.toByte()
-            out[3] = attribute.toByte()
+            val out = ByteArray(HEADER_LEN + data.size + padding.size)
+            out[0] = direction.toByte()
+            out[1] = type.toByte()
+            out[2] = attribute.toByte()
             data.copyInto(out, HEADER_LEN)
             padding.copyInto(out, HEADER_LEN + data.size)
             return out

@@ -10,9 +10,19 @@ import org.junit.Test
 /**
  * Tests for [ScooterReply] frame validation (improvement-plan stage A3).
  *
- * The central case is `size byte claims more data than the frame carries`: that
- * is the shape of the bug this class exists to stop, and it is the one that
- * reached a field-offset calculation before.
+ * ## Why the `direction byte` case is the important one
+ *
+ * The decrypted buffer carries **no size byte** — `encrypt_uart` keeps it outside
+ * the ciphertext and `decrypt_uart` does not put it back — so it begins with the
+ * direction byte, `0x23` = 35. An earlier revision read that as a length and
+ * mis-sized every reply: the 9- and 11-byte replies were rejected outright, and
+ * the 39-byte `0xB0` reply passed by luck but had every field shifted one byte,
+ * so its `attribute` read the first data byte and never matched `0xB0`.
+ *
+ * Every test below that touches a buffer therefore goes through [ScooterReply.build],
+ * which now mirrors `decrypt_uart`'s output exactly. A builder that models the
+ * *wire* frame instead is precisely what let these tests pass while the real path
+ * rejected every real reply.
  */
 class ScooterReplyTest {
 
@@ -75,48 +85,65 @@ class ScooterReplyTest {
         assertEquals(bms, reply.direction)
     }
 
-    // ------------------------------------------------- the truncation hazard
+    // ------------------------------------- regression: no size byte in the buffer
 
     @Test
-    fun `a size byte claiming more data than the frame carries is rejected`() {
-        // THE bug this class exists for: a 0xB0 reply that announces 32 bytes of
-        // motor info but delivers almost nothing. Previously this produced an
-        // empty data array and the parser read past its end.
-        val lying = byteArrayOf(
-            32,                              // size byte claims 32 bytes total
-            esc.toByte(), readReply.toByte(), 0xB0.toByte(),
-            0x01,                            // ...but only one data byte follows
-            0, 0, 0, 0,                      // padding
-        )
+    fun `the direction byte 0x23 is not read as a 35-byte frame length`() {
+        // 0x23 == 35. Reading it as a size byte rejected every reply shorter than
+        // 35 bytes with "size byte says 35 bytes but the frame is only N".
+        for (dataLen in intArrayOf(2, 4, 32)) {
+            val frame = valid(0xB0, ByteArray(dataLen))
 
-        val result = ScooterReply.parse(lying)
+            assertEquals("frame should be header + data + padding",
+                ScooterReply.HEADER_LEN + dataLen + ScooterReply.PADDING_LEN, frame.size)
 
-        assertTrue("expected rejection, got $result", result is ScooterReplyValidation.Rejected)
-        assertTrue(
-            "reason should mention the size mismatch",
-            (result as ScooterReplyValidation.Rejected).reason.contains("size byte says")
-        )
+            val result = ScooterReply.parse(frame)
+            assertTrue(
+                "a ${frame.size}-byte reply must not be rejected: $result",
+                result is ScooterReplyValidation.Valid
+            )
+        }
     }
 
     @Test
-    fun `a frame longer than its size byte is accepted because of the padding`() {
-        // IMPORTANT: the size byte counts the original message and does NOT count
-        // the 4-byte random tail `encrypt_uart` appends. An equality check here
-        // would reject every real reply, so the frame being longer is expected.
-        val frame = ScooterReply.build(esc, readReply, 0xB0, ByteArray(20))
+    fun `the three real poll replies decrypt to the captured lengths and parse`() {
+        // Lengths observed on hardware (Xiaomi M365, MIScooter8964) on 2026-09-20:
+        // the 0x25, 0x3A and 0xB0 replies decrypted to 9, 11 and 39 bytes.
+        val cases = listOf(
+            Triple(0x25, 2, 9),   // remaining km  -> 2-byte payload
+            Triple(0x3A, 4, 11),  // trip info     -> 4-byte payload
+            Triple(0xB0, 32, 39), // motor info    -> 32-byte payload
+        )
 
-        val reply = requireNotNull(ScooterReply.parseOrNull(frame))
+        for ((attribute, payload, expectedLength) in cases) {
+            val frame = valid(attribute, ByteArray(payload) { (it + 1).toByte() })
+            assertEquals("0x${attribute.toString(16)} length", expectedLength, frame.size)
 
-        assertEquals(20, reply.data.size)
+            val reply = requireNotNull(
+                ScooterReply.parseOrNull(frame)
+            ) { "0x${attribute.toString(16)} should parse" }
+
+            // The whole point: the attribute survives, so the dispatcher can route.
+            assertEquals("0x${attribute.toString(16)} attribute", attribute, reply.attribute)
+            assertEquals("0x${attribute.toString(16)} data length", payload, reply.data.size)
+        }
     }
 
     @Test
-    fun `a frame shorter than the header plus padding is rejected`() {
-        // size + direction + type + attribute + 1 data + 4 padding == 9 minimum.
-        for (len in 0 until 9) {
+    fun `a mis-sized reply is still rejected`() {
+        // The truncation guard has to survive the re-layout: a frame with fewer
+        // than header + one data byte + padding must never reach a field offset.
+        for (len in 0 until ScooterReply.MIN_FRAME_LEN) {
             val result = ScooterReply.parse(ByteArray(len))
             assertTrue("length $len should be rejected", result is ScooterReplyValidation.Rejected)
         }
+    }
+
+    @Test
+    fun `the shortest accepted frame still yields one data byte`() {
+        val frame = ByteArray(ScooterReply.MIN_FRAME_LEN)
+        val reply = requireNotNull(ScooterReply.parseOrNull(frame))
+        assertEquals(1, reply.data.size)
     }
 
     @Test
@@ -127,76 +154,42 @@ class ScooterReplyTest {
         assertEquals("empty frame", (result as ScooterReplyValidation.Rejected).reason)
     }
 
-    @Test
-    fun `a size byte below the header length is rejected`() {
-        // size=2 would imply a negative data length. Padded to nine bytes so the
-        // size-byte check fires rather than the length check.
-        val frame = byteArrayOf(
-            2, esc.toByte(), readReply.toByte(), 0xB0.toByte(),
-            0, 0, 0, 0, 0,
-        )
-
-        val result = ScooterReply.parse(frame)
-
-        assertTrue(result is ScooterReplyValidation.Rejected)
-        assertTrue((result as ScooterReplyValidation.Rejected).reason.contains("below"))
-    }
-
-    @Test
-    fun `a header only frame is rejected as having no data`() {
-        // size == HEADER_LEN declares a header and nothing else, so there is
-        // genuinely nothing to parse. It is caught by the minimum-size check.
-        // Nine bytes so the frame is long enough for the pad, letting the
-        // size-byte check — the more specific one — be what rejects it.
-        val frame = byteArrayOf(
-            ScooterReply.HEADER_LEN.toByte(),
-            esc.toByte(), readReply.toByte(), 0xB0.toByte(),
-            0xAA.toByte(), 0, 0, 0, 0,
-        )
-
-        val result = ScooterReply.parse(frame)
-
-        assertTrue(result is ScooterReplyValidation.Rejected)
-        assertTrue(
-            "unexpected reason: ${(result as ScooterReplyValidation.Rejected).reason}",
-            result.reason.contains("below")
-        )
-    }
-
     // ------------------------------------------------------------- contract
 
     @Test
     fun `parseOrNull mirrors parse for both outcomes`() {
         assertNotNull(ScooterReply.parseOrNull(valid(0xB0, ByteArray(4))))
         assertNull(ScooterReply.parseOrNull(ByteArray(0)))
-        assertNull(ScooterReply.parseOrNull(byteArrayOf(32, 0x23, 1, 0xB0.toByte(), 1, 0, 0, 0, 0)))
+        assertNull(ScooterReply.parseOrNull(ByteArray(ScooterReply.MIN_FRAME_LEN - 1)))
     }
 
     @Test
-    fun `the builder size byte equals header plus data, excluding padding`() {
-        // If the builder ever started counting the padding, the validator would
-        // reject frames it had just produced — and every test above would still
-        // pass, which is why this contract is asserted explicitly.
+    fun `the builder emits header, data and padding and no size byte`() {
+        // If the builder ever went back to emitting a size byte, it would describe
+        // the wire frame rather than what `decrypt_uart` returns — and the whole
+        // suite would pass while the real path broke. Hence the explicit offsets.
         for (len in 1..40) {
-            val frame = valid(0xB0, ByteArray(len))
+            val data = ByteArray(len) { (it and 0xFF).toByte() }
+            val frame = ScooterReply.build(esc, readReply, 0xB0, data)
+
             assertEquals(
-                "length $len",
-                ScooterReply.HEADER_LEN + len,
-                frame[0].toInt() and 0xFF
-            )
-            assertEquals(
-                "frame should carry the padding on top of the declared size",
+                "frame is header + data + padding",
                 ScooterReply.HEADER_LEN + len + ScooterReply.PADDING_LEN,
                 frame.size
             )
+            assertEquals("byte 0 is the direction", esc, frame[0].toInt() and 0xFF)
+            assertEquals("byte 1 is the type", readReply, frame[1].toInt() and 0xFF)
+            assertEquals("byte 2 is the attribute, not a length", 0xB0, frame[2].toInt() and 0xFF)
+            assertArrayEquals("data starts at HEADER_LEN", data, frame.copyOfRange(ScooterReply.HEADER_LEN, ScooterReply.HEADER_LEN + len))
         }
     }
 
     @Test
-    fun `header and padding constants match the documented layout`() {
-        assertEquals(4, ScooterReply.HEADER_LEN)
+    fun `header and padding constants match the decrypted layout`() {
+        // Three, not four: direction, type, attribute. See the class docs.
+        assertEquals(3, ScooterReply.HEADER_LEN)
         assertEquals(4, ScooterReply.PADDING_LEN)
-        // Header plus at least one byte of data.
-        assertEquals(5, ScooterReply.MIN_SIZE_BYTE)
+        // Header plus at least one byte of data plus the random tail.
+        assertEquals(8, ScooterReply.MIN_FRAME_LEN)
     }
 }

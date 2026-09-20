@@ -216,21 +216,39 @@ Kotlin 與 Rust 各框一次的重複工作），而是**實作它原本要服�
 
 **接線時發現一個真實 bug。** `parseTelemetry` 的註解聲稱解密後的資料「NO size byte
 at the start」，但 `buildPacket` 顯示加密訊息是
-`[size][direction][rw][attr][payload]` —— **size byte 確實存在**。舊程式碼因此：
+`[size][direction][rw][attr][payload]` —— 當時據此判定 **size byte 確實存在**，
+並讓 `ScooterReply` 直接吃完整幀（含 size byte）。
 
-- 把 **size byte 當成 direction** 讀
-- 讓 `attr` 少讀一格 → 所有 register 分派都對錯位置
-
-這解釋了為何先前 `parseTelemetry` 在真車上很可能從未正確分派過。已修正，並讓
-`ScooterReply` 直接吃完整幀（含 size byte）。
+> ### ⚠️ 2026-09-20 實車更正：這個結論是錯的
+>
+> 實車（Xiaomi M365 `MIScooter8964`）證明 **解密後的 buffer 裡沒有 size byte**。
+> `encrypt_uart` 把 size byte 留在密文**外面**（`send_data = size ‖ counter ‖ ct`），
+> `decrypt_uart` 只回傳解密後的 `msg[1..] ‖ rand`，**不會把它接回來**。
+> `buildPacket` 描述的是**加密前的命令**，不是解密後的 buffer —— 兩者差一個 byte。
+>
+> 因此上面「讓 `ScooterReply` 吃完整幀（含 size byte）」的修法把 **direction byte
+> `0x23`（＝35）當成了長度**，實際後果：
+>
+> - `0x25`（解密後 9 bytes）與 `0x3A`（11 bytes）→ 直接被丟棄：
+>   `Dropped malformed reply: size byte says 35 bytes but the frame is only 9/11`
+> - `0xB0`（39 bytes）→ 39 ≥ 35 僥倖通過長度檢查，但每個欄位都位移一格，
+>   `attribute` 讀到的是 payload 第一個 byte 而非 `0xB0`，於是掉進
+>   「unknown attribute」分支；而該分支是 `Log.d`，在 release 被 R8 刪除 → **完全無聲**
+>
+> 最終結果是 `parseMotorInfoFromData()` 從未被執行，遙測 CSV 只有表頭，UI 顯示 `—`。
+>
+> **正解**：`HEADER_LEN = 3`（direction、type、attribute），資料自 `HEADER_LEN`
+> 到 `raw.size - PADDING_LEN`。修正與回歸測試見 `ScooterReply.kt` 與
+> `ScooterReplyTest`（`the direction byte 0x23 is not read as a 35-byte frame length`）。
+> 詳細取證見 `artifacts/ROOTCAUSE-2026-09-20.md`。
 
 **同時移除 `tryLegacyParse`**（確認是死碼）：它用「掃描前 5 byte 找 0xB0/0xB5」的
 啟發式猜測，會把 payload 中碰巧等於 `0xB0` 的 byte 當成 register，再把後續全部資料
 （含隨機填充）餵給 parser —— 正是 A3 要消滅的猜測式解析。沒有任何支援格式需要它。
+移除這個決定**仍然正確**，與上面的更正無關。
 
-**規格修正**：`encrypt_uart` 附加的 4-byte 隨機尾巴**不計入** size byte，所以
-`size == frame.size` 的等號檢查會拒絕每一個合法回應。正確的檢查是
-`frame.size >= size`（截斷防護）。
+**規格修正**：`encrypt_uart` 附加的 4-byte 隨機尾巴不屬於資料，而解密後沒有任何長度
+欄位可用，所以資料終點只能由 `raw.size - PADDING_LEN` 推得。
 
 ### 6.2 B3 — 54 個錯誤碼表
 
@@ -271,7 +289,9 @@ at the start」，但 `buildPacket` 顯示加密訊息是
 - 真實 `0xB5` 速度刻度（Xiaomi 0.001 vs 其他 0.1）**仍未定案**
 - 真實 `0x25` 語意（速度 vs 剩餘里程）**仍未定案**
 - 真實 `0x1B` 錯誤碼是否會出現、以及 72..200 版本窗口的意義
-- 真車封包的 size byte 是否真的符合本實作的假設
+- ~~真車封包的 size byte 是否真的符合本實作的假設~~
+  → **2026-09-20 已由實車解答：解密後 buffer 沒有 size byte，見 §6.1 的更正。**
+  仍待實車確認的是各 register 的 offset 與刻度，以及 `0xB0` 回覆的欄位語意。
 
 ---
 

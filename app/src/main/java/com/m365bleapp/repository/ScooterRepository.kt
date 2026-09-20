@@ -1952,24 +1952,26 @@ class ScooterRepository private constructor(
     /**
      * Parses one decrypted reply and dispatches it to the register parser.
      *
-     * ## Two things fixed here (stage A3)
+     * ## Two things fixed here (stage A3, corrected 2026-09-20)
      *
-     * 1. **A missing size byte.** The previous comment claimed the decrypted data
-     *    had "NO size byte at the start", but [buildPacket] shows the encrypted
-     *    message begins with one (`[size][direction][rw][attr][payload]`). The old
-     *    code therefore read the *size byte* as the direction and shifted every
-     *    field by one, which sent `0xB0`-style registers down the wrong branch and
-     *    mislabelled the rest.
+     * 1. **Field offsets.** The decrypted buffer carries no size byte: the crypto
+     *    layer keeps it outside the ciphertext and `decrypt_uart` does not put it
+     *    back. [ScooterReply] therefore reads `direction, type, attribute` from
+     *    bytes 0..2 and takes the data from there to the 4-byte random tail. An
+     *    earlier revision assumed a leading size byte and shifted every field by
+     *    one, so `attribute` read the first *data* byte and every `0xB0` reply was
+     *    silently dropped as "unknown attribute".
      *
      * 2. **No real length validation.** The old guard was a bare
-     *    `packet.size < 7`, so a reply announcing 32 bytes and carrying one still
-     *    reached a parser and read past the end of its data. [ScooterReply.parse]
-     *    now rejects that before any offset is computed. A dropped frame leaves a
-     *    stale value on screen; a mis-parsed one shows a wrong value, and a wrong
-     *    speed on a HUD is the worse failure.
+     *    `packet.size < 7`, so a truncated reply still reached a parser and read
+     *    past the end of its data. [ScooterReply.parse] now rejects that before
+     *    any offset is computed. A dropped frame leaves a stale value on screen; a
+     *    mis-parsed one shows a wrong value, and a wrong speed on a HUD is the
+     *    worse failure.
      *
      * The four trailing bytes are the random tail `encrypt_uart` appends; they are
-     * excluded by the size byte rather than by arithmetic on the frame length.
+     * excluded by arithmetic on the frame length, because nothing on the wire
+     * survives decryption to say where the data ended.
      */
     private fun parseTelemetry(packet: ByteArray) {
         if (packet.isEmpty()) {
@@ -1979,10 +1981,9 @@ class ScooterRepository private constructor(
 
         Log.d("ScooterRepo", "Parsing telemetry: ${packet.toHex()}")
 
-        // `ScooterReply` expects the frame including its size byte, which is what
-        // the crypto layer hands us. The previous revision stripped it first and
-        // then mis-read every field; keeping it is what makes the validator and
-        // the parser agree.
+        // `ScooterReply` expects exactly what `decrypt_uart` returns: the inner
+        // message with no sync word, no size byte and no checksum, plus the
+        // encryptor's 4-byte random tail. Nothing may be stripped or added here.
         when (val validation = com.m365bleapp.protocol.ScooterReply.parse(packet)) {
             is com.m365bleapp.protocol.ScooterReplyValidation.Rejected -> {
                 Log.w("ScooterRepo", "Dropped malformed reply: ${validation.reason}")

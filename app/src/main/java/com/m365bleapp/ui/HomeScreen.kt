@@ -40,7 +40,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -437,14 +439,21 @@ private fun LockControlRow(
         )
     }
 
+    // The label side takes the leftover width and may wrap; the buttons keep
+    // their text on one line. Without the weight the label claimed its full
+    // intrinsic width first, and in Russian/Ukrainian ("Разблокировать") the
+    // unlock button was squeezed into a circle with its text broken per letter.
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(Dimens.primaryButtonHeight),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .heightIn(min = Dimens.primaryButtonHeight),
+        horizontalArrangement = Arrangement.spacedBy(Dimens.space8),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Icon(
                 imageVector = Icons.Default.LockOpen,
                 contentDescription = null,
@@ -466,14 +475,17 @@ private fun LockControlRow(
         if (loading) {
             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
         } else {
+            val compactPadding = PaddingValues(horizontal = Dimens.space12)
             Row(horizontalArrangement = Arrangement.spacedBy(Dimens.space8)) {
                 OutlinedButton(
                     onClick = { confirmLock = true },
+                    contentPadding = compactPadding,
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
                     )
-                ) { Text(stringResource(R.string.control_lock)) }
+                ) { Text(stringResource(R.string.control_lock), maxLines = 1, softWrap = false) }
                 Button(
+                    contentPadding = compactPadding,
                     onClick = {
                         loading = true
                         scope.launch {
@@ -483,7 +495,7 @@ private fun LockControlRow(
                             loading = false
                         }
                     }
-                ) { Text(stringResource(R.string.control_unlock)) }
+                ) { Text(stringResource(R.string.control_unlock), maxLines = 1, softWrap = false) }
             }
         }
     }

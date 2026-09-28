@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import com.m365bleapp.R
 import androidx.compose.runtime.collectAsState
 import com.m365bleapp.protocol.ModelOverrideStore
+import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
 import com.m365bleapp.ui.theme.Dimens
 import com.m365bleapp.ui.theme.LineSubtle
@@ -306,7 +307,12 @@ private fun WifiGatewayRow(context: Context) {
  */
 @Composable
 private fun DemoRideRow(repository: ScooterRepository) {
-    val running = repository.isDemoRunning
+    // isDemoRunning is a plain property, so reading it alone never triggers a
+    // recomposition and the switch stayed off after it was turned on.
+    // startDemo()/stopDemo() both move connectionState, so observing it makes
+    // this row recompose exactly when the answer can change.
+    val connectionState by repository.connectionState.collectAsState()
+    val running = connectionState is ConnectionState.Ready && repository.isDemoRunning
 
     SettingsRow(
         icon = "🧪",

@@ -42,6 +42,10 @@
 
 ## 📸 屏幕截图
 
+<p align="center">
+  <img src="play-store/promo/demo.gif" width="280" alt="模拟骑行操作演示：仪表盘、详细信息与眼镜显示设置">
+</p>
+
 | 仪表盘 | 详细信息 | 眼镜显示 | 设置 |
 | :----: | :------: | :------: | :--: |
 | <img src="play-store/zh-CN/01_dashboard.png" width="200" alt="仪表盘"> | <img src="play-store/zh-CN/02_details.png" width="200" alt="滑板车详细信息"> | <img src="play-store/zh-CN/03_glasses_display.png" width="200" alt="眼镜显示设置"> | <img src="play-store/zh-CN/04_settings.png" width="200" alt="设置"> |

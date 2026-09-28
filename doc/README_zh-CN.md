@@ -4,7 +4,7 @@
   <a href="https://play.google.com/store/apps/details?id=com.m365bleapp">
     <img src="https://img.shields.io/badge/Google%20Play-下载-brightgreen?logo=google-play&logoColor=white" alt="Google Play">
   </a>
-  <img src="https://img.shields.io/badge/Android-29+-green?logo=android" alt="Android">
+  <img src="https://img.shields.io/badge/Android-9+-green?logo=android" alt="Android">
   <img src="https://img.shields.io/badge/Kotlin-2.2-purple?logo=kotlin" alt="Kotlin">
   <img src="https://img.shields.io/badge/Jetpack%20Compose-Material3-blue" alt="Jetpack Compose">
   <img src="https://img.shields.io/badge/Rust-FFI-orange?logo=rust" alt="Rust">
@@ -30,18 +30,23 @@
 - 🔑 **Token 登录** - 使用已保存的认证快速重新连接
 - 📊 **实时遥测** - 监控速度、电量、温度等数据
 - 🕶️ **Rokid AR HUD** - 通过 BLE 网关在 Rokid 眼镜上显示遥测数据
-- � **连接质量指标** - HUD 上显示信号强度和数据新鲜度
+- 📶 **连接质量指标** - HUD 上显示信号强度和数据新鲜度
+- 🎛️ **自定义眼镜显示** - 自选 HUD 显示的字段与文字大小
 - 🔒 **电机锁定/解锁** - 远程控制滑板车锁定状态
 - 💡 **尾灯控制** - 开关尾灯
+- 🧪 **模拟骑行** - 没有滑板车也能用模拟数据试用仪表盘与 HUD
+- 🛵 **手动选择车型** - 自动识别失败时可手动指定滑板车型号
 - 🔋 **电池优化指引** - 引导关闭电池优化以确保稳定连接
 - 🌍 **多语言支持** - 支持 11 种语言
 - 🎨 **现代化界面** - 采用 Jetpack Compose 和 Material3 设计
 
 ## 📸 屏幕截图
 
-|  扫描界面  |  仪表盘  | 详细信息 |
-| :--------: | :------: | :------: |
-| 发现滑板车 | 实时数据 | 完整遥测 |
+| 仪表盘 | 详细信息 | 眼镜显示 | 设置 |
+| :----: | :------: | :------: | :--: |
+| <img src="play-store/zh-CN/01_dashboard.png" width="200" alt="仪表盘"> | <img src="play-store/zh-CN/02_details.png" width="200" alt="滑板车详细信息"> | <img src="play-store/zh-CN/03_glasses_display.png" width="200" alt="眼镜显示设置"> | <img src="play-store/zh-CN/04_settings.png" width="200" alt="设置"> |
+
+> 在模拟器上以**模拟骑行**（模拟遥测数据）截取。11 种语言的完整截图位于 [`play-store/`](play-store/)。
 
 ## 🌐 支持的语言
 
@@ -70,12 +75,15 @@ M365-Rokid-HUD/
 │       │   ├── ble/              # BLE 管理器（扫描、GATT）
 │       │   ├── ffi/              # Rust FFI 绑定
 │       │   ├── gateway/          # GATT 服务器，转发数据至眼镜端
+│       │   ├── protocol/         # 遥测解析器、帧编解码、模拟骑行数据源
 │       │   ├── repository/       # 数据层（ScooterRepository）
 │       │   ├── ui/               # Jetpack Compose 界面
 │       │   │   ├── NavGraph.kt         # 导航图
-│       │   │   ├── ScanScreen.kt       # 设备扫描
-│       │   │   ├── DashboardScreen.kt  # 实时遥测仪表盘
+│       │   │   ├── HomeScreen.kt       # 扫描列表 + 连接后仪表盘
+│       │   │   ├── GatewayControl.kt   # Rokid HUD 网关开关
 │       │   │   ├── ScooterInfoScreen.kt# 详细信息
+│       │   │   ├── SettingsScreen.kt   # 设置总览
+│       │   │   ├── HudDisplayScreen.kt # 眼镜显示字段
 │       │   │   ├── LoggingScreen.kt    # 日志设置
 │       │   │   ├── LogViewerScreen.kt  # 日志文件查看器
 │       │   │   ├── LanguageScreen.kt   # 语言选择
@@ -86,7 +94,7 @@ M365-Rokid-HUD/
 │       │   ├── values-zh-rCN/    # 简体中文
 │       │   ├── values-zh-rTW/    # 繁体中文
 │       │   └── values-*/         # 其他语言（共 11 种）
-│       └── jniLibs/              # 原生 .so 库
+│       └── jniLibs/              # 原生 .so 库（由 Gradle 生成，不纳入版本控制）
 ├── glass-hud/                    # Rokid AR 眼镜 HUD 客户端
 │   └── src/main/
 │       └── java/com/m365hud/glass/
@@ -96,6 +104,8 @@ M365-Rokid-HUD/
 │           ├── GattProfile.kt    # GATT 服务定义
 │           ├── HudScreen.kt      # AR HUD 显示界面（含信号指标）
 │           ├── DataModels.kt     # 共用数据结构
+│           ├── cxr/              # Rokid CXR-M 客户端与连接路由
+│           ├── wifi/             # WiFi 网关客户端
 │           └── ui/               # Compose UI 组件
 ├── ninebot-ffi/                  # Android 用 Rust FFI 库
 │   └── src/
@@ -107,10 +117,14 @@ M365-Rokid-HUD/
 │       ├── connection.rs         # BLE 连接处理
 │       ├── protocol.rs           # M365 协议实现
 │       ├── mi_crypto.rs          # ECDH、HKDF、AES-CCM 加密
+│       ├── identity.rs           # 扫描时的滑板车识别
+│       ├── encryption2.rs        # 新款 Ninebot 握手
+│       ├── ninebot_legacy.rs     # 旧款 Ninebot 加密
 │       ├── login.rs              # 登录流程实现
 │       ├── register.rs           # 注册流程
 │       ├── scanner.rs            # BLE 设备扫描
 │       ├── consts.rs             # 协议常量
+│       ├── model/                # 车型注册表（寄存器布局）
 │       └── session/              # 会话管理
 └── doc/                          # 文档
     ├── BLE_PROTOCOL_GUIDE.md     # 详细协议文档
@@ -140,7 +154,7 @@ M365-Rokid-HUD/
 
 ### Android 应用
 
-- **最低 SDK**：Android 10（API 29）
+- **最低 SDK**：Android 9（API 28）
 - **目标 SDK**：Android 16（API 36）
 - **权限**：蓝牙、位置（用于 BLE 扫描）
 
@@ -149,9 +163,9 @@ M365-Rokid-HUD/
 - Android Studio Ladybug 或更新版本
 - **Java 21**（JDK 21+）
 - Kotlin 2.2.10+（含 Compose 编译器插件）
-- Gradle 9.3.0
+- Gradle 9.6.1（通过 wrapper）
 - Android Gradle Plugin（AGP）9.0.0
-- Rust 工具链（用于构建原生库）
+- Rust 工具链 + [`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk)（用于构建原生库）
 - Android NDK
 
 ### 蓝牙扫描策略
@@ -194,23 +208,18 @@ M365-Rokid-HUD/
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/your-repo/M365-Rokid-HUD.git
+git clone https://github.com/zero2005x/M365-Rokid-HUD.git
 cd M365-Rokid-HUD
 ```
 
-### 2. 构建 Rust 库（如需要）
+### 2. 安装 Rust 工具链
+
+Gradle 会自行交叉编译 `ninebot-ffi`（任务 `:app:buildRustJni`）并复制到
+`app/src/main/jniLibs`，只需先安装工具链：
 
 ```bash
-cd ninebot-ffi
-
-# 如尚未安装，安装 cargo-ndk
 cargo install cargo-ndk
-
-# 添加 Android 目标
-rustup target add aarch64-linux-android armv7-linux-androideabi
-
-# 为 Android 构建
-cargo ndk -t arm64-v8a -t armeabi-v7a -o ../app/src/main/jniLibs build --release
+rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 ```
 
 ### 3. 构建 Android 应用
@@ -219,6 +228,12 @@ cargo ndk -t arm64-v8a -t armeabi-v7a -o ../app/src/main/jniLibs build --release
 
 ```bash
 ./gradlew assembleDebug
+```
+
+若只做 UI 开发、电脑上没有 Rust，debug 构建可以跳过原生库（BLE 加密在运行时会失败，但模拟骑行仍可使用）：
+
+```bash
+./gradlew assembleDebug -PskipRustBuild
 ```
 
 或直接安装到已连接的设备：

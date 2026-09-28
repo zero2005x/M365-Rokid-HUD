@@ -289,6 +289,12 @@ val copyRustJniLibs = tasks.register("copyRustJniLibs") {
     // and re-copying a handful of files is far cheaper than the failure mode.
     outputs.upToDateWhen { false }
 
+    // With -PskipRustBuild, buildRustJni produced nothing, so there is nothing
+    // to copy. Running anyway wiped jniLibs and then failed on the first missing
+    // ABI, which made the documented escape hatch unusable.
+    val skip = skipRustBuild
+    onlyIf { !skip }
+
     doLast {
         val fingerprint = rustInputFingerprint(inputsForFingerprint)
 

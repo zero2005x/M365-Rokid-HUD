@@ -113,23 +113,64 @@ impl ModelId {
 /// Which physical board a register lives on.
 ///
 /// Legacy Xiaomi/Ninebot models use a flat address space where the destination
-/// byte selects the board (`0x20` ESC, `0x22` BMS). Current-generation models
-/// use board-scoped `TARGET_ID` addressing instead; keeping the distinction in
-/// the type stops an address from one scheme being used with the other.
+/// byte selects the board. Current-generation models use board-scoped
+/// `TARGET_ID` addressing instead; keeping the distinction in the type stops an
+/// address from one scheme being used with the other.
+///
+/// **The address is not a property of the board.** The same component sits at a
+/// different address on different models, and — more importantly — the address a
+/// reply arrives *from* is not always the address the request was sent *to*. Read
+/// the pair from [`ModelProfile::board_address`], never from a constant here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Board {
-  /// `0x20` — motor controller.
+  /// Motor controller. `mType = CTL` in the reference implementation.
   Esc,
-  /// `0x22` — battery management.
+  /// Primary battery management. `mType = BMS`.
   Bms,
+  /// Second battery pack, on models that carry one. `mType = BMS2`.
+  ///
+  /// Present on Ninebot ESx and on Max models with an add-on pack. Note that its
+  /// address collides with other boards' addresses on *other* models, which is
+  /// the clearest illustration of why addressing has to be per-model.
+  Bms2,
+}
+
+/// One board's address pair on one model.
+///
+/// A request is addressed to [`send_id`](Self::send_id); the reply is recognised
+/// by [`receive_id`](Self::receive_id). The Xiaomi lineage answers three
+/// addresses higher than it was addressed on (`0x20` -> `0x23`, `0x22` -> `0x25`);
+/// every Ninebot family answers on the same id. Assuming one convention on the
+/// other family mis-attributes every reply.
+///
+/// Evidence for the pairs: the reference implementation's `wm` record, whose
+/// `toString()` labels the fields `mID` and `mReceiveID`
+/// (`re/m365tools/reports/07-model-component-addressing.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BoardAddress {
+  /// Which board this pair addresses.
+  pub board: Board,
+  /// The id a request for this board is sent to.
+  pub send_id: u8,
+  /// The id a reply from this board arrives on.
+  pub receive_id: u8,
 }
 
 impl Board {
-  /// Destination byte for the legacy flat addressing scheme.
-  pub fn address(self) -> u8 {
+  /// Destination byte for the legacy flat addressing scheme — **Xiaomi only**.
+  ///
+  /// This is the Xiaomi lineage's `send_id` and nothing more. It is not valid for
+  /// a Ninebot model, where the same component sits at a different address; use
+  /// [`ModelProfile::board_address`] for anything that has a model in hand.
+  ///
+  /// `None` for [`Board::Bms2`]: the Xiaomi lineage carries no second pack, and
+  /// the id a Ninebot puts it on (`0x23`) is the Xiaomi *motor-to-master* address.
+  /// Returning a number here would invite exactly that mix-up.
+  pub fn xiaomi_legacy_address(self) -> Option<u8> {
     match self {
-      Board::Esc => 0x20,
-      Board::Bms => 0x22,
+      Board::Esc => Some(0x20),
+      Board::Bms => Some(0x22),
+      Board::Bms2 => None,
     }
   }
 }
@@ -230,7 +271,30 @@ pub struct ModelProfile {
   /// Blocks written to change scooter state. Empty for every model here: this
   /// crate is read-only for telemetry, and the app's write path is separate.
   pub writable: &'static [u8],
+  /// Where each board sits on this model.
+  ///
+  /// Empty when the addressing has not been established for this model — which is
+  /// different from "no boards": a model with an empty table must not be sent a
+  /// register read on the strength of a guess, because a wrong address is answered
+  /// by nothing at all rather than by an error.
+  pub boards: &'static [BoardAddress],
 }
+
+/// The address pair of every board in the Xiaomi lineage.
+///
+/// M365, M365 Pro, Pro 2, 1S, 1S-DE, Lite and Mi 3 all share one table: the ESC
+/// and BMS boards are addressed at `0x20`/`0x22` and answer at `0x23`/`0x25` —
+/// three higher. The reference implementation gives the plain `M365` id the same
+/// table as the `MI_SCOOTER_*` ids, which is why the Xiaomi family and the plain
+/// M365 entry are not distinguished here either.
+///
+/// Public because the legacy session code addresses frames with bare constants
+/// that are these values, and a reader comparing the two needs to see that they
+/// are the same numbers — see `session::commands::Direction`.
+pub static XIAOMI_BOARDS: &[BoardAddress] = &[
+  BoardAddress { board: Board::Esc, send_id: 0x20, receive_id: 0x23 },
+  BoardAddress { board: Board::Bms, send_id: 0x22, receive_id: 0x25 },
+];
 
 /// A register read the telemetry loop issues.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -244,6 +308,15 @@ pub struct PollSpec {
 }
 
 impl ModelProfile {
+  /// Where `board` sits on this model, if the addressing is known.
+  ///
+  /// Returns `None` rather than a default when the model has no table: a wrong
+  /// address produces silence, and silence is indistinguishable from a scooter
+  /// that is simply not answering.
+  pub fn board_address(&self, board: Board) -> Option<BoardAddress> {
+    self.boards.iter().copied().find(|a| a.board == board)
+  }
+
   /// The spec for `field`, if this model exposes it.
   pub fn field(&self, field: Field) -> Option<&'static FieldSpec> {
     self.fields.iter().find(|f| f.field == field)
@@ -336,6 +409,7 @@ pub static M365: ModelProfile = ModelProfile {
     FieldSpec { field: Field::TripDistance, board: Board::Esc, register: 0x3A, offset: 2, decoder: Decoder::U16Raw, mirrored_at: None },
   ],
   writable: &[],
+  boards: XIAOMI_BOARDS,
 };
 
 /**
@@ -387,6 +461,7 @@ pub static M365_PRO: ModelProfile = ModelProfile {
   polled: M365.polled,
   fields: M365.fields,
   writable: &[],
+  boards: XIAOMI_BOARDS,
 };
 
 /**
@@ -407,6 +482,11 @@ pub static MI3: ModelProfile = ModelProfile {
   polled: &[],
   fields: &[],
   writable: &[],
+  // The reference implementation gives `MI_SCOOTER_3` a board table identical to
+  // `MI_SCOOTER_1S`/`_PRO2`/`_LITE` and the same command set. That is evidence for
+  // the *addressing* only — a shared address says nothing about what the bytes at
+  // those addresses mean, so the field list stays empty.
+  boards: XIAOMI_BOARDS,
 };
 
 #[cfg(test)]
@@ -689,9 +769,51 @@ mod tests {
   // --- addressing --------------------------------------------------------
 
   #[test]
-  fn board_addresses_match_the_legacy_flat_scheme() {
-    assert_eq!(Board::Esc.address(), 0x20);
-    assert_eq!(Board::Bms.address(), 0x22);
+  fn xiaomi_addresses_match_the_legacy_flat_scheme() {
+    assert_eq!(Board::Esc.xiaomi_legacy_address(), Some(0x20));
+    assert_eq!(Board::Bms.xiaomi_legacy_address(), Some(0x22));
+    // The Xiaomi lineage has no second pack, and 0x23 is its motor-to-master
+    // address — answering with a number here would invite that mix-up.
+    assert_eq!(Board::Bms2.xiaomi_legacy_address(), None);
+  }
+
+  #[test]
+  fn every_xiaomi_profile_answers_three_ids_above_its_request_id() {
+    for id in [ModelId::M365, ModelId::M365Pro, ModelId::M365Pro2, ModelId::Mi1S, ModelId::MiLite, ModelId::Mi3] {
+      let profile = id.profile();
+      let esc = profile.board_address(Board::Esc).expect("Xiaomi ESC addressing is documented");
+      let bms = profile.board_address(Board::Bms).expect("Xiaomi BMS addressing is documented");
+      assert_eq!(esc.send_id, 0x20, "{id:?} ESC send id");
+      assert_eq!(esc.receive_id, 0x23, "{id:?} ESC receive id");
+      assert_eq!(bms.send_id, 0x22, "{id:?} BMS send id");
+      assert_eq!(bms.receive_id, 0x25, "{id:?} BMS receive id");
+      // The whole point of the pair: the reply does NOT come back on the
+      // request id, so a decoder that matched on send_id would drop every reply.
+      assert_ne!(esc.send_id, esc.receive_id, "{id:?} would not exercise the pair");
+    }
+  }
+
+  #[test]
+  fn a_model_without_addressing_says_so_instead_of_guessing() {
+    // Every profile that polls a board must be able to address it; a profile that
+    // cannot address a board must not poll it.
+    for id in ModelId::all() {
+      let profile = id.profile();
+      for poll in profile.polled {
+        assert!(
+          profile.board_address(poll.board).is_some(),
+          "{id:?} polls {:?} but has no address for it",
+          poll.board
+        );
+      }
+      for spec in profile.fields {
+        assert!(
+          profile.board_address(spec.board).is_some(),
+          "{id:?} decodes a field from {:?} but has no address for it",
+          spec.board
+        );
+      }
+    }
   }
 
   #[test]

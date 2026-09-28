@@ -2,15 +2,10 @@
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.kts.
 
-# ============================================
-# BLE related classes
-# ============================================
--keep class android.bluetooth.** { *; }
-
-# ============================================
-# Compose
-# ============================================
--keep class androidx.compose.** { *; }
+# No blanket keeps for android.bluetooth.** (framework classes are never in
+# the DEX, so the rule did nothing) or androidx.compose.** (Compose ships its
+# own consumer rules; keeping all of it left most of the DEX unshrunk and
+# unobfuscated, which Play Console flags below 25%).
 
 # ============================================
 # Rokid CXR SDK  --  REQUIRED, do not comment out

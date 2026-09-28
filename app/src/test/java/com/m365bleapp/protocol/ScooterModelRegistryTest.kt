@@ -122,6 +122,93 @@ class ScooterModelRegistryTest {
         assertNotNull("an NB-prefixed name should match something", result)
     }
 
+    // --- the vendor's own model code ---------------------------------------
+
+    @Test
+    fun `a manufacturer type code names the model without guessing`() {
+        val resolved = ScooterModelRegistry.resolve(
+            advertisedName = null,
+            manufacturerTypeCode = 46,
+        )
+        assertEquals(ScooterModel.MI3, resolved.model)
+        assertEquals(IdentificationSource.MANUFACTURER_DATA, resolved.source)
+        // Documented, never Verified: a scooter declaring its own code is the
+        // strongest pre-connection signal there is, but nothing here has seen it
+        // on a wire.
+        assertEquals(Confidence.DOCUMENTED, resolved.confidence)
+    }
+
+    @Test
+    fun `a manufacturer type code outranks the advertised name`() {
+        // The name says Xiaomi, the scooter's own code says Max G30. The code is
+        // the scooter's declaration; the name is a string several generations
+        // share, so the code must win.
+        val resolved = ScooterModelRegistry.resolve(
+            advertisedName = "MIScooter7353",
+            manufacturerTypeCode = 36,
+        )
+        assertEquals(ScooterModel.NINEBOT_MAX_G30, resolved.model)
+        assertEquals(IdentificationSource.MANUFACTURER_DATA, resolved.source)
+    }
+
+    @Test
+    fun `an unmapped type code falls back to the name instead of guessing`() {
+        // 3 is the vendor's Mini code, which has no ScooterModel here. Reporting
+        // the nearest model would be worse than reporting nothing, so the name
+        // prefix still decides.
+        val resolved = ScooterModelRegistry.resolve(
+            advertisedName = "MIScooter7353",
+            manufacturerTypeCode = 3,
+        )
+        assertEquals(ScooterModel.M365, resolved.model)
+        assertEquals(IdentificationSource.ADVERTISEMENT, resolved.source)
+        assertEquals(Confidence.UNVERIFIED, resolved.confidence)
+    }
+
+    @Test
+    fun `an unmapped type code with no usable name is still unknown`() {
+        val resolved = ScooterModelRegistry.resolve(
+            advertisedName = null,
+            manufacturerTypeCode = 3,
+        )
+        assertTrue(resolved.isUnknown)
+        assertEquals(IdentificationSource.NONE, resolved.source)
+    }
+
+    @Test
+    fun `a manual override beats a manufacturer type code too`() {
+        val resolved = ScooterModelRegistry.resolve(
+            advertisedName = null,
+            override = ScooterModel.M365,
+            manufacturerTypeCode = 36,
+        )
+        assertEquals(ScooterModel.M365, resolved.model)
+        assertEquals(IdentificationSource.MANUAL_OVERRIDE, resolved.source)
+    }
+
+    @Test
+    fun `every manufacturer type code maps to a model the registry can offer`() {
+        // A code that mapped to UNKNOWN would render as "Unidentified" while
+        // claiming to have been declared by the scooter — worse than not mapping.
+        for (code in 0..255) {
+            val mapped = ScooterModelRegistry.fromManufacturerTypeCode(code) ?: continue
+            assertTrue(
+                "type code $code mapped to ${mapped.first}, which the UI cannot offer",
+                mapped.first != ScooterModel.UNKNOWN,
+            )
+            assertTrue(
+                "type code $code mapped to ${mapped.first}, which is not selectable",
+                mapped.first in ScooterModelRegistry.selectableModels,
+            )
+        }
+    }
+
+    @Test
+    fun `the manufacturer company id is the Ninebot one`() {
+        // A wrong id would silently read another vendor's payload as a model code.
+        assertEquals(16974, ScooterModelRegistry.MANUFACTURER_COMPANY_ID)
+    }
+
     // --- override ----------------------------------------------------------
 
     @Test

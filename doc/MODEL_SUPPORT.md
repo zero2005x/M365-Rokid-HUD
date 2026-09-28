@@ -21,6 +21,25 @@ number that looks plausible.
 | **Connectable** | The app can complete the protocol handshake. |
 | **Readable** | The app can produce telemetry, because a register layout is published for it. |
 
+### How a scooter is recognised
+
+Two advertisement signals, in order of strength:
+
+1. **The vendor's own model code.** Ninebot/Xiaomi scooters advertise
+   manufacturer-specific data under company id **16974 (`0x424E`)**, and its first
+   byte is the model code the vendor uses internally. `ScooterModelRegistry`
+   matches that code directly and reports the identification as **Documented**.
+   A code the registry cannot name falls through to the name, rather than being
+   forced onto the nearest model. See
+   `doc/reverse-engineering/m365tools-reports/01-scan-and-identification.md`.
+2. **The advertised name.** A prefix match only, and always reported as
+   **Unverified**: the same model name spans several wire generations, so a name
+   cannot establish a protocol.
+
+> ⚠️ Both are static-analysis findings. No real `0x424E` advertisement has been
+> captured by this project, so "the scooter declares code X" is documentation-grade
+> until someone records one.
+
 ### The matrix | 對照表
 
 `—` means the capability is not implemented. Capabilities come from

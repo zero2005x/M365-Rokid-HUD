@@ -273,6 +273,17 @@ enum class ScooterModel(
 object ScooterModelRegistry {
 
     /**
+     * Bluetooth SIG company identifier for Ninebot/Xiaomi scooter advertisements.
+     *
+     * `0x424E` (`16974`). Its manufacturer-specific data carries the vendor's own
+     * model code in byte 0 and the protocol version in byte 1; see
+     * [fromManufacturerTypeCode]. A scooter that does not advertise it is not
+     * necessarily a scooter this app cannot talk to — only one this app cannot
+     * *name* from the advertisement.
+     */
+    const val MANUFACTURER_COMPANY_ID: Int = 16974
+
+    /**
      * Models offered in the manual override picker, in a sensible order.
      *
      * Excludes [ScooterModel.UNKNOWN], which is the absence of a choice.
@@ -309,16 +320,79 @@ object ScooterModelRegistry {
     }
 
     /**
+     * The model named by a scooter's own advertised type code, if we know it.
+     *
+     * ## Why this beats a name prefix
+     *
+     * Ninebot/Xiaomi scooters put manufacturer-specific data in the advertisement
+     * under company id **16974 (`0x424E`)**, and its first byte is the vendor's own
+     * model code — the same integer that identifies the model internally. That is a
+     * declaration by the scooter, not an inference from a string, and it survives
+     * the thing that makes [fromAdvertisementName] unreliable: the same model name
+     * spanning several wire generations.
+     *
+     * Codes come from an independent implementation — **m365 Tools 1.8.0**
+     * (`app.peretti.m365tools`), statically analysed: it reads the byte and matches
+     * it against its own device table
+     * (`doc/reverse-engineering/m365tools-reports/01-scan-and-identification.md`).
+     * The Xiaomi entries in that table were cross-checked against this project's
+     * own extraction of the same table and agree.
+     *
+     * Confidence is [Confidence.DOCUMENTED], not `VERIFIED`: this project has not
+     * confirmed on hardware that a given scooter advertises the code we expect,
+     * and no capture of a real `0x424E` payload exists yet.
+     *
+     * Only codes this project can actually name are listed. An unlisted code
+     * returns `null` so the caller can fall back, rather than being forced onto the
+     * nearest model.
+     */
+    fun fromManufacturerTypeCode(typeCode: Int): Pair<ScooterModel, Confidence>? {
+        val model = MANUFACTURER_TYPE_CODES[typeCode] ?: return null
+        return model to Confidence.DOCUMENTED
+    }
+
+    /**
+     * Vendor model codes from the `0x424E` manufacturer data, first byte.
+     *
+     * Several codes have no [ScooterModel] to map to — Mini, Nano, Mark2/3, VIO,
+     * the Kart family and the rebadges — so they are deliberately absent: an
+     * unmapped code falls back to the name prefix instead of being reported as a
+     * model this app cannot support anyway.
+     */
+    private val MANUFACTURER_TYPE_CODES: Map<Int, ScooterModel> = mapOf(
+        // Xiaomi lineage. `1S_DE` is the German 1S, which shares the 1S layout.
+        32 to ScooterModel.M365,
+        34 to ScooterModel.M365_PRO,
+        37 to ScooterModel.MI_1S,
+        40 to ScooterModel.M365_PRO2,
+        41 to ScooterModel.MI_LITE,
+        43 to ScooterModel.MI_1S,
+        46 to ScooterModel.MI3,
+        // Ninebot / Segway families this app recognises.
+        33 to ScooterModel.NINEBOT_ESX,
+        36 to ScooterModel.NINEBOT_MAX_G30,
+        35 to ScooterModel.NINEBOT_T15,
+        44 to ScooterModel.NINEBOT_F_SERIES,
+        45 to ScooterModel.NINEBOT_F_SERIES,
+        39 to ScooterModel.NINEBOT_ESX,
+    )
+
+    /**
      * The model to use, given an advertisement and any manual override.
      *
      * An override always wins: the rider is looking at the scooter and this
      * registry is guessing from a string. A manual choice is still reported as
      * [Confidence.UNVERIFIED], because choosing a model tells the app which
      * layout to *try* — it does not make that layout correct.
+     *
+     * The vendor type code in [manufacturerTypeCode] is preferred over the
+     * advertised name when present: it is the scooter declaring its own model,
+     * where a name is a string several generations share.
      */
     fun resolve(
         advertisedName: String?,
         override: ScooterModel? = null,
+        manufacturerTypeCode: Int? = null,
     ): Identification {
         if (override != null && override != ScooterModel.UNKNOWN) {
             return Identification(
@@ -327,7 +401,8 @@ object ScooterModelRegistry {
                 source = IdentificationSource.MANUAL_OVERRIDE,
             )
         }
-        val guessed = fromAdvertisementName(advertisedName)
+        val declared = manufacturerTypeCode?.let { fromManufacturerTypeCode(it) }
+        val guessed = declared ?: fromAdvertisementName(advertisedName)
         return if (guessed == null) {
             Identification(
                 model = ScooterModel.UNKNOWN,
@@ -338,7 +413,11 @@ object ScooterModelRegistry {
             Identification(
                 model = guessed.first,
                 confidence = guessed.second,
-                source = IdentificationSource.ADVERTISEMENT,
+                source = if (declared != null) {
+                    IdentificationSource.MANUFACTURER_DATA
+                } else {
+                    IdentificationSource.ADVERTISEMENT
+                },
             )
         }
     }
@@ -348,6 +427,14 @@ object ScooterModelRegistry {
 enum class IdentificationSource {
     /** The rider chose it. */
     MANUAL_OVERRIDE,
+
+    /**
+     * The scooter declared its own model code in the `0x424E` manufacturer data.
+     *
+     * The strongest signal available before connecting, and still weaker than a
+     * capture: it says which model the scooter claims to be.
+     */
+    MANUFACTURER_DATA,
 
     /** Matched an advertised-name prefix. */
     ADVERTISEMENT,

@@ -126,6 +126,19 @@ private data class ScannedDevice(
     val address: String = scanResult.device.address
 ) {
     /**
+     * The vendor's own model code, from the `0x424E` manufacturer data.
+     *
+     * Byte 0 of that payload, or `null` when the device does not advertise the
+     * company id at all — which is most non-scooter traffic and every device whose
+     * advertisement this app cannot read.
+     */
+    val manufacturerTypeCode: Int? = scanResult.scanRecord
+        ?.getManufacturerSpecificData(ScooterModelRegistry.MANUFACTURER_COMPANY_ID)
+        ?.firstOrNull()
+        ?.toInt()
+        ?.and(0xFF)
+
+    /**
      * What this device looks like it is.
      *
      * Resolved through [ScooterModelRegistry] rather than a local name check.
@@ -137,9 +150,16 @@ private data class ScannedDevice(
      * Ninebot and current Segway models all advertise the same Nordic UART
      * service — so the registry returns a confidence alongside the guess and the
      * badge shows both.
+     *
+     * The vendor's model code is preferred over the name when the device
+     * advertises one; it is the scooter declaring its own model rather than this
+     * app inferring one from a string.
      */
     val identification: Identification
-        get() = ScooterModelRegistry.resolve(advertisedName = name)
+        get() = ScooterModelRegistry.resolve(
+            advertisedName = name,
+            manufacturerTypeCode = manufacturerTypeCode,
+        )
 
     /**
      * Whether this device is worth offering as a scooter.

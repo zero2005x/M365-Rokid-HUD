@@ -564,7 +564,8 @@ dependencies {
     // It belongs here rather than in :glass-hud: CXR-M runs on the companion
     // phone and drives the glasses; the glasses-side counterpart is CXR-S.
     // Transitive deps (Retrofit, OkHttp, ...) are declared by the SDK.
-    implementation("com.rokid.cxr:client-m:1.0.4")
+    // 1.2.2 provides 16 KB memory page aligned native libraries required by Google Play.
+    implementation("com.rokid.cxr:client-m:1.2.2")
 }
 
 kover {

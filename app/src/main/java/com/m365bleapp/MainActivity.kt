@@ -2,10 +2,12 @@ package com.m365bleapp
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -31,7 +33,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        drawEdgeToEdge()
         super.onCreate(savedInstanceState)
         
         repository = ScooterRepository.getInstance(applicationContext)
@@ -52,6 +54,37 @@ class MainActivity : ComponentActivity() {
         }
     }
     
+    /**
+     * Edge-to-edge on every supported API level, without androidx.activity's
+     * `enableEdgeToEdge()`.
+     *
+     * That helper sets `LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES` on API 28-29
+     * (its `EdgeToEdgeApi28`), and because minSdk is 28 that code path is in
+     * the release DEX. Play Console flags the constant as an API deprecated in
+     * Android 15, whatever device actually runs it.
+     *
+     * The rest of what the helper did is covered here or elsewhere:
+     *  - bar colours: transparent via the window theme (themes.xml);
+     *  - icon appearance: M365BleAppTheme sets light icons (dark-only app);
+     *  - cutout: ALWAYS on API 30+, which is also what the helper used there.
+     *    On API 28-29 the platform DEFAULT already lets a portrait window that
+     *    extends under the status bar draw into the cutout.
+     */
+    private fun drawEdgeToEdge() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Otherwise the system paints a translucent scrim behind the
+            // gesture/button navigation bar on API 29-34.
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         // Only disconnect if the activity is actually finishing (user pressed back, etc.)

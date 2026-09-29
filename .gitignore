@@ -27,6 +27,10 @@
 !gradle/wrapper/gradle-wrapper.jar
 *.kotlin_module
 
+# Kotlin incremental-compilation session files, written by the Kotlin Gradle
+# plugin on every build under a randomly named file.
+/.kotlin/
+
 # Rust
 /ninebot-ffi/target/
 /ninebot-ble/target/

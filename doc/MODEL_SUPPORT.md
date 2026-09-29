@@ -21,6 +21,25 @@ number that looks plausible.
 | **Connectable** | The app can complete the protocol handshake. |
 | **Readable** | The app can produce telemetry, because a register layout is published for it. |
 
+### How a scooter is recognised
+
+Two advertisement signals, in order of strength:
+
+1. **The vendor's own model code.** Ninebot/Xiaomi scooters advertise
+   manufacturer-specific data under company id **16974 (`0x424E`)**, and its first
+   byte is the model code the vendor uses internally. `ScooterModelRegistry`
+   matches that code directly and reports the identification as **Documented**.
+   A code the registry cannot name falls through to the name, rather than being
+   forced onto the nearest model. See
+   `doc/reverse-engineering/m365tools-reports/01-scan-and-identification.md`.
+2. **The advertised name.** A prefix match only, and always reported as
+   **Unverified**: the same model name spans several wire generations, so a name
+   cannot establish a protocol.
+
+> ⚠️ Both are static-analysis findings. No real `0x424E` advertisement has been
+> captured by this project, so "the scooter declares code X" is documentation-grade
+> until someone records one.
+
 ### The matrix | 對照表
 
 `—` means the capability is not implemented. Capabilities come from
@@ -129,6 +148,42 @@ lists ESx BLE109/110 and Max BLE110/113/114 as crypto-capable.
 >
 > ⚠️ **Unverified**: whether a given ESx/Max unit on the shelf today uses
 > NinebotCrypto or plaintext. **Confirm per unit before shipping.**
+
+### Board addressing is per-model, not per-board
+
+Read from a second independent implementation — the closed-source **m365 Tools**
+(`app.peretti.m365tools`, 1.8.0), statically analysed; see
+[`doc/reverse-engineering/m365tools-reports/07-model-component-addressing.md`](reverse-engineering/m365tools-reports/07-model-component-addressing.md).
+
+Its device table stores, for every model, a list of boards each carrying **two**
+addresses, which its own `toString()` labels `mID` and `mReceiveID` — the id a
+request is sent to, and the id the reply arrives *from*. They are not always equal:
+
+| Family | Boards (`send_id` → `receive_id`) |
+| --- | --- |
+| Xiaomi M365 / Pro / Pro2 / 1S / 1S-DE / Lite / **Mi 3** | ESC `0x20`→`0x23`, BLE `0x21`→`0x24`, BMS `0x22`→`0x25` |
+| Ninebot Max G30 | ESC `0x20`→`0x20`, BLE `0x21`→`0x21`, BMS `0x22`→`0x22`, BMS2 `0x23`→`0x23` |
+| Ninebot ESx | ESC `0x20`→`0x20`, BLE `0x21`→`0x21`, BMS2 `0x23`→`0x23` |
+| Ninebot F-series | ESC `0x20`→`0x20`, BLE `0x21`→`0x21`, BMS `0x22`→`0x22` |
+| Ninebot Mini / Nano / Mark2 / Mark3 / VIO | *different addresses again — e.g. Mini ESC `0x0A`→`0x0D`, Mark3 ESC `0x14`→`0x14`* |
+
+Two consequences for this repository:
+
+1. **The Xiaomi `+3` convention is a Xiaomi fact, not a protocol fact.** Every
+   Ninebot family answers on the id it was addressed on, and several sit at
+   different addresses altogether. `Board::xiaomi_legacy_address()` is therefore
+   named for the family it describes and returns `Option`, and
+   `ModelProfile::board_address()` is the per-model accessor. Nothing may read a
+   bare constant and call it "the ESC address".
+2. **`0x3E` is the master/broadcast address.** The reference implementation
+   synthesises a board record for it on demand rather than storing one. This
+   repository already agrees from two unrelated directions: `FrameCodec`'s
+   `DEFAULT_SOURCE` and `PlaintextRegisterSession.DEFAULT_SOURCE` are both `0x3E`.
+   That agreement is the strongest external corroboration in this whole pass.
+
+⚠️ **Unverified**: the table above is read from another app's data, not from a
+scooter. Only the M365 row can ever be confirmed with the hardware on hand. The
+`+3` offset in particular has not been observed on a wire here.
 
 ---
 
@@ -347,3 +402,24 @@ for the odometer. Every source agrees, and they match the documented units.
   see no change;
 - the remaining question is recorded and asserted by tests rather than papered
   over, so it cannot be quietly forgotten or "fixed" without evidence.
+
+### 8.6 A fourth source agrees with the Java parser
+
+`app.peretti.m365tools` (m365 Tools 1.8.0), statically analysed — see
+`doc/reverse-engineering/m365tools-reports/04-register-maps.md`. It keeps one
+2-byte slot per register address at `buffer[register × 2]` and reads the same
+block as individual registers, which lands battery / speed / average speed /
+odometer / temperature at payload bytes **8 / 10 / 12 / 14 / 22 of a `0xB0`
+read** — i.e. registers `0xB4` / `0xB5` / `0xB6` / `0xB7–0xB8` / `0xBB`.
+
+That is the **Java** `MotorInfoParser` layout, not `ninebot-ble`'s, whose
+`FieldSpec` offsets for the same fields are `4 / 6 / 8 / 10 / 18` — exactly four
+bytes (two registers) lower. The tally is now two implementations for the Java
+offsets and one for the Rust ones.
+
+⚠️ This still does **not** settle it, and nothing was changed here on the strength
+of it: m365 Tools is a different app reading the block as separate register
+reads, and no byte has been observed on a wire. What it does mean is that the
+question now has a fourth independent data point, and that "the documentation
+says otherwise" is the weakest of the remaining arguments. §8.3 stands: do not
+move these offsets without a capture.

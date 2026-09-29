@@ -379,8 +379,7 @@ class BleManager(private val context: Context) {
              }
         }
 
-        val service = gatt.getService(serviceUuid)
-        val char = service?.getCharacteristic(charUuid)
+        val char = findCharacteristic(gatt, serviceUuid, charUuid)
         if (char == null) {
             if (waitForResponse) writeContinuation = null
             cont.resume(false)
@@ -413,6 +412,46 @@ class BleManager(private val context: Context) {
         }
     }
 
+    /**
+     * Finds [charUuid] on [hintedService] if it is there, otherwise on **any**
+     * discovered service.
+     *
+     * ## Why this is not just `gatt.getService(hintedService)`
+     *
+     * The auth characteristics (`AUTH_UPNP` `00000010-…`, `AUTH_AVDTP`
+     * `00000019-…`) are addressed here under [AUTH_SERVICE] (`0000fe95-…`). That
+     * pairing is an assumption about one vendor's GATT layout, and a wrong
+     * assumption fails *silently*: `getService` returns `null`, the write or the
+     * subscription resumes `false`, and the caller sees a handshake that simply
+     * never completes.
+     *
+     * The reference implementation — **m365 Tools** (`app.peretti.m365tools`,
+     * statically analysed) — never looks a service up by UUID at all. It has zero
+     * calls to `BluetoothGatt.getService(UUID)`; it addresses characteristics by
+     * UUID and lets the BLE layer enumerate every service to find them
+     * (`mb0.smali:42-92`). It also never uses `0000fe95-…` as a *service* — it
+     * only reads that UUID's advertisement service-data during scanning.
+     *
+     * So the hinted service is treated as a hint, not a requirement. Trying it
+     * first keeps today's behaviour for a device that does expose the expected
+     * layout, and scanning the rest means a device that exposes the same
+     * characteristic under a different service now works instead of failing
+     * silently. See `doc/reverse-engineering/m365tools-reports/02-gatt-selection.md`.
+     *
+     * @param gatt the connected GATT client, whose services must be discovered.
+     * @param hintedService the service the characteristic is expected under.
+     * @param charUuid the characteristic to find.
+     * @return the characteristic, or `null` when no service exposes it.
+     */
+    private fun findCharacteristic(
+        gatt: BluetoothGatt,
+        hintedService: UUID,
+        charUuid: UUID,
+    ): BluetoothGattCharacteristic? {
+        gatt.getService(hintedService)?.getCharacteristic(charUuid)?.let { return it }
+        return gatt.services.firstNotNullOfOrNull { it.getCharacteristic(charUuid) }
+    }
+
     @SuppressLint("MissingPermission")
     @Suppress("UNUSED_PARAMETER")
     suspend fun enableNotifications(gatt: BluetoothGatt, serviceUuid: UUID, charUuid: UUID, @Suppress("unused") callback: (ByteArray) -> Unit): Boolean = suspendCancellableCoroutine { cont ->
@@ -421,8 +460,7 @@ class BleManager(private val context: Context) {
             return@suspendCancellableCoroutine
         }
 
-        val service = gatt.getService(serviceUuid)
-        val char = service?.getCharacteristic(charUuid)
+        val char = findCharacteristic(gatt, serviceUuid, charUuid)
         if (char == null) {
             cont.resume(false)
             return@suspendCancellableCoroutine

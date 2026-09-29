@@ -128,9 +128,24 @@ object ScooterSettingsWriter {
      * Encodes a status word **big-endian**.
      *
      * This is the trap: [EscTelemetryParser.statusBits] reads the same register
-     * little-endian, and the reference app does exactly this asymmetry. Sending
+     * little-endian, and this builder deliberately answers big-endian. Sending
      * little-endian here would set the wrong bit — with two settings sharing the
      * word, that means silently toggling the other one.
+     *
+     * ⚠️ **Two reference implementations disagree here, and it is unresolved.**
+     *
+     * | Source | `0x7D` **write** byte order |
+     * |---|---|
+     * | Scootbatt 1.9.2 — what this file follows (`doc/reverse-engineering/scootbatt-reports/README.md` §5) | **big-endian** |
+     * | m365 Tools 1.8.0 — `BaseCommand.smali`, `<init>(IIIISZ)V`: `ByteBuffer.allocate(2).order(LITTLE_ENDIAN).putShort(...)` | **little-endian** |
+     *
+     * This file matches Scootbatt, so the asymmetry is deliberate rather than a
+     * mistake — but it is not *settled*. Both apps read `0x7D` little-endian and
+     * differ only on the write, and picking wrong flips the neighbouring bit
+     * silently instead of failing. Resolve against hardware — write a known word,
+     * read `0x7D` back, and check which order reproduces it — then replace this
+     * table with the answer. See
+     * `doc/reverse-engineering/m365tools-reports/05-write-commands.md`.
      */
     fun statusWordWrite(word: Int): Write {
         val masked = word and 0xFFFF

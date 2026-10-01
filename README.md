@@ -47,6 +47,10 @@ A modern Android application for connecting to and monitoring Xiaomi/Ninebot M36
 
 ## 📸 Screenshots
 
+<p align="center">
+  <img src="doc/play-store/promo/demo.gif" width="280" alt="Demo Ride walkthrough: dashboard, details and glasses display settings">
+</p>
+
 | Dashboard | Details | Glasses Display | Settings |
 | :-------: | :-----: | :-------------: | :------: |
 | <img src="doc/play-store/en-US/01_dashboard.png" width="200" alt="Dashboard"> | <img src="doc/play-store/en-US/02_details.png" width="200" alt="Scooter details"> | <img src="doc/play-store/en-US/03_glasses_display.png" width="200" alt="Glasses display settings"> | <img src="doc/play-store/en-US/04_settings.png" width="200" alt="Settings"> |

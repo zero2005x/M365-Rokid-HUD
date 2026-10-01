@@ -16,6 +16,8 @@
 # App build outputs
 /app/build/
 /app/release/
+# Local release staging: signed AABs and R8 mapping files for Play upload.
+/release/
 /glass-hud/build/
 /glass-hud/local.properties
 

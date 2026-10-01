@@ -42,6 +42,10 @@
 
 ## 📸 螢幕截圖
 
+<p align="center">
+  <img src="play-store/promo/demo.gif" width="280" alt="模擬騎乘操作示範：儀表板、詳細資訊與眼鏡顯示設定">
+</p>
+
 | 儀表板 | 詳細資訊 | 眼鏡顯示 | 設定 |
 | :----: | :------: | :------: | :--: |
 | <img src="play-store/zh-TW/01_dashboard.png" width="200" alt="儀表板"> | <img src="play-store/zh-TW/02_details.png" width="200" alt="滑板車詳細資訊"> | <img src="play-store/zh-TW/03_glasses_display.png" width="200" alt="眼鏡顯示設定"> | <img src="play-store/zh-TW/04_settings.png" width="200" alt="設定"> |

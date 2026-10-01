@@ -1,17 +1,10 @@
 # v1.5.1 — Play Console fixes, full translations | Play Console 修正、翻譯補齊
 
-Phone app `com.m365bleapp` versionCode 11, glasses app `com.m365hud.glass`
-versionCode 8. Both report versionName 1.5.1.
+Phone app `com.m365bleapp` versionCode 10, glasses app `com.m365hud.glass`
+versionCode 7. Both report versionName 1.5.1.
 
-Play already serves an earlier 1.5.1 build as versionCode 10, which was cut
-before the per-model addressing work (#10) landed on `main`. This build
-supersedes it, so the versionCode moves up while the versionName stays 1.5.1.
-
-手機端 `com.m365bleapp` versionCode 11，眼鏡端 `com.m365hud.glass` versionCode 8，
+手機端 `com.m365bleapp` versionCode 10，眼鏡端 `com.m365hud.glass` versionCode 7，
 versionName 皆為 1.5.1。
-
-Play 上已有 versionCode 10 的 1.5.1 版本，該版本是在 per-model addressing（#10）
-合併進 `main` 之前建置的。本版取代它，因此 versionCode 遞增、versionName 維持 1.5.1。
 
 ---
 
@@ -36,7 +29,6 @@ Play 上已有 versionCode 10 的 1.5.1 版本，該版本是在 per-model addre
 - Motor lock buttons no longer break in Russian / Ukrainian. | 修正俄文／烏克蘭文的馬達鎖定按鈕版面。
 - Demo Ride switch in Settings reflects its state. | 設定中的模擬騎乘開關會正確顯示狀態。
 - Refreshed store screenshots for 11 languages and a promo video. | 更新 11 種語言商店截圖與宣傳影片。
-- Scooters are now recognised by the model code in their BLE advertisement, with the advertised name as a fallback; the GATT characteristic lookup scans every discovered service. Covered by unit tests only, not yet verified on a scooter. | 改以藍牙廣播中的型號代碼辨識滑板車（廣播名稱作為備援）；GATT 特徵查找會掃描所有已探索的服務。僅有單元測試涵蓋，尚未在實機驗證。
 
 ## Play "What's new" text | Play「最新異動」文字
 

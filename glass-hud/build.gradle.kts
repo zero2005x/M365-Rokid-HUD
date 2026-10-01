@@ -31,7 +31,7 @@ android {
         // Aligned with the phone app so a joint release ships two APKs that
         // report the same versionName. versionCode must strictly increase for
         // sideloaded updates to install over an existing build.
-        versionCode = 7
+        versionCode = 8
         versionName = "1.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

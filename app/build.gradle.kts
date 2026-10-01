@@ -418,7 +418,7 @@ android {
         // glass-hud so both APKs share one support matrix.
         minSdk = 28
         targetSdk = 36
-        versionCode = 10
+        versionCode = 11
         versionName = "1.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

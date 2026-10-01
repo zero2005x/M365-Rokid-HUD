@@ -208,14 +208,18 @@ jobs:
         # only, so a release artifact must never contain them. This scans exactly
         # what is about to be published. Exit code 2 means "nothing configured to
         # look for", which is the expected state in CI and not a failure.
+        #
+        # Steps run under `bash -e`, so the exit code must be captured with `|| rc=$?`.
+        # A bare call followed by `rc=$?` aborts the step on the script's exit 2 and
+        # the `case` below is never reached.
         run: |
           failed=0
           for artifact in dist/*.apk dist/*.aab; do
-            bash scripts/verify-bundle-secrets.sh "$artifact"
-            rc=$?
+            rc=0
+            bash scripts/verify-bundle-secrets.sh "$artifact" || rc=$?
             case "$rc" in
               0|2) ;;   # 0 = clean, 2 = no credentials configured
-              *)   failed=1 ;;
+              *)   echo "::error::$artifact failed the Rokid credential scan (rc=$rc)"; failed=1 ;;
             esac
           done
           exit $failed

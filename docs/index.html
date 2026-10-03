@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M365 Rokid HUD — 滑板車 AR 儀表板</title>
+<meta name="description" content="Android BLE 儀表板與 Rokid HUD：下載、設定、車型限制與開發文件。">
+<meta property="og:title" content="M365 Rokid HUD — 滑板車 AR 儀表板">
+<meta property="og:description" content="Android BLE 儀表板與 Rokid HUD：下載、設定、車型限制與開發文件。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://zero2005x.github.io/M365-Rokid-HUD/">
+<meta name="theme-color" content="#f8f9ff">
+<link rel="canonical" href="https://zero2005x.github.io/M365-Rokid-HUD/">
+<link rel="icon" type="image/svg+xml" href="assets/images/app-icon.svg">
+<link rel="stylesheet" href="assets/styles.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="skip">跳至主要內容</a>
+<header><nav class="wrap nav" aria-label="M365 Rokid HUD">
+<a class="brand" href="#main"><img src="assets/images/app-icon.svg" width="36" height="36" alt="">M365 Rokid HUD</a>
+<div class="links">
+<a href="#features" data-i18n="navFeatures">功能</a><a href="#start" data-i18n="navStart">快速開始</a><a href="#models" data-i18n="navModels">車型</a><a href="#developers" data-i18n="navDev">開發者</a>
+<div class="languages" role="group" aria-label="選擇語言" data-i18n-label="language">
+<button type="button" data-lang="zh-TW" lang="zh-TW" aria-pressed="true">繁中</button>
+<button type="button" data-lang="en" lang="en" aria-pressed="false">EN</button>
+<button type="button" data-lang="zh-CN" lang="zh-CN" aria-pressed="false">简中</button>
+</div></div></nav></header>
+<main id="main" class="wrap">
+<section class="hero" aria-labelledby="hero-title">
+<div><p class="eyebrow">ANDROID × ROKID AR</p><h1 id="hero-title"><span data-i18n="heroLine1">把滑板車儀表，</span><span data-i18n="heroLine2">帶進視線。</span></h1><p class="lead" data-i18n="heroLead">從 Android 手機儀表板，到 Rokid 眼鏡上的 HUD。查看車輛資料、自訂顯示，也能先用 Demo Ride 體驗。</p>
+<div class="actions"><a class="button" href="https://play.google.com/store/apps/details?id=com.m365bleapp" data-i18n="play">Google Play 下載</a><a class="button secondary" href="https://github.com/zero2005x/M365-Rokid-HUD" data-i18n="github">查看 GitHub</a></div>
+<div class="chips"><span data-i18n="chipAndroid">Android 9 以上</span><span data-i18n="chipLanguages">App 支援 11 種語言</span><span data-i18n="chipOpen">MIT 開源</span></div></div>
+<figure class="hero-visual"><img src="assets/images/zh-TW/01_dashboard.png" data-shot="01_dashboard.png" data-alt-key="shot1" alt="儀表板 — Demo Ride 模擬資料，非實車測試結果" width="1080" height="1920" fetchpriority="high"><figcaption data-i18n="demo">Demo Ride 模擬資料 · 非實車測試結果</figcaption></figure>
+</section>
+<section id="features" class="section"><h2 data-i18n="featuresTitle">騎乘資訊，一眼掌握。</h2><p class="lead" data-i18n="featuresLead">手機即可使用，眼鏡為選用配件。資料欄位與控制功能依車型和協議支援而定。</p><div class="grid">
+<article class="card"><h3 data-i18n="f1Title">即時儀表板</h3><p data-i18n="f1Text">查看時速、電量、溫度、里程與估算續航。沒有暫存器配置的欄位會隱藏。</p></article>
+<article class="card"><h3 data-i18n="f2Title">Rokid HUD</h3><p data-i18n="f2Text">透過手機 Gateway 傳送資料至眼鏡端 glass-hud，自選顯示欄位與字級。</p></article>
+<article class="card"><h3 data-i18n="f3Title">連線品質</h3><p data-i18n="f3Text">查看 RSSI、資料延遲與斷線狀態，了解儀表資料是否仍在更新。</p></article>
+<article class="card"><h3 data-i18n="f4Title">先試 Demo Ride</h3><p data-i18n="f4Text">不需滑板車，透過模擬資料體驗儀表板、詳細資訊與 HUD 設定。</p></article>
+<article class="card"><h3 data-i18n="f5Title">日誌與車輛控制</h3><p data-i18n="f5Text">匯出 CSV 與除錯日誌。鎖車、尾燈等操作須有對應車型與協議支援。</p></article>
+<article class="card"><h3 data-i18n="f6Title">多語系介面</h3><p data-i18n="f6Text">App 提供 11 種語言；官網可切換繁體中文、英文與簡體中文。</p></article>
+</div></section>
+<section id="start" class="section"><h2 data-i18n="startTitle">三步開始，先在手機上體驗。</h2><p class="lead" data-i18n="startLead">準備 Android 9 以上手機與相容滑板車；也可先使用 Demo Ride。</p><div class="grid">
+<article class="card"><span class="number" aria-hidden="true">1</span><h3 data-i18n="s1Title">下載 App</h3><p data-i18n="s1Text">從 Google Play 安裝手機 App，或至 GitHub Releases 下載 APK。</p></article>
+<article class="card"><span class="number" aria-hidden="true">2</span><h3 data-i18n="s2Title">掃描與配對</h3><p data-i18n="s2Text">開啟滑板車，授予藍牙／定位等必要權限，點選 Scan。首次配對依 Register 提示操作電源鍵。</p></article>
+<article class="card"><span class="number" aria-hidden="true">3</span><h3 data-i18n="s3Title">查看儀表</h3><p data-i18n="s3Text">連線後開啟 Dashboard 或 Details。選用 Rokid 眼鏡時，請另安裝眼鏡端 App 並開啟 Gateway。</p></article>
+</div><aside class="notice"><p data-i18n="pairNotice">註冊可能解除與其他 App（如米家）的配對。請只註冊你擁有的車輛，並在騎乘前完成設定。</p></aside></section>
+<section id="screenshots" class="section"><h2 data-i18n="shotsTitle">看看 App 實際介面。</h2><p class="lead" data-i18n="shotsLead">以下畫面於模擬器使用 Demo Ride 擷取，數字為模擬資料。切換語言可查看對應介面。</p><div class="shots">
+<figure class="shot"><img src="assets/images/zh-TW/01_dashboard.png" data-shot="01_dashboard.png" data-alt-key="shot1" alt="儀表板 — Demo Ride 模擬資料" loading="lazy" width="1080" height="1920"><figcaption data-i18n="shot1">儀表板</figcaption></figure>
+<figure class="shot"><img src="assets/images/zh-TW/02_details.png" data-shot="02_details.png" data-alt-key="shot2" alt="車輛詳細資訊 — Demo Ride 模擬資料" loading="lazy" width="1080" height="1920"><figcaption data-i18n="shot2">車輛詳細資訊</figcaption></figure>
+<figure class="shot"><img src="assets/images/zh-TW/03_glasses_display.png" data-shot="03_glasses_display.png" data-alt-key="shot3" alt="眼鏡顯示設定 — Demo Ride 模擬資料" loading="lazy" width="1080" height="1920"><figcaption data-i18n="shot3">眼鏡顯示設定</figcaption></figure>
+<figure class="shot"><img src="assets/images/zh-TW/04_settings.png" data-shot="04_settings.png" data-alt-key="shot4" alt="設定 — Demo Ride 模擬資料" loading="lazy" width="1080" height="1920"><figcaption data-i18n="shot4">設定</figcaption></figure>
+</div></section>
+<section id="models" class="section"><h2 data-i18n="modelsTitle">先確認你的車型。</h2><p class="lead" data-i18n="modelsLead">辨識、連線、可讀取遙測與實車驗證是四件不同的事。以下為實作摘要，並非相容性保證。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="thModel">車型</th><th scope="col" data-i18n="thState">實作狀態</th><th scope="col" data-i18n="thLimit">驗證與限制</th></tr></thead><tbody>
+<tr><th scope="row">Xiaomi M365 / Pro</th><td data-i18n="m1State">遙測欄位已實作</td><td data-i18n="m1Limit">文件支持，未實車驗證；0xB0 回應偏移待確認。</td></tr>
+<tr><th scope="row">Xiaomi Pro 2 / 1S / Lite</th><td data-i18n="m2State">遙測欄位已實作</td><td data-i18n="m2Limit">文件支持，尚無實車封包。</td></tr>
+<tr><th scope="row">Xiaomi Mi 3</th><td data-i18n="m3State">可辨識，協議未確認</td><td data-i18n="m3Limit">不提供遙測。</td></tr>
+<tr><th scope="row">Ninebot ESx / G30 / E / F / T15 / G2 / F2 / D</th><td data-i18n="m4State">辨識與協議路徑依家族而異</td><td data-i18n="m4Limit">無公開暫存器配置，暫不提供遙測；未實車驗證。</td></tr>
+<tr><th scope="row">Segway GT / P / ZT3 / Max G3</th><td data-i18n="m5State">不在目前支援範圍</td><td data-i18n="m5Limit">支援狀態未知。</td></tr>
+</tbody></table></div><aside class="notice"><p data-i18n="modelNotice">目前沒有任何車型標示為實車驗證通過。手動選車型不會提高驗證等級；缺少配置的數據不會猜測顯示。</p><a href="https://github.com/zero2005x/M365-Rokid-HUD/blob/main/doc/MODEL_SUPPORT.md" data-i18n="matrix">查看完整車型矩陣與研究限制</a></aside></section>
+<section id="hud" class="section"><h2 data-i18n="hudTitle">讓資料到達眼鏡。</h2><p class="lead" data-i18n="hudLead">手機與眼鏡端是兩個獨立 App。請依相容裝置與版本選用 BLE 或 Wi-Fi 傳輸。</p><article class="card"><p data-i18n="hudSteps">在相容的 Rokid 裝置安裝 glass-hud APK；手機連線滑板車或開啟 Demo Ride，再啟用 Rokid HUD Gateway。啟動眼鏡端 HUD 連線手機，於手機調整顯示欄位與字級。</p><br><p data-i18n="hudQuality">HUD 顯示 RSSI 與資料新鮮度：超過 2 秒未更新會提示延遲。若有電池最佳化提示，可依引導允許背景運作，降低系統中止連線的機會。</p><br><a href="https://github.com/zero2005x/M365-Rokid-HUD/blob/main/doc/GLASSES_LOG_COLLECTION.md" data-i18n="hudLogs">眼鏡設定與日誌文件</a></article></section>
+<section id="developers" class="section"><h2 data-i18n="devTitle">開放原始碼，也保留技術深度。</h2><p class="lead" data-i18n="devLead">Kotlin 與 Jetpack Compose 負責介面，Rust 負責協議與加密。深入文件保留完整模組、協議與車型研究。</p>
+<div class="architecture"><span class="node" data-i18n="nodeScooter">滑板車</span><span class="arrow">→ BLE →</span><span class="node" data-i18n="nodePhone">app 手機儀表板</span><span class="arrow">→ BLE / Wi-Fi →</span><span class="node" data-i18n="nodeGlasses">glass-hud 眼鏡 HUD</span></div><p data-i18n="devText">手機透過 JNI 呼叫 ninebot-ffi 與 ninebot-ble。眼鏡端提供 BLE／Wi-Fi 客戶端與連線路由；CXR-M SDK 配置位於手機端。</p>
+<aside class="notice"><p data-i18n="hudCxr">CXR-M 為手機端 SDK 的開發路徑，需自行配置憑證；release 刻意不包含憑證。BLE／Wi-Fi Gateway 不以 CXR 憑證為必要條件。</p></aside><details><summary data-i18n="protocolSummary">協議與實作限制</summary><p data-i18n="protocolText">Xiaomi Mi auth：ECDH、HKDF-SHA256、HMAC-SHA256、AES-128-CCM。Ninebot legacy 加密已實作但未驗證；Encryption2 握手已實作。兩者暫不提供遙測。</p><a href="https://github.com/zero2005x/M365-Rokid-HUD/blob/main/doc/PROTOCOL_FAMILIES.md" data-i18n="protocolLink">協議家族對照</a></details>
+<details><summary data-i18n="buildSummary">開發環境與編譯</summary><p data-i18n="buildText">需要 JDK 21、Android SDK／NDK、Rust 與 cargo-ndk。Gradle wrapper 9.6.1、AGP 9.0.0、Compose plugin 2.2.10；版本以 Repo 建置設定為準。</p><pre><code>git clone https://github.com/zero2005x/M365-Rokid-HUD.git
+cd M365-Rokid-HUD
+cargo install cargo-ndk
+rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+./gradlew assembleDebug</code></pre><p data-i18n="buildNote">Windows 使用 ./gradlew.bat assembleDebug。只做 UI／Demo Ride 可加 -PskipRustBuild，但缺少 native library 時 BLE 加密無法正常運作；release 不允許跳過必要驗證。</p></details>
+<div class="developer-links"><a href="https://github.com/zero2005x/M365-Rokid-HUD/blob/main/doc/DEVELOPER_zh-TW.md" data-technical data-i18n="technical">完整技術文件</a><a href="https://github.com/zero2005x/M365-Rokid-HUD/blob/main/doc/WINDOWS_WSL_BUILD.md" data-i18n="buildGuide">Windows／WSL 建置</a><a href="https://github.com/zero2005x/M365-Rokid-HUD/issues" data-i18n="contribute">參與貢獻</a></div></section>
+<section class="download"><div><h2 data-i18n="downloadTitle">從手機儀表板開始。</h2><p data-i18n="downloadText">下載 App，先用 Demo Ride 熟悉介面。</p></div><div class="actions"><a class="button" href="https://play.google.com/store/apps/details?id=com.m365bleapp" data-i18n="play">Google Play 下載</a><a class="button secondary" href="https://github.com/zero2005x/M365-Rokid-HUD/releases" data-i18n="release">下載 APK</a></div></section>
+</main>
+<footer><div class="wrap"><p data-i18n="footer">MIT 開源。供教育用途，使用風險由使用者承擔；作者不對滑板車損壞或保固問題負責。請勿依賴未驗證數據做安全判斷。</p><div class="foot-links"><a href="https://ko-fi.com/liangtinglin" data-i18n="support">支持開發</a><a href="https://github.com/zero2005x/M365-Rokid-HUD/blob/main/LICENSE" data-i18n="license">授權</a></div></div></footer>
+</body></html>

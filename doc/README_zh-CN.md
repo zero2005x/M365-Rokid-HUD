@@ -19,7 +19,10 @@
 
 一款现代化的 Android 应用程序，用于通过蓝牙低功耗（BLE）连接和监控小米/九号 M365 电动滑板车，并支持 **Rokid AR 眼镜** 作为抬头显示器（HUD）。
 
-> 📖 **[English](../README.md)** | **[繁體中文](README_zh-TW.md)**
+> 📖 **[English](README_en.md)** | **[繁體中文](README_zh-TW.md)**
+
+> [官网](https://zero2005x.github.io/M365-Rokid-HUD/) · [车型支援矩阵](MODEL_SUPPORT.md)
+> M365 / Pro / Pro 2 / 1S / Lite 遥测已实现，但尚无车型通过实车验证；Mi 3 协议未确认，Ninebot 暂不提供遥测。
 
 ---
 
@@ -108,7 +111,7 @@ M365-Rokid-HUD/
 │           ├── GattProfile.kt    # GATT 服务定义
 │           ├── HudScreen.kt      # AR HUD 显示界面（含信号指标）
 │           ├── DataModels.kt     # 共用数据结构
-│           ├── cxr/              # Rokid CXR-M 客户端与连接路由
+│           ├── cxr/              # 旧 CXR 包装器（非眼镜端官方 SDK）
 │           ├── wifi/             # WiFi 网关客户端
 │           └── ui/               # Compose UI 组件
 ├── ninebot-ffi/                  # Android 用 Rust FFI 库
@@ -288,7 +291,7 @@ rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-andro
 
 ## 📄 许可
 
-本项目采用 MIT 许可 - 详见 [LICENSE](LICENSE) 文件。
+本项目采用 MIT 许可 - 详见 [LICENSE](../LICENSE) 文件。
 
 ## 🙏 致谢
 

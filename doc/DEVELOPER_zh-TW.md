@@ -1,0 +1,304 @@
+# M365 Rokid HUD
+
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.m365bleapp">
+    <img src="https://img.shields.io/badge/Google%20Play-下載-brightgreen?logo=google-play&logoColor=white" alt="Google Play">
+  </a>
+  <img src="https://img.shields.io/badge/Android-9+-green?logo=android" alt="Android">
+  <img src="https://img.shields.io/badge/Kotlin-2.2-purple?logo=kotlin" alt="Kotlin">
+  <img src="https://img.shields.io/badge/Jetpack%20Compose-Material3-blue" alt="Jetpack Compose">
+  <img src="https://img.shields.io/badge/Rust-FFI-orange?logo=rust" alt="Rust">
+  <img src="https://img.shields.io/badge/Rokid-AR%20眼鏡-00E5FF" alt="Rokid AR">
+</p>
+
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.m365bleapp">
+    <img src="https://play.google.com/intl/zh-TW/badges/static/images/badges/zh-tw_badge_web_generic.png" alt="在 Google Play 上取得" height="80">
+  </a>
+</p>
+
+一款現代化的 Android 應用程式，用於透過藍牙低功耗（BLE）連接和監控小米/九號 M365 電動滑板車，並支援 **Rokid AR 眼鏡** 作為抬頭顯示器（HUD）。
+
+> 📖 **[English](README_en.md)** | **[简体中文](README_zh-CN.md)**
+
+> [繁中首頁](../README.md) · [官網](https://zero2005x.github.io/M365-Rokid-HUD/) · [車型矩陣](MODEL_SUPPORT.md)
+> M365 / Pro / Pro 2 / 1S / Lite 遙測已實作，但尚無車型通過實車驗證；Mi 3 協議未確認，Ninebot 暫不提供遙測。CXR-M SDK 屬手機端，release 不包含憑證；眼鏡端使用 BLE／Wi-Fi 路徑。
+
+---
+
+## ✨ 功能特點
+
+- 🔍 **藍牙掃描** - 自動發現附近的 M365 滑板車
+- 🔐 **安全註冊** - ECDH 金鑰交換進行首次配對
+- 🔑 **Token 登入** - 使用已儲存的認證快速重新連接
+- 📊 **即時遙測** - 監控速度、電量、溫度等數據
+- 🕶️ **Rokid AR HUD** - 透過 BLE 閘道在 Rokid 眼鏡上顯示遙測資料
+- 📶 **連線品質指標** - HUD 上顯示訊號強度和資料新鮮度
+- 🎛️ **自訂眼鏡顯示** - 自選 HUD 要顯示的欄位與文字大小
+- 🔒 **馬達鎖定/解鎖** - 遠端控制滑板車鎖定狀態
+- 💡 **尾燈控制** - 開關尾燈
+- 🧪 **模擬騎乘** - 沒有滑板車也能以模擬數據試用儀表板與 HUD
+- 🛵 **手動選擇車型** - 自動識別失敗時可手動指定滑板車型號
+- 🔋 **電池優化指引** - 引導關閉電池優化以確保穩定連線
+- 🌍 **多語言支援** - 支援 11 種語言
+- 🎨 **現代化介面** - 採用 Jetpack Compose 和 Material3 設計
+
+## 📸 螢幕截圖
+
+<p align="center">
+  <img src="play-store/promo/demo.gif" width="280" alt="模擬騎乘操作示範：儀表板、詳細資訊與眼鏡顯示設定">
+</p>
+
+| 儀表板 | 詳細資訊 | 眼鏡顯示 | 設定 |
+| :----: | :------: | :------: | :--: |
+| <img src="play-store/zh-TW/01_dashboard.png" width="200" alt="儀表板"> | <img src="play-store/zh-TW/02_details.png" width="200" alt="滑板車詳細資訊"> | <img src="play-store/zh-TW/03_glasses_display.png" width="200" alt="眼鏡顯示設定"> | <img src="play-store/zh-TW/04_settings.png" width="200" alt="設定"> |
+
+> 以模擬器上的**模擬騎乘**（模擬遙測數據）擷取。11 種語言的完整截圖位於 [`play-store/`](play-store/)。
+
+## 🌐 支援的語言
+
+| 語言                   | 代碼         |
+| ---------------------- | ------------ |
+| English（英文）        | `en`（預設） |
+| 简体中文               | `zh-CN`      |
+| 繁體中文               | `zh-TW`      |
+| Español（西班牙文）    | `es`         |
+| Français（法文）       | `fr`         |
+| 日本語（日文）         | `ja`         |
+| Русский（俄文）        | `ru`         |
+| 한국어（韓文）         | `ko`         |
+| Українська（烏克蘭文） | `uk`         |
+| العربية（阿拉伯文）    | `ar`         |
+| Italiano（義大利文）   | `it`         |
+
+## 🏗️ 架構
+
+```
+M365-Rokid-HUD/
+├── app/                          # 主要 Android 應用程式（手機端）
+│   └── src/main/
+│       ├── java/com/m365bleapp/
+│       │   ├── MainActivity.kt   # 應用程式進入點
+│       │   ├── ble/              # BLE 管理器（掃描、GATT）
+│       │   ├── ffi/              # Rust FFI 綁定
+│       │   ├── gateway/          # GATT 伺服器，轉發資料至眼鏡端
+│       │   ├── protocol/         # 遙測解析器、幀編解碼、模擬騎乘資料源
+│       │   ├── repository/       # 資料層（ScooterRepository）
+│       │   ├── ui/               # Jetpack Compose 畫面
+│       │   │   ├── NavGraph.kt         # 導覽圖
+│       │   │   ├── HomeScreen.kt       # 掃描清單 + 連線後儀表板
+│       │   │   ├── GatewayControl.kt   # Rokid HUD 閘道開關
+│       │   │   ├── ScooterInfoScreen.kt# 詳細資訊
+│       │   │   ├── SettingsScreen.kt   # 設定總覽
+│       │   │   ├── HudDisplayScreen.kt # 眼鏡顯示欄位
+│       │   │   ├── LoggingScreen.kt    # 日誌設定
+│       │   │   ├── LogViewerScreen.kt  # 日誌檔案檢視器
+│       │   │   ├── LanguageScreen.kt   # 語言選擇
+│       │   │   └── theme/              # Material3 主題
+│       │   └── utils/            # 工具類（TelemetryLogger 等）
+│       ├── res/
+│       │   ├── values/           # 英文字串（預設）
+│       │   ├── values-zh-rCN/    # 簡體中文
+│       │   ├── values-zh-rTW/    # 繁體中文
+│       │   └── values-*/         # 其他語言（共 11 種）
+│       └── jniLibs/              # 原生 .so 函式庫（由 Gradle 產生，不納入版控）
+├── glass-hud/                    # Rokid AR 眼鏡 HUD 客戶端
+│   └── src/main/
+│       └── java/com/m365hud/glass/
+│           ├── MainActivity.kt   # 眼鏡應用程式進入點
+│           ├── BleClient.kt      # BLE 客戶端（連接手機，含會話統計）
+│           ├── BleConnectionService.kt # 前景服務，確保穩定連線
+│           ├── GattProfile.kt    # GATT 服務定義
+│           ├── HudScreen.kt      # AR HUD 顯示畫面（含訊號指標）
+│           ├── DataModels.kt     # 共用資料結構
+│           ├── cxr/              # 舊 CXR 包裝器（非眼鏡端官方 SDK）
+│           ├── wifi/             # WiFi 閘道客戶端
+│           └── ui/               # Compose UI 元件
+├── ninebot-ffi/                  # Android 用 Rust FFI 函式庫
+│   └── src/
+│       ├── lib.rs                # JNI 匯出
+│       └── mi_crypto.rs          # 加密函式
+├── ninebot-ble/                  # 核心 Rust BLE 函式庫
+│   └── src/
+│       ├── lib.rs                # 函式庫進入點
+│       ├── connection.rs         # BLE 連接處理
+│       ├── protocol.rs           # M365 協議實作
+│       ├── mi_crypto.rs          # ECDH、HKDF、AES-CCM 加密
+│       ├── identity.rs           # 掃描時的滑板車識別
+│       ├── encryption2.rs        # 新款 Ninebot 握手
+│       ├── ninebot_legacy.rs     # 舊款 Ninebot 加密
+│       ├── login.rs              # 登入流程實作
+│       ├── register.rs           # 註冊流程
+│       ├── scanner.rs            # BLE 裝置掃描
+│       ├── consts.rs             # 協議常數
+│       ├── model/                # 車型登錄（暫存器配置）
+│       └── session/              # 會話管理
+└── doc/                          # 文件
+    ├── BLE_PROTOCOL_GUIDE.md     # 詳細協議文件
+    └── README_*.md               # 多語言 README
+```
+
+## 🔐 協議概述
+
+本應用實作了小米 M365 加密 BLE 協議：
+
+| 元件     | 演算法           | 說明                   |
+| -------- | ---------------- | ---------------------- |
+| 金鑰交換 | ECDH (SECP256R1) | 橢圓曲線金鑰交換       |
+| 金鑰派生 | HKDF-SHA256      | 從共享密鑰派生會話金鑰 |
+| 認證     | HMAC-SHA256      | 訊息認證               |
+| 加密     | AES-128-CCM      | UART 資料的認證加密    |
+
+### 遙測數據
+
+| 查詢     | 位址   | 資料                                 |
+| -------- | ------ | ------------------------------------ |
+| 馬達資訊 | `0xB0` | 速度、電量百分比、控制器溫度、總里程 |
+| 行程資訊 | `0x3A` | 當前行程時間、距離                   |
+| 續航里程 | `0x25` | 預估剩餘續航里程（公里）             |
+
+## 🛠️ 系統需求
+
+### Android 應用
+
+- **最低 SDK**：Android 9（API 28）
+- **目標 SDK**：Android 16（API 36）
+- **權限**：藍牙、位置（用於 BLE 掃描）
+
+### 建置環境
+
+- Android Studio Ladybug 或更新版本
+- **Java 21**（JDK 21+）
+- Kotlin 2.2.10+（含 Compose 編譯器插件）
+- Gradle 9.6.1（透過 wrapper）
+- Android Gradle Plugin（AGP）9.0.0
+- Rust 工具鏈 + [`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk)（用於建置原生函式庫）
+- Android NDK
+
+### 藍牙掃描策略
+
+識別規則**只有一處**：`ninebot-ble/src/identity.rs` 的常數 `XIAOMI_SCOOTER_MATCH`。
+本文件不重述這兩個值——同一條識別規則若有三份副本，遲早會有兩份是錯的，而且
+掃描器比對不到東西時，症狀看起來就像滑板車沒開機。
+
+符合**任一**條件即視為 Xiaomi 血統的滑板車：
+
+- 廣播名稱以該規則的 `name_prefix` 開頭，**或**
+- 廣播／服務清單包含該規則的 `service_uuid`
+
+> ⚠️ **這只識別「血統」，不是型號、也不是協議。** 名稱前綴同時涵蓋
+> M365 / Pro / Pro2 / 1S / Lite / Mi 3；而服務清單在一般情況下無法區分協議
+> ——Xiaomi、Ninebot 與新款 Segway 全都廣播同一個 Nordic UART service，有些甚至
+> 只在其中一個 service 上回應。要判斷實際使用哪種協議，必須連線後探測。
+> 詳見 [`PROTOCOL_FAMILIES.md`](PROTOCOL_FAMILIES.md)。
+
+無法識別的滑板車仍然可以連線：掃描頁提供**手動車型覆寫**，因為在未實測的硬體上
+自動識別可能失敗，否則將完全沒有補救途徑。
+
+裝置排序依據：已註冊 → 疑似滑板車 → 有名稱 → 訊號強度（RSSI）
+
+### 車型支援
+
+本 App 實際能讀取哪些滑板車，記錄於
+[**`MODEL_SUPPORT.md`**](MODEL_SUPPORT.md)：車型 × 功能 × 驗證狀態對照表。
+該文件區分「**認得出來**」與「**讀得到**」，這兩者並不相同。
+
+兩件要先知道的事：
+
+- **暫存器配置未公開的車型，本 App 選擇不顯示讀數，而不是猜測。** 錯的數字比
+  沒有數字更難察覺。
+- **目前沒有任何車型標記為已驗證**，因為尚未取得任何實機抓包。手動覆寫不會改變
+  這件事：選擇車型只代表「要嘗試哪一套配置」，不代表那套配置是對的。
+
+## 🚀 開始使用
+
+### 1. 複製專案
+
+```bash
+git clone https://github.com/zero2005x/M365-Rokid-HUD.git
+cd M365-Rokid-HUD
+```
+
+### 2. 安裝 Rust 工具鏈
+
+Gradle 會自行交叉編譯 `ninebot-ffi`（任務 `:app:buildRustJni`）並複製到
+`app/src/main/jniLibs`，只需先安裝工具鏈：
+
+```bash
+cargo install cargo-ndk
+rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+```
+
+### 3. 建置 Android 應用
+
+在 Android Studio 開啟專案並建置：
+
+```bash
+./gradlew assembleDebug
+```
+
+若只做 UI 開發、電腦上沒有 Rust，debug 建置可以略過原生函式庫（BLE 加密在執行時會失敗，但模擬騎乘仍可使用）：
+
+```bash
+./gradlew assembleDebug -PskipRustBuild
+```
+
+或直接安裝到已連接的裝置：
+
+```bash
+./gradlew installDebug
+```
+
+## 📖 使用方式
+
+1. **啟動應用程式**並授予藍牙/位置權限
+2. **掃描**附近的 M365 滑板車
+3. **首次配對**：勾選「註冊」，並在提示時按下滑板車電源鍵
+4. **後續連接**：直接點擊裝置即可連接
+5. 在儀表板或詳細資訊畫面**查看遙測數據**
+6. **啟用 Rokid HUD 閘道**（可選）：在儀表板開啟閘道開關，將遙測資料廣播到 Rokid 眼鏡
+
+### Rokid AR 眼鏡設定
+
+1. 在 Rokid 眼鏡上安裝 `glass-hud` APK
+2. 在手機 App 上連接滑板車，並啟用「Rokid HUD 閘道」
+3. 眼鏡上的 HUD 將自動掃描並連接到手機閘道
+4. HUD 顯示內容：速度、滑板車電量、手機電量、眼鏡電量、當前時間、**連線品質指標**
+
+**HUD 訊號指標說明：**
+
+- 📶 = 訊號良好（RSSI ≥ -80 dBm）
+- ⚠️ = 資料過時（超過 2 秒未更新）
+- 📵 = 未連線
+
+> ⚠️ **重要**：若手機 App 顯示「電池優化已開啟」警告，請點擊關閉電池優化，防止 Android 在背景關閉 App。
+
+> ⚠️ **警告**：註冊將使滑板車與其他應用程式（如米家）解除配對。請只註冊您擁有的裝置。
+
+## 📁 專案組成
+
+| 模組          | 說明                                                     |
+| ------------- | -------------------------------------------------------- |
+| `app`         | 主要 Android 應用程式（手機端），使用 Jetpack Compose UI |
+| `glass-hud`   | Rokid AR 眼鏡 HUD 客戶端，顯示來自 `app` 的遙測資料      |
+| `ninebot-ffi` | 為 Android 提供 JNI 綁定的 Rust 函式庫                   |
+| `ninebot-ble` | M365 BLE 協議的核心 Rust 函式庫                          |
+| `doc`         | 協議文件和多語言 README                                  |
+
+## 🤝 貢獻
+
+歡迎貢獻！請隨時提交 Pull Request。
+
+## 📄 授權
+
+本專案採用 MIT 授權 - 詳見 [LICENSE](../LICENSE) 檔案。
+
+## 🙏 致謝
+
+- [btleplug](https://github.com/deviceplug/btleplug) - Rust 跨平台 BLE 函式庫
+- [Jetpack Compose](https://developer.android.com/jetpack/compose) - 現代化 Android UI 工具包
+- M365 逆向工程社群
+
+---
+
+**免責聲明**：本專案僅供教育用途。使用風險自負。作者不對您的滑板車的任何損壞或違反製造商保固承擔責任。

@@ -4,6 +4,8 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -275,5 +277,26 @@ class ScooterSettingsWriterTest {
 
         assertTrue(text.contains("0x7B"))
         assertTrue(text.contains("02"))
+    }
+
+    @Test
+    fun `toCommandPlan converts writes to core command plans`() {
+        val kersWrite = ScooterSettingsWriter.setKers(ScooterSettingsWriter.Kers.STRONG)
+        val kersPlan = ScooterSettingsWriter.toCommandPlan(kersWrite)
+        assertNotNull(kersPlan)
+        assertEquals("xiaomi.kers", kersPlan!!.spec.id)
+
+        val cruiseWrite = ScooterSettingsWriter.setCruise(true)
+        val cruisePlan = ScooterSettingsWriter.toCommandPlan(cruiseWrite)
+        assertNotNull(cruisePlan)
+        assertEquals("xiaomi.cruise", cruisePlan!!.spec.id)
+
+        val statusWrite = ScooterSettingsWriter.statusWordWrite(0x0002)
+        val statusPlan = ScooterSettingsWriter.toCommandPlan(statusWrite, currentStatusWord = 0x0000)
+        assertNotNull(statusPlan)
+        assertEquals("xiaomi.tail_light_always_on", statusPlan!!.spec.id)
+
+        val unknownWrite = ScooterSettingsWriter.Write(0x99, byteArrayOf(1, 2))
+        assertNull(ScooterSettingsWriter.toCommandPlan(unknownWrite))
     }
 }

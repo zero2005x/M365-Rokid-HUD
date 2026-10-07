@@ -108,14 +108,15 @@ jobs:
       - name: Run Unit Tests
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon :app:koverXmlReportDebug :glass-hud:koverXmlReportDebug
+          ./gradlew --no-daemon :app:koverXmlReportDebug :glass-hud:koverXmlReportDebug :pev-protocol-core:koverXmlReport
 
       - name: Verify Kover coverage report
         run: |
           failed=0
           for report in \
             app/build/reports/kover/reportDebug.xml \
-            glass-hud/build/reports/kover/reportDebug.xml
+            glass-hud/build/reports/kover/reportDebug.xml \
+            pev-protocol-core/build/reports/kover/report.xml
           do
             if [ ! -s "$report" ]; then
               echo "::error::$report is missing or empty; Sonar would show 0% coverage"

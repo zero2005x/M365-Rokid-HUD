@@ -22,17 +22,22 @@ import io.github.zero2005x.pev.core.telemetry.TelemetrySnapshot
  * Offsets 12 (average speed) and 18/20 are intentionally not decoded: their meaning is unresolved.
  */
 object XiaomiMotorInfoDecoder {
-    const val MIN_LENGTH = 24
+    const val MIN_LENGTH = 22
     private const val SOURCE = "xiaomi.B0"
 
     fun decode(payload: ByteArray, nowMs: Long): TelemetrySnapshot {
         if (payload.size < MIN_LENGTH) return TelemetrySnapshot(allInvalid(nowMs))
+        val tempReading = if (payload.size >= 24) {
+            scaled(Le.i16(payload, 22), 0.1, nowMs)
+        } else {
+            Reading.NOT_PROVIDED
+        }
         return TelemetrySnapshot(
             mapOf(
                 FieldId.SOC_PERCENT to soc(payload, nowMs),
-                FieldId.SPEED_KMH to scaled(Le.i16(payload, 10), 0.001, nowMs),
+                FieldId.SPEED_KMH to decodeSpeed(payload, nowMs),
                 FieldId.TOTAL_DISTANCE_M to scaled(Le.u32(payload, 14)?.toDouble(), 1.0, nowMs),
-                FieldId.TEMP_FRAME to scaled(Le.i16(payload, 22), 0.1, nowMs),
+                FieldId.TEMP_FRAME to tempReading,
             ),
         )
     }
@@ -44,6 +49,12 @@ object XiaomiMotorInfoDecoder {
     private fun soc(p: ByteArray, nowMs: Long): Reading {
         val raw = Le.u16(p, 8) ?: return Reading.invalid(nowMs, SOURCE)
         return if (raw in 0..100) Reading.valid(raw.toDouble(), nowMs, Evidence.WIRE_CAPTURED, SOURCE) else Reading.invalid(nowMs, SOURCE)
+    }
+
+    private fun decodeSpeed(p: ByteArray, nowMs: Long): Reading {
+        val raw = Le.u16(p, 10) ?: return Reading.invalid(nowMs, SOURCE)
+        val signedMh = if (raw >= 0xC000) raw - 0x10000 else raw
+        return Reading.valid(signedMh * 0.001, nowMs, Evidence.WIRE_CAPTURED, SOURCE)
     }
 
     private fun scaled(raw: Number?, scale: Double, nowMs: Long): Reading =

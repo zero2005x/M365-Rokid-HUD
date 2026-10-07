@@ -37,8 +37,19 @@ class XiaomiMotorInfoDecoderTest {
     @Test
     fun forwardSpeedAbove32kmhIsNotWrappedNegative() {
         val b = stationary.copyOf()
-        b[10] = 0x10; b[11] = 0x27 // 10000 m/h
-        assertEquals(10.0, XiaomiMotorInfoDecoder.decode(b, 1)[FieldId.SPEED_KMH].value!!, 1e-9)
+        b[10] = 0x40; b[11] = 0x9C.toByte() // 40000 m/h = 40.0 km/h (> 32.767 km/h)
+        assertEquals(40.0, XiaomiMotorInfoDecoder.decode(b, 1)[FieldId.SPEED_KMH].value!!, 1e-9)
+    }
+
+    @Test
+    fun payloadOf22BytesHasValidTelemetryWithTemperatureNotProvided() {
+        val b22 = stationary.copyOf(22)
+        val s = XiaomiMotorInfoDecoder.decode(b22, 1)
+        assertEquals(51.0, s[FieldId.SOC_PERCENT].value!!, 0.0)
+        assertEquals(0.0, s[FieldId.SPEED_KMH].value!!, 0.0)
+        assertEquals(400107.0, s[FieldId.TOTAL_DISTANCE_M].value!!, 0.0)
+        assertEquals(FieldState.NOT_PROVIDED, s[FieldId.TEMP_FRAME].state)
+        assertNull(s[FieldId.TEMP_FRAME].value)
     }
 
     @Test

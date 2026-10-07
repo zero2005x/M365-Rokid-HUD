@@ -1,5 +1,8 @@
 package com.m365bleapp.protocol
 
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiEscDecoder
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiRegisterBytes
+
 /**
  * Decoders for the ESC (motor controller) registers that Scootbatt reads.
  *
@@ -12,7 +15,8 @@ package com.m365bleapp.protocol
  *
  * ## ⚠️ Not verified against real hardware
  *
- * No scooter has been attached to this project. Two specific caveats:
+ * These individual registers lack hardware acceptance, despite the separate captured M365
+ * motor-info replay. Two specific caveats:
  *
  * - **`0xB5` speed units are unresolved.** Scootbatt scales it by `0.001` for
  *   Xiaomi models and `0.1` for everything else, which is an inference from code,
@@ -46,16 +50,10 @@ object EscTelemetryParser {
     // ------------------------------------------------------------------ reads
 
     /** Reads a little-endian unsigned 16-bit value, or `null` when out of range. */
-    fun u16(data: ByteArray, offset: Int): Int? {
-        if (offset < 0 || offset + 2 > data.size) return null
-        return (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
-    }
+    fun u16(data: ByteArray, offset: Int): Int? = XiaomiRegisterBytes.u16(data, offset)
 
     /** Reads a little-endian signed 16-bit value, or `null` when out of range. */
-    fun i16(data: ByteArray, offset: Int): Int? {
-        val raw = u16(data, offset) ?: return null
-        return if (raw >= 0x8000) raw - 0x10000 else raw
-    }
+    fun i16(data: ByteArray, offset: Int): Int? = XiaomiRegisterBytes.i16(data, offset)
 
     /**
      * Reads a little-endian signed 32-bit value, or `null` when out of range.
@@ -63,20 +61,10 @@ object EscTelemetryParser {
      * Signed because Scootbatt reads these as signed ints: an odometer read as
      * unsigned would turn a small negative into ~4.29 billion km.
      */
-    fun i32(data: ByteArray, offset: Int): Int? {
-        if (offset < 0 || offset + 4 > data.size) return null
-        var value = 0
-        for (i in 3 downTo 0) {
-            value = (value shl 8) or (data[offset + i].toInt() and 0xFF)
-        }
-        return value
-    }
+    fun i32(data: ByteArray, offset: Int): Int? = XiaomiRegisterBytes.i32(data, offset)
 
     /** Reads an unsigned byte, or `null` when out of range. */
-    fun u8(data: ByteArray, offset: Int): Int? {
-        if (offset < 0 || offset >= data.size) return null
-        return data[offset].toInt() and 0xFF
-    }
+    fun u8(data: ByteArray, offset: Int): Int? = XiaomiRegisterBytes.u8(data, offset)
 
     // -------------------------------------------------------------- registers
 
@@ -119,7 +107,7 @@ object EscTelemetryParser {
     fun systemVoltageV(data: ByteArray): Double? = u16(data, 0)?.let { it / HUNDREDTHS }
 
     /** `0x1B` — error / warning code. */
-    fun errorCode(data: ByteArray): Int? = u16(data, 0)
+    fun errorCode(data: ByteArray): Int? = XiaomiEscDecoder.errorCode(data, 0).value
 
     /**
      * `0x1B` — the code plus its description and severity.
@@ -175,7 +163,7 @@ object EscTelemetryParser {
      * Three levels only; Scootbatt has no "off" value for the read path.
      */
     fun kersLevel(data: ByteArray): KersLevel? =
-        u8(data, 0)?.let { KersLevel.from(it) }
+        XiaomiEscDecoder.kers(data, 0).raw?.let { KersLevel.from(it) }
 
     /** KERS level as reported by `0x7B`. */
     enum class KersLevel(val code: Int, val label: String) {
@@ -193,7 +181,7 @@ object EscTelemetryParser {
     }
 
     /** `0x7C` — cruise control engaged (`byte == 1`). */
-    fun cruiseEngaged(data: ByteArray): Boolean? = u8(data, 0)?.let { it == 1 }
+    fun cruiseEngaged(data: ByteArray): Boolean? = XiaomiEscDecoder.cruise(data, 0).value
 
     /**
      * `0x7D` — status bitfield.
@@ -214,19 +202,19 @@ object EscTelemetryParser {
 
     /** Decodes `0x7D`. */
     fun statusBits(data: ByteArray): StatusBits? {
-        val raw = u16(data, 0) ?: return null
+        val word = XiaomiEscDecoder.statusWord(data, 0).value ?: return null
         return StatusBits(
-            tailLightAlwaysOn = (raw and TAIL_LIGHT_BIT) != 0,
-            milesPerHour = (raw and MPH_BIT) != 0,
-            raw = raw,
+            tailLightAlwaysOn = word.tailLightAlwaysOn,
+            milesPerHour = word.milesPerHour,
+            raw = word.raw,
         )
     }
 
     /** Bit 1 of `0x7D`: tail light always on. */
-    const val TAIL_LIGHT_BIT = 1 shl 1
+    const val TAIL_LIGHT_BIT = XiaomiEscDecoder.TAIL_LIGHT_BIT
 
     /** Bit 4 of `0x7D`: display unit is mph. */
-    const val MPH_BIT = 1 shl 4
+    const val MPH_BIT = XiaomiEscDecoder.MPH_BIT
 
     /**
      * `0x66` — firmware version triple plus a "version looks wrong" flag.
@@ -251,10 +239,7 @@ object EscTelemetryParser {
 
     /** Decodes `0x66`. Requires at least 6 bytes. */
     fun firmwareVersions(data: ByteArray): FirmwareVersions? {
-        if (data.size < 6) return null
-        val first = u16(data, 0) ?: return null
-        val second = u16(data, 2) ?: return null
-        val third = u16(data, 4) ?: return null
+        val words = XiaomiEscDecoder.firmwareWords(data, 0).value ?: return null
 
         val highNibble = ((data[4].toInt() and 0xF0) shr 4) * 10
         val lowNibble = data[4].toInt() and 0x0F
@@ -262,9 +247,9 @@ object EscTelemetryParser {
         val derived = highNibble + middle + lowNibble
 
         return FirmwareVersions(
-            first = first,
-            second = second,
-            third = third,
+            first = words.first,
+            second = words.second,
+            third = words.third,
             implausible = derived < MIN_PLAUSIBLE_VERSION || derived > MAX_PLAUSIBLE_VERSION,
         )
     }
@@ -278,7 +263,7 @@ object EscTelemetryParser {
     fun uptimeSeconds(data: ByteArray): Int? = i32(data, 0)
 
     /**
-     * `0x39` — a serial / MAC-like identity string.
+     * `0x39` — version components in a legacy display DTO. This is not a serial, MAC or model.
      *
      * Scootbatt concatenates the first three bytes as decimals, then repeats them
      * dotted. Both forms are returned because the dotted one is what appears in
@@ -286,12 +271,12 @@ object EscTelemetryParser {
      */
     data class Identity(val plain: String, val dotted: String, val numeric: Int?)
 
-    /** Decodes `0x39`. Requires at least 4 bytes, matching Scootbatt. */
+    /** Decodes `0x39`. The corrected static source requires at least five bytes. */
     fun identity(data: ByteArray): Identity? {
-        if (data.size < 4) return null
-        val a = data[0].toInt() and 0xFF
-        val b = data[1].toInt() and 0xFF
-        val c = data[2].toInt() and 0xFF
+        val version = XiaomiEscDecoder.versionComponents(data, 0).value ?: return null
+        val a = version.major
+        val b = version.minor
+        val c = version.patch
 
         val plain = "$a$b$c"
         return Identity(

@@ -1,5 +1,9 @@
 package com.m365bleapp.protocol
 
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiBmsDecoder
+import io.github.zero2005x.pev.core.telemetry.FieldId
+import io.github.zero2005x.pev.core.telemetry.FieldState
+import java.nio.ByteOrder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -13,8 +17,8 @@ import org.junit.Test
  *
  * They pin the **byte layout and scaling** so that a future edit cannot silently
  * change how a frame is interpreted. They do **not** prove the layout matches a
- * real scooter: every vector below was constructed from the decompiled Scootbatt
- * parser, not from a capture. See the class doc on [BmsTelemetryParser].
+ * real scooter: the vectors are synthetic checks of documented offsets and scales,
+ * not captures. See the class doc on [BmsTelemetryParser].
  *
  * Where a value is signed or biased the test says so explicitly, because those
  * are the two places an implementation silently goes wrong.
@@ -70,7 +74,7 @@ class BmsTelemetryParserTest {
 
     @Test
     fun `status clamps an out of range percentage`() {
-        // Some packs report >100 % briefly after a full charge.
+        // Existing HUD DTO display compatibility. The core marks this SOC invalid.
         val payload = le16(5000, 130, 0, 3600)
 
         val status = requireNotNull(BmsTelemetryParser.parseStatus(payload))
@@ -143,8 +147,8 @@ class BmsTelemetryParserTest {
     }
 
     @Test
-    fun `cells drop trailing zeros because they mean not populated`() {
-        // A 6-cell pack padded to the 10-cell block: the last four are zero.
+    fun `cells omit zero slots for legacy display compatibility`() {
+        // Synthetic block with four zero slots; no physical cell-count claim.
         val payload = le16(3700, 3701, 3702, 3703, 3704, 3705, 0, 0, 0, 0)
 
         val cells = requireNotNull(BmsTelemetryParser.parseCells(payload))
@@ -225,7 +229,7 @@ class BmsTelemetryParserTest {
     @Test
     fun `design capacity decodes and rejects zero`() {
         assertEquals(7800, BmsTelemetryParser.parseDesignCapacityMah(le16(7800)))
-        // Zero means "not populated", not a 0 mAh pack.
+        // Existing HUD DTO policy suppresses zero; core does not infer a sentinel.
         assertNull(BmsTelemetryParser.parseDesignCapacityMah(le16(0)))
         assertNull(BmsTelemetryParser.parseDesignCapacityMah(ByteArray(1)))
     }
@@ -268,5 +272,60 @@ class BmsTelemetryParserTest {
         assertEquals(-1, BmsTelemetryParser.readI16(byteArrayOf(0xFF.toByte(), 0xFF.toByte()), 0))
         assertEquals(-32768, BmsTelemetryParser.readI16(byteArrayOf(0x00, 0x80.toByte()), 0))
         assertEquals(32767, BmsTelemetryParser.readI16(byteArrayOf(0xFF.toByte(), 0x7F), 0))
+    }
+
+    @Test
+    fun `legacy percentage clamp does not make core observations valid`() {
+        val payload = le16(5000, 65535, -125, 4200)
+        val core = XiaomiBmsDecoder.decodeStatus(payload, 1)
+        assertEquals(FieldState.INVALID, core.telemetry[FieldId.SOC_PERCENT].state)
+        assertNull(core.telemetry[FieldId.SOC_PERCENT].value)
+        assertEquals(65535, core.rawSocPercent)
+        val legacy = requireNotNull(BmsTelemetryParser.parseStatus(payload))
+        assertEquals(100, legacy.percent)
+        assertEquals(core.telemetry[FieldId.BATTERY_CURRENT].value!!, legacy.currentAmps, 1e-9)
+        assertEquals(core.telemetry[FieldId.PACK_VOLTAGE].value!!, legacy.voltageVolts, 1e-9)
+
+        val health = byteArrayOf(0xFF.toByte())
+        assertEquals(FieldState.INVALID, XiaomiBmsDecoder.decodeHealth(health, 1).state)
+        assertEquals(100, BmsTelemetryParser.parseHealthPercent(health))
+    }
+
+    @Test
+    fun `legacy compact cell list leaves indexed core observations intact`() {
+        val payload = le16(4100, 0, 4200, 0, 4000, 0, 0, 0, 0, 0)
+        val core = XiaomiBmsDecoder.decodeCells(payload, 1)
+        val legacy = requireNotNull(BmsTelemetryParser.parseCells(payload))
+        assertEquals(listOf(4.1, 4.2, 4.0), legacy.volts)
+        assertEquals(10, core.volts.size)
+        assertEquals(FieldState.NOT_PROVIDED, core.volts[1].state)
+        assertEquals(4.2, core.volts[2].value!!, 1e-9)
+    }
+
+    @Test
+    fun `compatibility adapter rejects every truncated register block`() {
+        for (length in 0 until BmsTelemetryParser.STATUS_MIN_LENGTH) {
+            assertNull(BmsTelemetryParser.parseStatus(ByteArray(length)))
+        }
+        for (length in 0 until BmsTelemetryParser.CELL_VOLTAGE_LENGTH) {
+            assertNull(BmsTelemetryParser.parseCells(ByteArray(length)))
+        }
+        for (length in 0 until XiaomiBmsDecoder.TEMPERATURE_LENGTH) {
+            assertNull(BmsTelemetryParser.parseTemperatures(ByteArray(length)))
+        }
+        for (length in 0..3) {
+            assertNull(BmsTelemetryParser.parseChargeCounts(ByteArray(length)))
+        }
+    }
+
+    @Test
+    fun `legacy helpers delegate safe bounds and retain little endian buffers`() {
+        for (offset in listOf(-1, 1, Int.MAX_VALUE)) {
+            assertNull(BmsTelemetryParser.readU16(byteArrayOf(1, 2), offset))
+            assertNull(BmsTelemetryParser.readI16(byteArrayOf(1, 2), offset))
+        }
+        val buffer = BmsTelemetryParser.buffer(byteArrayOf(0x34, 0x12))
+        assertEquals(ByteOrder.LITTLE_ENDIAN, buffer.order())
+        assertEquals(0x1234, buffer.short.toInt())
     }
 }

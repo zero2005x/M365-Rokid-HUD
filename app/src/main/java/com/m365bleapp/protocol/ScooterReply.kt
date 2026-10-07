@@ -1,5 +1,7 @@
 package com.m365bleapp.protocol
 
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiReply
+
 /**
  * Validated view of one decrypted scooter reply.
  *
@@ -75,7 +77,7 @@ data class ScooterReply(
          * Deliberately 3, not 4 — the size byte never reaches this buffer. See
          * the class docs; reading it as a length is the bug fixed 2026-09-20.
          */
-        const val HEADER_LEN = 3
+        const val HEADER_LEN = XiaomiReply.HEADER_LEN
 
         /**
          * Random tail `encrypt_uart` appends to every plaintext.
@@ -84,7 +86,7 @@ data class ScooterReply(
          * this is *not* AES block padding — AES-CCM is a stream cipher and adds no
          * block padding of its own.
          */
-        const val PADDING_LEN = 4
+        const val PADDING_LEN = XiaomiReply.PADDING_LEN
 
         /**
          * Smallest frame that can carry a header and at least one data byte.
@@ -92,7 +94,7 @@ data class ScooterReply(
          * The frame has no length field of its own, so this is the only
          * "too short to even slice" guard available.
          */
-        const val MIN_FRAME_LEN = HEADER_LEN + 1 + PADDING_LEN
+        const val MIN_FRAME_LEN = XiaomiReply.MIN_LEN
 
         /**
          * Validates [raw] and extracts the reply.
@@ -113,13 +115,13 @@ data class ScooterReply(
 
             // The padding is indistinguishable from data once decrypted, and no
             // length field survives, so the tail is the only way to find the end.
-            val dataEnd = raw.size - PADDING_LEN
+            val reply = requireNotNull(XiaomiReply.parse(raw))
             return ScooterReplyValidation.Valid(
                 ScooterReply(
-                    direction = raw[0].toInt() and 0xFF,
-                    type = raw[1].toInt() and 0xFF,
-                    attribute = raw[2].toInt() and 0xFF,
-                    data = raw.copyOfRange(HEADER_LEN, dataEnd),
+                    direction = reply.direction,
+                    type = reply.type,
+                    attribute = reply.register,
+                    data = reply.data,
                 )
             )
         }

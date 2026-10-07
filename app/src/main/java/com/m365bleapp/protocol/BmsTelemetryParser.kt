@@ -1,14 +1,20 @@
 package com.m365bleapp.protocol
 
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiBmsDecoder
+import io.github.zero2005x.pev.core.telemetry.FieldId
+import io.github.zero2005x.pev.core.telemetry.FieldState
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Decoded battery-management-system telemetry.
+ * Legacy HUD DTO adapter for [XiaomiBmsDecoder], the authoritative M365 BMS decoder.
+ * Wire offsets, scaling and validity live in the MIT core. Percentage clamping,
+ * compact cell lists and zero-capacity suppression below retain existing HUD API behavior;
+ * they are compatibility policies and do not establish measurement validity.
  *
  * ## Provenance — where these offsets come from
  *
- * Every offset and scale in this file was read out of the decompiled Scootbatt
+ * The core's independently implemented offsets and scales come from the Scootbatt
  * 1.9.2 (`com.basse.scootbatt`) parser dispatch, specifically the BMS handler
  * registered for direction `0x22` (internal BMS) and `0x23` (external / eBMS).
  * Scootbatt's own field names are R8-obfuscated, so the *offsets and scales*
@@ -16,7 +22,7 @@ import java.nio.ByteOrder
  *
  * ## ⚠️ Not verified against real hardware
  *
- * No scooter has ever been attached to this project. These layouts are static
+ * These BMS layouts have not been checked against hardware captures. They are static
  * analysis of a third-party app, cross-checked against the community register
  * map in `doc/PROTOCOL_FAMILIES.md`. Treat every value as unconfirmed until a
  * capture from a real BMS exists.
@@ -36,7 +42,7 @@ import java.nio.ByteOrder
 object BmsTelemetryParser {
 
     /** Full payload length of the `0x31` "battery status" register. */
-    const val STATUS_LENGTH = 12
+    const val STATUS_LENGTH = XiaomiBmsDecoder.STATUS_LENGTH
 
     /**
      * Bytes of the `0x31` register this parser actually reads.
@@ -50,25 +56,13 @@ object BmsTelemetryParser {
      * useful, and rejecting it would throw away a perfectly good reading. The
      * full length is still exported so callers can document or log it.
      */
-    const val STATUS_MIN_LENGTH = 8
+    const val STATUS_MIN_LENGTH = XiaomiBmsDecoder.STATUS_MIN_LENGTH
 
     /** Number of cells reported by the `0x40` register. */
-    const val CELL_COUNT = 10
+    const val CELL_COUNT = XiaomiBmsDecoder.CELL_COUNT
 
     /** Payload length of the `0x40` cell-voltage register. */
-    const val CELL_VOLTAGE_LENGTH = CELL_COUNT * 2
-
-    /** Temperature offset applied by the `0x35` register, in °C. */
-    private const val TEMPERATURE_OFFSET = 20.0
-
-    /** Cell voltages are transmitted in millivolts. */
-    private const val CELL_VOLTAGE_SCALE = 1000.0
-
-    /** Current is transmitted in hundredths of an amp. */
-    private const val CURRENT_SCALE = 100.0
-
-    /** Voltage is transmitted in hundredths of a volt. */
-    private const val VOLTAGE_SCALE = 100.0
+    const val CELL_VOLTAGE_LENGTH = XiaomiBmsDecoder.CELL_VOLTAGE_LENGTH
 
     /**
      * Parsed `0x31` battery status.
@@ -121,30 +115,6 @@ object BmsTelemetryParser {
     )
 
     /**
-     * Reads a little-endian unsigned 16-bit value at [offset].
-     *
-     * Returns `null` when the payload is too short, so callers never index past
-     * the end. Scootbatt instead lets an out-of-range read throw and reports it
-     * to Crashlytics; a HUD that drops a frame is better than one that crashes.
-     */
-    private fun u16(data: ByteArray, offset: Int): Int? {
-        if (offset < 0 || offset + 2 > data.size) return null
-        return (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
-    }
-
-    /** Reads a little-endian signed 16-bit value at [offset], or `null`. */
-    private fun i16(data: ByteArray, offset: Int): Int? {
-        val raw = u16(data, offset) ?: return null
-        return if (raw >= 0x8000) raw - 0x10000 else raw
-    }
-
-    /** Reads an unsigned byte at [offset], or `null` when out of range. */
-    private fun u8(data: ByteArray, offset: Int): Int? {
-        if (offset < 0 || offset >= data.size) return null
-        return data[offset].toInt() and 0xFF
-    }
-
-    /**
      * Parses the `0x31` battery-status register.
      *
      * @return `null` when the payload is shorter than [STATUS_MIN_LENGTH]. A
@@ -152,20 +122,18 @@ object BmsTelemetryParser {
      *   would be worse than reporting nothing.
      */
     fun parseStatus(data: ByteArray): Status? {
-        if (data.size < STATUS_MIN_LENGTH) return null
-
-        val remainingMah = u16(data, 0) ?: return null
-        val percent = u16(data, 2) ?: return null
-        val currentRaw = i16(data, 4) ?: return null
-        val voltageRaw = u16(data, 6) ?: return null
+        val decoded = XiaomiBmsDecoder.decodeStatus(data, 0)
+        val remainingMah = decoded.remainingMah.value?.toInt() ?: return null
+        val percent = decoded.rawSocPercent ?: return null
+        val currentAmps = decoded.telemetry[FieldId.BATTERY_CURRENT].value ?: return null
+        val voltageVolts = decoded.telemetry[FieldId.PACK_VOLTAGE].value ?: return null
 
         return Status(
             remainingMah = remainingMah,
-            // Clamp: a BMS that reports >100 % is a known quirk on some packs,
-            // and letting it through would draw a 130 %-full battery.
+            // Legacy display compatibility only: the core SOC Reading is INVALID above 100.
             percent = percent.coerceIn(0, 100),
-            currentAmps = currentRaw / CURRENT_SCALE,
-            voltageVolts = voltageRaw / VOLTAGE_SCALE,
+            currentAmps = currentAmps,
+            voltageVolts = voltageVolts,
         )
     }
 
@@ -173,20 +141,13 @@ object BmsTelemetryParser {
      * Parses the `0x40` cell-voltage register.
      *
      * @return `null` when the payload is shorter than [CELL_VOLTAGE_LENGTH].
-     *   Trailing zero cells are dropped, because some packs pad the block.
+     *   Zero slots are omitted by legacy display policy. The core preserves every
+     *   wire slot and does not infer that a zero proves a physical cell is absent.
      */
     fun parseCells(data: ByteArray): Cells? {
-        if (data.size < CELL_VOLTAGE_LENGTH) return null
-
-        val volts = ArrayList<Double>(CELL_COUNT)
-        for (i in 0 until CELL_COUNT) {
-            val raw = u16(data, i * 2) ?: return null
-            val v = raw / CELL_VOLTAGE_SCALE
-            // A cell reading of exactly 0 V means "not populated" rather than a
-            // genuinely dead cell, which cannot happen on a pack that is awake.
-            if (v > 0.0) volts.add(v)
-        }
-        return Cells(volts)
+        val decoded = XiaomiBmsDecoder.decodeCells(data, 0)
+        if (decoded.volts.any { it.state == FieldState.INVALID }) return null
+        return Cells(decoded.volts.mapNotNull { it.value })
     }
 
     /**
@@ -197,11 +158,12 @@ object BmsTelemetryParser {
      * @return `null` when fewer than two bytes are present.
      */
     fun parseTemperatures(data: ByteArray): Temperatures? {
-        val first = u8(data, 0) ?: return null
-        val second = u8(data, 1) ?: return null
+        val decoded = XiaomiBmsDecoder.decodeTemperatures(data, 0)
+        val first = decoded.firstCelsius.value ?: return null
+        val second = decoded.secondCelsius.value ?: return null
         return Temperatures(
-            firstCelsius = first - TEMPERATURE_OFFSET,
-            secondCelsius = second - TEMPERATURE_OFFSET,
+            firstCelsius = first,
+            secondCelsius = second,
         )
     }
 
@@ -213,19 +175,16 @@ object BmsTelemetryParser {
      * @return `null` when the payload is empty, so "unknown" is distinguishable
      *   from "not charging".
      */
-    fun isCharging(data: ByteArray): Boolean? {
-        val status = u8(data, 0) ?: return null
-        return (status and 0x40) != 0
-    }
+    fun isCharging(data: ByteArray): Boolean? = XiaomiBmsDecoder.decodeCharging(data, 0).value
 
     /**
      * Parses the `0x18` design-capacity register, in mAh.
      *
-     * @return `null` when absent or zero (a pack never reports 0 mAh design
-     *   capacity, so zero means "not populated").
+     * @return `null` when absent or zero, retaining the legacy display policy.
+     *   The core does not assert a zero-capacity sentinel from unverified semantics.
      */
     fun parseDesignCapacityMah(data: ByteArray): Int? =
-        u16(data, 0)?.takeIf { it > 0 }
+        XiaomiBmsDecoder.decodeDesignCapacity(data, 0).value?.toInt()?.takeIf { it > 0 }
 
     /**
      * Parses the `0x1B` charge-cycle counters.
@@ -233,19 +192,20 @@ object BmsTelemetryParser {
      * @return `null` when absent; otherwise a pair of counter values.
      */
     fun parseChargeCounts(data: ByteArray): Pair<Int, Int>? {
-        val full = u16(data, 0) ?: return null
-        val partial = u16(data, 2) ?: return null
+        val decoded = XiaomiBmsDecoder.decodeChargeCounts(data, 0)
+        val full = decoded.full.value?.toInt() ?: return null
+        val partial = decoded.partial.value?.toInt() ?: return null
         return full to partial
     }
 
     /**
      * Parses the `0x3B` state-of-health register, in percent.
      *
-     * Clamped to 0..100 because the byte is used as a percentage directly and a
-     * bad read should not render as a 255 %-healthy battery.
+     * Clamping is a legacy display policy. Core [XiaomiBmsDecoder.decodeHealth]
+     * marks out-of-range values INVALID; consumers needing validity must use it.
      */
     fun parseHealthPercent(data: ByteArray): Int? =
-        u8(data, 0)?.coerceIn(0, 100)
+        XiaomiBmsDecoder.rawHealthPercent(data)?.coerceIn(0, 100)
 
     /**
      * Convenience: reads a little-endian `u16` from [data] at [offset].
@@ -253,10 +213,10 @@ object BmsTelemetryParser {
      * Exposed so tests and other parsers share one implementation instead of
      * each hand-rolling the shift/or dance.
      */
-    fun readU16(data: ByteArray, offset: Int): Int? = u16(data, offset)
+    fun readU16(data: ByteArray, offset: Int): Int? = XiaomiBmsDecoder.readU16(data, offset)
 
     /** Convenience wrapper used by tests to validate endianness assumptions. */
-    internal fun readI16(data: ByteArray, offset: Int): Int? = i16(data, offset)
+    internal fun readI16(data: ByteArray, offset: Int): Int? = XiaomiBmsDecoder.readI16(data, offset)
 
     /** Little-endian buffer helper, mirroring how the rest of the app reads. */
     internal fun buffer(data: ByteArray): ByteBuffer =

@@ -4,6 +4,7 @@ import io.github.zero2005x.pev.core.codec.xiaomi.PlanResult
 import io.github.zero2005x.pev.core.codec.xiaomi.StatusWordWriteOrder
 import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiPdu
 import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiSettings
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiStatusWordObservation
 import io.github.zero2005x.pev.core.command.CommandPlan
 
 /**
@@ -124,12 +125,8 @@ object ScooterSettingsWriter {
      */
     fun setTailLight(currentlyReadWord: Int, on: Boolean): Write {
         val masked = currentlyReadWord and 0xFFFF
-        val plan = when (val res = XiaomiSettings.tailLightPlan(masked, on, StatusWordWriteOrder.BIG_ENDIAN)) {
-            is PlanResult.Ok -> res.plan
-            is PlanResult.Refused -> error(res.reason)
-        }
-        val pdu = plan.steps[0].bytes
-        return Write(REG_STATUS, pdu.copyOfRange(4, pdu.size))
+        return Write(REG_STATUS, XiaomiSettings.statusWordPayload(masked, XiaomiSettings.TAIL_LIGHT_BIT, on,
+            StatusWordWriteOrder.BIG_ENDIAN))
     }
 
     /**
@@ -139,12 +136,8 @@ object ScooterSettingsWriter {
      */
     fun setUnits(currentlyReadWord: Int, units: Units): Write {
         val masked = currentlyReadWord and 0xFFFF
-        val plan = when (val res = XiaomiSettings.unitsPlan(masked, units == Units.MPH, StatusWordWriteOrder.BIG_ENDIAN)) {
-            is PlanResult.Ok -> res.plan
-            is PlanResult.Refused -> error(res.reason)
-        }
-        val pdu = plan.steps[0].bytes
-        return Write(REG_STATUS, pdu.copyOfRange(4, pdu.size))
+        return Write(REG_STATUS, XiaomiSettings.statusWordPayload(masked, XiaomiSettings.MPH_BIT, units == Units.MPH,
+            StatusWordWriteOrder.BIG_ENDIAN))
     }
 
     /**
@@ -253,28 +246,43 @@ object ScooterSettingsWriter {
         ReversibleWrite(write = setCruise(engaged), undo = setCruise(previousEngaged))
 
     /**
-     * Converts a [Write] to a core [CommandPlan], if a matching setting plan exists.
+     * Converts a legacy big-endian [Write] into one typed plan. Status writes require a
+     * fresh core observation and an explicit wire byte order. Multiple changed bits are refused.
      */
     fun toCommandPlan(
         write: Write,
-        currentStatusWord: Int? = null,
-        order: StatusWordWriteOrder = StatusWordWriteOrder.BIG_ENDIAN,
-    ): CommandPlan? = when (write.register) {
+        currentStatusWord: XiaomiStatusWordObservation? = null,
+        order: StatusWordWriteOrder? = null,
+        nowMs: Long = System.currentTimeMillis(),
+    ): CommandPlan? {
+        if (write.payload.size != 2) return null
+        return when (write.register) {
         REG_KERS -> {
-            val level = write.payload.firstOrNull()?.toInt() ?: 0
-            (XiaomiSettings.kersPlan(level) as? PlanResult.Ok)?.plan
+            val level = write.payload[0].toInt() and 0xFF
+            if (write.payload[1] != 0.toByte()) null else (XiaomiSettings.kersPlan(level) as? PlanResult.Ok)?.plan
         }
         REG_CRUISE -> {
-            val engaged = (write.payload.firstOrNull()?.toInt() ?: 0) != 0
-            (XiaomiSettings.cruisePlan(engaged) as? PlanResult.Ok)?.plan
+            val raw = write.payload[0].toInt() and 0xFF
+            if (write.payload[1] != 0.toByte() || raw !in 0..1) null
+            else (XiaomiSettings.cruisePlan(raw == 1) as? PlanResult.Ok)?.plan
         }
-        REG_STATUS -> {
-            val word = if (write.payload.size >= 2) {
-                ((write.payload[0].toInt() and 0xFF) shl 8) or (write.payload[1].toInt() and 0xFF)
-            } else 0
-            val isTailLight = (word and XiaomiSettings.TAIL_LIGHT_BIT) != 0
-            (XiaomiSettings.tailLightPlan(currentStatusWord ?: word, isTailLight, order) as? PlanResult.Ok)?.plan
-        }
+        REG_STATUS -> statusPlan(write, currentStatusWord, order, nowMs)
         else -> null
+        }
+    }
+
+    private fun statusPlan(write: Write, current: XiaomiStatusWordObservation?,
+        order: StatusWordWriteOrder?, nowMs: Long): CommandPlan? {
+        if (order == null) return null
+        val previous = current?.reading?.value?.raw ?: return null
+        val intended = ((write.payload[0].toInt() and 0xFF) shl 8) or (write.payload[1].toInt() and 0xFF)
+        val result = when (previous xor intended) {
+            XiaomiSettings.TAIL_LIGHT_BIT -> XiaomiSettings.tailLightPlan(current,
+                intended and XiaomiSettings.TAIL_LIGHT_BIT != 0, order, nowMs)
+            XiaomiSettings.MPH_BIT -> XiaomiSettings.unitsPlan(current,
+                intended and XiaomiSettings.MPH_BIT != 0, order, nowMs)
+            else -> return null
+        }
+        return (result as? PlanResult.Ok)?.plan
     }
 }

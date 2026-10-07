@@ -16,6 +16,8 @@ import com.m365bleapp.R
 import com.m365bleapp.protocol.MtuFragmenter
 import com.m365bleapp.protocol.ModelOverrideStore
 import com.m365bleapp.protocol.EscTelemetryParser
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiEscDecoder
+import io.github.zero2005x.pev.core.telemetry.FieldId
 import com.m365bleapp.protocol.PlaintextRegisterSession
 import com.m365bleapp.protocol.ScooterModelRegistry
 import com.m365bleapp.protocol.WriteRetryPolicy
@@ -2111,9 +2113,9 @@ class ScooterRepository private constructor(
     private fun parseTripInfo(data: ByteArray) {
         if (data.size < 4) return
         
-        val bb = ByteBuffer.wrap(data).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        val tripSeconds = bb.getShort(0).toInt() and 0xFFFF
-        val tripMeters = bb.getShort(2).toInt() and 0xFFFF
+        val trip = XiaomiEscDecoder.trip(data, System.currentTimeMillis())
+        val tripSeconds = trip.usableValue(FieldId.TRIP_TIME_S)?.toInt() ?: return
+        val tripMeters = trip.usableValue(FieldId.TRIP_DISTANCE_M)?.toInt() ?: return
         
         Log.d("ScooterRepo", "TripInfo: ${tripSeconds}s, ${tripMeters}m")
         

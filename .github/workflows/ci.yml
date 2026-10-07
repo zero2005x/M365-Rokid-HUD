@@ -127,6 +127,9 @@ jobs:
           done
           exit $failed
 
+      - name: Enforce pure core coverage
+        run: python3 scripts/check-core-coverage.py pev-protocol-core/build/reports/kover/report.xml
+
       - name: Assemble Debug APKs
         run: |
           ./gradlew --no-daemon :app:assembleDebug :glass-hud:assembleDebug

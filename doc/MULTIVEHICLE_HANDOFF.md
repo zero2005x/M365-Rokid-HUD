@@ -42,9 +42,13 @@ dependencies without license check. Pure logic must be JVM-unit-tested (Kover). 
 - `command/` CommandSpec/Plan, CommandGate (default-deny, experimental opt-in bound to profileKey), WriteSession, CommandCoordinator (single writer, no auto-retry, ACK vs readback vs unconfirmed).
 - Queue item 2a DONE: `codec/xiaomi/` — `XiaomiPdu` (logical read/write messages + reply parse), `XiaomiMotorInfoDecoder` (0xB0: SOC/speed signed/total distance/`TEMP_FRAME`, evidence WIRE_CAPTURED, 2 real-capture fixtures), `XiaomiSettings` (KERS, cruise, tail light, units; all readback-confirmed, VENDOR_STATIC ⇒ experimental-only, M365-scoped; 0x7D is RMW from a fresh word and **requires an explicit `StatusWordWriteOrder`**, no default).
 - Root docs started: `SUPPORT_MATRIX.md`, `COMMAND_MATRIX.md`, `OWNER_VALIDATION.md` (0x7D byte-order test procedure). `scripts/core-test-wsl.sh` runs core tests in WSL.
-- CI update DONE: `.github/workflows/ci.yml` runs `:pev-protocol-core:koverXmlReport` alongside app/glasses reports and verifies `pev-protocol-core/build/reports/kover/report.xml` for SonarCloud.
-- Queue item 2b(ii) DONE: `:app` added `implementation(project(':pev-protocol-core'))`. `MotorInfoParser` delegates 0xB0 parsing to `XiaomiMotorInfoDecoder` while preserving HUD display clamping (raw ≥ 0xC000 / negative speed clamped to 0.0 km/h on HUD, without leaking to core/EUC). `ScooterSettingsWriter` delegates constants, builders, and plans to `XiaomiSettings` and `XiaomiPdu` and provides `toCommandPlan`. `XiaomiMotorInfoDecoder` updated for MIN_LENGTH=22 (optional frame temperature) and signed speed decoding with 0xC000 threshold (>32 km/h forward speed preserved). `scripts/app-and-core-test-wsl.sh` added.
-- Docs: `pev-protocol-core/{README,ARCHITECTURE,SOURCE_PROVENANCE}.md`.
+- Queue item 2b(i) DONE: `codec/xiaomi/` — `XiaomiBmsDecoder` (0x31/0x35/0x40/0x38/0x39/0x3B, cell voltages, dual temperatures, cycle/charge counts), `XiaomiEscDecoder` (0x25, 0x3A, 0x1B error code, 0x1A/0x39 firmware/identity, 0x7B/0x7C/0x7D settings readback), and `XiaomiRegisterBytes`.
+- Queue item 2b(iv) DONE: `XiaomiCaptureReplayTest` replaying 152 real B0 payloads + 3 RX3A + 1 RX25 from `logcat-spin-raw.txt` with manifest verification, regression oracles, and 92 matching phone CSV records.
+- Queue item 2b(v) / App delegation DONE: `BmsTelemetryParser` and `EscTelemetryParser` delegate to `XiaomiBmsDecoder` and `XiaomiEscDecoder` while preserving legacy app behaviors (display clamping, percent fallback, nullable status).
+- Queue item 3 (Begode A2 raw codec) DONE: `BegodeA2Codec` in `io.github.zero2005x.pev.core.codec.begode`, implementing bounded 24-byte envelope reassembly, 0x00/01/04/07 branch decoding with byte19 discriminator, and strictly raw diagnostic representations (no fake PWM, no fused distances, no unproven voltage/SOC scaling). Compiled-core replay across 11,424 CAP-A frames verified.
+- Command safety hardening DONE: `CommandCoordinator` and `CommandGate` hardened against ungated execution, uncorrelated ACK, cancellation after final delay, reconnect write races, profile changes restoring consent, pack/source identity omissions, mutable buffer exposure, cross-session RMW reuse/expiry, late confirmations, and wrong-source/type readback.
+- Coverage enforcement DONE: `scripts/check-core-coverage.py` enforces core LINE and BRANCH coverage >= 90%.
+- Docs: `pev-protocol-core/{README,ARCHITECTURE,SOURCE_PROVENANCE}.md`, `SUPPORT_MATRIX.md`, `COMMAND_MATRIX.md`, `OWNER_VALIDATION.md`, `TEST_REPORT.md`.
 - Unit tests for all of the above (see §7 for the last verified result).
 
 ## 7. Verification log (append; never write "passed" without a run)
@@ -52,17 +56,29 @@ dependencies without license check. Pure logic must be JVM-unit-tested (Kover). 
 |---|---|---|
 | 2026-10-07 | WSL `:pev-protocol-core:test :koverXmlReport` | BUILD SUCCESSFUL; 42 tests, 0 failures; Kover LINE 181/182, BRANCH 125/131 |
 | 2026-10-07 | scripts/core-test-wsl.sh (core + Xiaomi adapter) | BUILD SUCCESSFUL; 65 tests, 0 failures; Kover LINE 250/251, BRANCH 190/205 |
-| 2026-10-07 | scripts/app-and-core-test-wsl.sh (core + app unit tests + Kover XML) | BUILD SUCCESSFUL; Core 66 tests, 0 failures (Kover LINE 256/257 covered); App 22 testsuites, 309 tests, 0 failures; Kover reports generated for both modules |
-| — | Rust checks, lint, SonarCloud | **NOT RUN** (preBuild verifyRustJni checked with -PskipRustBuild; native JNI / lint / SonarCloud in CI) |
+| 2026-10-07 | scripts/app-and-core-test-wsl.sh (pre-change core + app unit tests) | BUILD SUCCESSFUL; Core 66 tests, 0 failures; App 22 testsuites, 309 tests, 0 failures |
+| 2026-10-07 | scripts/app-and-core-test-wsl.sh (integrated core + app unit tests + Kover XML) | BUILD SUCCESSFUL; Core 142 tests, 0 failures; App 22 testsuites, 367 tests, 0 failures; Core Kover LINE 569/569 (100.00%), BRANCH 522/549 (95.08%) |
+| 2026-10-07 | Windows native toolchain cargo test (ninebot-ffi) | 5 tests passed; 0 failed |
+| 2026-10-07 | Windows native toolchain cargo test (ninebot-ble) | 148 tests passed; 0 failed |
+| 2026-10-07 | Windows native toolchain test-jni.ps1 | 56 checks passed |
+| 2026-10-07 | WSL compiled-core replay of Begode A2 CAP-A | 11,424 frames decoded, 0 overflows, 0 physical guesses |
+| — | SonarCloud | NOT RUN (CI configured; local Sonar scanner/token not present; see TEST_REPORT.md) |
+
+Note on JNI build stamp:
+`app/build.gradle.kts` computes `rustInputFingerprint` over file relative paths using host file separators (`\` on Windows, `/` on Linux). The Rust sources in `ninebot-ffi` and `ninebot-ble` are pristine and unedited. The Windows-built `rust-build.stamp` matches the Windows fingerprint (`e80791fd...`). When building in WSL/Linux, use `-PskipRustBuild` unless rebuilding native libraries with a Linux NDK toolchain.
 
 ## 8. Work queue (ordered). Owner = who may touch shared files
-1. **Integration owner**: CI step running `:pev-protocol-core:test :pev-protocol-core:koverXmlReport` added to `.github/workflows/ci.yml`; flesh out `SUPPORT_MATRIX.md`, `COMMAND_MATRIX.md`, `TEST_REPORT.md`, `OWNER_VALIDATION.md` skeletons.
-2. **Xiaomi adapter (B)** — 2a done (see §6), **2b(ii) done** (app delegates to core and app tests pass). **Remaining 2b**:
-   - (i) migrate the other registers (BMS 0x31/0x35/0x40, ESC 0x25/0x3A/0x7B-0x7D reads, error 0x1B, firmware/identity) into `codec/xiaomi` with fixtures;
-   - (iii) app-side `PevTransport` adapter over the Rust/JNI encrypt path — the core emits logical PDUs `[len,to,cmd,reg,payload]`, the adapter encrypts/frames;
-   - (iv) M365 replay test over more of `logcat-spin-raw.txt` (152 payloads, sha in SOURCE_PROVENANCE) and the phone-log CSVs;
-   - (v) do NOT reuse app `FrameCodec` (it is the Ninebot-style src/dst framing) for Xiaomi writes. Wrap existing MIT logic (`app/.../protocol/FrameCodec.kt, PlaintextTelemetryMapper.kt, ScooterModelRegistry.kt`) behind core types; keep Rust/JNI auth in the app. Verify 0x7D endianness, RMW preserving unrelated bits, readback. M365-only signed-speed fix must not leak to EUC codecs. M365 real-capture replay test.
-3. **Begode/Gotway (C)**: A2 codec from corrected RX-only CAP-A fixtures (regenerate with the corrected tool into a new dir; record hashes). 24-byte frame reassembly (20+20+20+20+16 notifies), type@18, byte19 branches 0x00/01/04/07. Do **not**: fuse the two 16-bit distances, treat mode word@14 as PWM, assume raw/100 = packV (CAP-B B9 pending), invent SOC curve. Unknown scale ⇒ raw diagnostic field, not VALID physical value.
+1. **Integration owner**: CI step running `:pev-protocol-core:test :pev-protocol-core:koverXmlReport` added to `.github/workflows/ci.yml`; `SUPPORT_MATRIX.md`, `COMMAND_MATRIX.md`, `TEST_REPORT.md`, `OWNER_VALIDATION.md` completed. [DONE]
+2. **Xiaomi adapter (B)**:
+   - 2a: DONE (`codec/xiaomi/XiaomiPdu`, `XiaomiMotorInfoDecoder`, `XiaomiSettings`)
+   - 2b(i): DONE (`XiaomiBmsDecoder`, `XiaomiEscDecoder`, `XiaomiRegisterBytes`)
+   - 2b(ii): DONE (`MotorInfoParser`, `ScooterSettingsWriter` delegate to core)
+   - 2b(iv): DONE (M365 152-payload capture replay + phone CSV correspondence test)
+   - 2b(v): DONE (0x7D endianness, RMW, signed-speed isolation, unit tests)
+   - 2b(iii) [Remaining]: app-side `PevTransport` adapter over the Rust/JNI encrypt path — the core emits logical PDUs `[len,to,cmd,reg,payload]`, the adapter encrypts/frames.
+3. **Begode/Gotway (C)**:
+   - A2 raw-only codec + unit tests + 11,424 CAP-A frame replay [DONE].
+   - Remaining: command builders/plans for verified or experimental Begode settings when safe.
 4. **Gateway (G)**: versioned serialization shared by BLE & Wi-Fi; keep legacy 20-byte M365 path; per-field validity/freshness; wider trip distance/time; old-glasses "upgrade needed" instead of zero-filling; reject any vehicle-setting message from glasses.
 5. **Phone UI + app wiring**: adopt `CommandCoordinator` as the only GATT writer; experimental-mode screen (per device/session opt-in, shows profile/firmware/command/unit/why-unverified); no raw hex console.
 6. **Zydtech (D), Ninebot ESx/G30 (B), Inmotion I1 + KingSong (E), Veteran/NOSFET + Inmotion I2 (F)**: each in its own `codec/<family>/` namespace with fixtures, tests, capability proposals, provenance rows. Unidentified layout ⇒ raw diagnostics only. Never infer family from UUID (FFE0/NUS collide).

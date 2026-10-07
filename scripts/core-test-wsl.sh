@@ -11,5 +11,6 @@ cd "$st"
 sed -i 's/\r$//' gradlew
 printf 'sdk.dir=/home/kali/android-sdk\n' > local.properties
 bash gradlew --no-daemon --offline :pev-protocol-core:test :pev-protocol-core:koverXmlReport 2>&1 | grep -v '^$' | tail -40
+python3 scripts/check-core-coverage.py pev-protocol-core/build/reports/kover/report.xml
 cat pev-protocol-core/build/test-results/test/*.xml | grep -o '<testsuite [^>]*' | sed 's/timestamp.*//'
 tail -c 260 pev-protocol-core/build/reports/kover/report.xml

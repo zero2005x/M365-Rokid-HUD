@@ -26,9 +26,9 @@ stages into `/home/kali/build/pev-core-stage` and uses JDK21 + existing Android 
 | Check | Actual result |
 |---|---|
 | Pre-change core/App tests | BUILD SUCCESSFUL; core 66, App 361, zero failures (the previous handoff's App 309 count was incorrect) |
-| Integrated core tests | 142 tests, zero failures/errors/skips |
+| Integrated core tests | 155 tests, zero failures/errors/skips |
 | Integrated App tests | 367 tests, zero failures/errors/skips |
-| Core Kover | LINE 569/569 (100%); BRANCH 522/549 (95.08%); methods 188/188 |
+| Core Kover | LINE 819/822 (99.64%); BRANCH 621/651 (95.39%); methods 207/207 |
 | Explicit local/CI coverage floor | `scripts/check-core-coverage.py` enforces LINE and BRANCH >=90%; actual report passed |
 | External Sonar | NOT RUN: local scanner and SONAR_TOKEN unavailable; CI scan remains configured. No Sonar quality-gate pass claimed |
 | Rust/JNI checks | NOT RUN; Rust source untouched, Kotlin validation uses `-PskipRustBuild` and existing native artifacts |

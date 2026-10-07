@@ -21,6 +21,30 @@ class NinebotHandshakeTest {
 
     private fun handshake() = NinebotHandshake(name)
 
+    @Test
+    fun `stored app random is sent in both steps and does not change cipher derivation`() {
+        val random = ByteArray(16) { (it + 60).toByte() }
+        val h = NinebotHandshake(name, random)
+        random.fill(0) // Handshake owns a defensive copy.
+        val expected = ByteArray(16) { (it + 60).toByte() }
+        h.nextFrame(); h.acceptReply(preCommReply())
+        assertArrayEquals(expected, requireNotNull(h.nextFrame()).copyOfRange(4, 20))
+        h.acceptReply(shortReply())
+        assertArrayEquals(expected, requireNotNull(h.nextFrame()).copyOfRange(4, 20))
+        val legacy = handshake()
+        legacy.nextFrame(); legacy.acceptReply(preCommReply()); legacy.nextFrame(); legacy.acceptReply(shortReply())
+        val frame = byteArrayOf(0x5A, 0xA5.toByte(), 0x06) + ByteArray(6)
+        assertArrayEquals(requireNotNull(legacy.cipher).encrypt(frame), requireNotNull(h.cipher).encrypt(frame))
+        h.fail("scooter refused")
+        assertNull(h.nextFrame()) // Never fall back to APP_DATA.
+        h.close()
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `stored app random must be exactly sixteen bytes`() {
+        NinebotHandshake(name, ByteArray(12))
+    }
+
     /** Builds a step-1 reply payload of exactly the required length. */
     private fun preCommReply(): ByteArray {
         val payload = ByteArray(NinebotHandshake.PRE_COMM_REPLY_LENGTH)

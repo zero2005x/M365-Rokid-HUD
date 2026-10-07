@@ -11,10 +11,10 @@ package com.m365bleapp.protocol
  * | 2 | `3E 21 5C 00 ‖ APP_DATA` | inner frame starting `5A A5 00 21 3E 5C 01` | confirms the key derived from `ble_data` |
  * | 3 | `3E 21 5D 00 ‖ uid[14]` | acknowledgement | paired |
  *
- * Step 1 is retried every 900 ms and steps 2–3 every 500 ms in Scootbatt. Because
- * [APP_DATA] is a hard-coded constant rather than a random per-install value, the
- * session key is **deterministic given the scooter's reply** — there is no local
- * secret to store, and a reimplementation needs no entropy source.
+ * Step 1 is retried every 900 ms and steps 2–3 every 500 ms in Scootbatt.
+ * The default path retains [APP_DATA] and the final UID byte. An optional saved
+ * 16-byte app random overrides the payload of both 5C and 5D for this session.
+ * Session keys are always derived from the advertised name and ble_data.
  *
  * ## What this class is and is not
  *
@@ -34,15 +34,18 @@ package com.m365bleapp.protocol
 class NinebotHandshake(
     /** The BLE advertised name, used to derive the key. */
     private val advertisedName: ByteArray,
-) {
+    appRandom: ByteArray? = null,
+) : AutoCloseable {
+    private val appRandom = appRandom?.also { require(it.size == 16) }?.copyOf()
+    override fun close() { appRandom?.fill(0) }
+
 
     companion object {
         /**
          * The 16-byte application payload sent in step 2.
          *
-         * A hard-coded constant in Scootbatt (`ScooterFragment.java:1485`), which
-         * is why the resulting session key is deterministic. Recorded here rather
-         * than generated, so the two implementations agree byte-for-byte.
+         * Legacy no-key default retained byte-for-byte. This payload is not the
+         * session AES key and is never stored as a portable pairing credential.
          */
         val APP_DATA = byteArrayOf(
             0x4A, 0xEE.toByte(), 0xBD.toByte(), 0x73, 0xE2.toByte(), 0x16, 0x1C, 0x11,
@@ -153,12 +156,12 @@ class NinebotHandshake(
             innerFrame(ACTION_PRE_COMM)
         }
 
-        Stage.AWAITING_SET_PWD -> innerFrame(ACTION_SET_PWD, APP_DATA)
+        Stage.AWAITING_SET_PWD -> innerFrame(ACTION_SET_PWD, appRandom ?: APP_DATA)
 
         Stage.AWAITING_AUTH -> {
             val uidValue = uid ?: return null
             // Only the last byte of the UID is sent, per Scootbatt.
-            innerFrame(ACTION_AUTH, byteArrayOf(uidValue[uidValue.size - 1]))
+            innerFrame(ACTION_AUTH, appRandom ?: byteArrayOf(uidValue[uidValue.size - 1]))
         }
 
         Stage.PAIRED, Stage.FAILED -> null

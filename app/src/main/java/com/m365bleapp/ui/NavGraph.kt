@@ -40,9 +40,13 @@ fun NavHostContainer(repository: ScooterRepository) {
                 onBack = { navController.popBackStack() },
                 onOpenHudDisplay = { navController.navigate("hudDisplay") },
                 onOpenLanguage = { navController.navigate("language") },
+                onOpenPairingKeys = { navController.navigate("pairingKeys") },
                 onOpenLogViewer = { navController.navigate("logViewer") },
                 onOpenLogging = { navController.navigate("logs") }
             )
+        }
+        composable("pairingKeys") {
+            PairingKeysScreen(repository = repository, onBack = { navController.popBackStack() })
         }
         composable("scooterInfo") {
             ScooterInfoScreen(

@@ -1,5 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="pairing_title">滑板車配對金鑰</string>
+    <string name="pairing_settings_subtitle">匯入、匯出或手動輸入小米與 Ninebot 配對金鑰</string>
+    <string name="pairing_count">已儲存的滑板車：%1$d 台</string>
+    <string name="pairing_help">配對金鑰能控制滑板車。任何人取得備份檔與口令後都能使用。只用於自己的車，備份也只交給自己。</string>
+    <string name="pairing_export">匯出加密備份</string>
+    <string name="pairing_import">匯入備份</string>
+    <string name="pairing_manual">手動輸入配對金鑰</string>
+    <string name="pairing_password">備份口令</string>
+    <string name="pairing_confirm_password">再次輸入口令</string>
+    <string name="pairing_password_help">至少 10 個字元，且至少含 4 種不同字元。請保管好口令，遺失後無法找回。</string>
+    <string name="pairing_replace_existing">取代已儲存金鑰</string>
+    <string name="pairing_mac">滑板車藍牙 MAC 位址</string>
+    <string name="pairing_token">配對金鑰（十六進位）</string>
+    <string name="pairing_manual_help">請選擇滑板車家族。MAC 可用冒號、減號或 12 個十六進位字元；金鑰可含空白、冒號及 0x 前綴。</string>
+    <string name="pairing_save">確認</string>
+    <string name="pairing_export_done">已儲存加密備份。</string>
+    <string name="pairing_import_done">已匯入 %1$d 筆配對金鑰。</string>
+    <string name="pairing_manual_done">已儲存配對金鑰。</string>
+    <string name="pairing_operation_failed">操作失敗，請重試。</string>
     <string name="app_name">M365 藍牙應用</string>
     
     <!-- Common -->
@@ -243,4 +262,23 @@
     <string name="diagnostics_subtitle">應用程式偵測到的配置、協定方言、MTU 與型號</string>
     <string name="settings_protocol_title">協定與連線</string>
     <string name="diagnostics_no_layout">無已知配置</string>
+    <string name="bond_export_expired_or_failed">匯出失敗或身分確認已逾時，請重新確認身分後匯出。</string>
+    <string name="bond_invalid_file">不是支援的配對金鑰備份，或檔案超過 256 KiB。</string>
+    <string name="bond_screen_lock_required">請先設定裝置螢幕鎖，才能匯出配對金鑰。</string>
+    <string name="bond_auth_title">確認身分以匯出配對金鑰</string>
+    <string name="bond_select_one">請至少選一台滑板車。</string>
+    <string name="bond_password_invalid">兩次口令必須一致，至少 10 個字元且含 4 種不同字元。</string>
+    <string name="bond_wrong_password_or_damage">口令錯誤或備份檔已損毀。</string>
+    <string name="bond_import_result">新增 %1$d 筆、取代 %2$d 筆、保留 %3$d 筆。</string>
+    <string name="bond_preview">預覽配對金鑰</string>
+    <string name="bond_skipped">已略過未知家族：%1$d 筆</string>
+    <string name="bond_delete">刪除</string>
+    <string name="bond_delete_question">刪除這筆已儲存金鑰？之後可能需要重新配對這台車。</string>
+    <string name="bond_xiaomi">小米 Mi</string>
+    <string name="bond_ninebot">Ninebot 舊式加密</string>
+    <string name="bond_label">名稱（選填，最多 64 字）</string>
+    <string name="bond_bytes12">小米：必須為 12 位元組（24 個十六進位字元）。</string>
+    <string name="bond_bytes16">Ninebot：必須為 16 位元組（32 個十六進位字元）。</string>
+    <string name="bond_manual_invalid">請檢查 MAC、金鑰長度與名稱。名稱最多 64 字，不可含控制字元。</string>
+    <string name="bond_replace_question">這台車已有金鑰，是否以剛輸入的金鑰取代？</string>
 </resources>

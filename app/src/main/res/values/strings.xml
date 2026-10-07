@@ -1,5 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="pairing_title">Scooter pairing keys</string>
+    <string name="pairing_settings_subtitle">Import, export, or enter Xiaomi and Ninebot pairing keys</string>
+    <string name="pairing_count">Saved scooters: %1$d</string>
+    <string name="pairing_help">Pairing keys can control a scooter. Anyone with the backup file and its password can use them. Use this only for your own scooters and share backups only with yourself.</string>
+    <string name="pairing_export">Export encrypted backup</string>
+    <string name="pairing_import">Import backup</string>
+    <string name="pairing_manual">Enter pairing key</string>
+    <string name="pairing_password">Backup password</string>
+    <string name="pairing_confirm_password">Confirm password</string>
+    <string name="pairing_password_help">Use at least 10 characters, including at least 4 distinct characters. Keep this password safe; it cannot be recovered.</string>
+    <string name="pairing_replace_existing">Replace saved key</string>
+    <string name="pairing_mac">Scooter Bluetooth MAC address</string>
+    <string name="pairing_token">Pairing key (hex)</string>
+    <string name="pairing_manual_help">Choose the scooter family. MAC accepts colons, hyphens, or 12 hex digits. The key accepts spaces, colons, and an optional 0x prefix.</string>
+    <string name="pairing_save">Confirm</string>
+    <string name="pairing_export_done">Encrypted backup saved.</string>
+    <string name="pairing_import_done">Imported %1$d pairing key(s).</string>
+    <string name="pairing_manual_done">Pairing key saved.</string>
+    <string name="pairing_operation_failed">Operation failed. Please try again.</string>
     <string name="app_name">M365 BLE App</string>
     
     <!-- Common -->
@@ -280,4 +299,23 @@
     <string name="msg_light_on">Tail light on</string>
     <string name="msg_light_off">Tail light off</string>
     <string name="msg_light_failed">Light control failed: %1$s</string>
+    <string name="bond_export_expired_or_failed">Export failed or device confirmation expired. Confirm your identity again to export.</string>
+    <string name="bond_invalid_file">This is not a supported pairing key backup, or the file exceeds 256 KiB.</string>
+    <string name="bond_screen_lock_required">Set a screen lock on this device before exporting pairing keys.</string>
+    <string name="bond_auth_title">Confirm identity to export pairing keys</string>
+    <string name="bond_select_one">Select at least one scooter.</string>
+    <string name="bond_password_invalid">Passwords must match and contain at least 10 characters with at least 4 distinct characters.</string>
+    <string name="bond_wrong_password_or_damage">Wrong password or damaged backup file.</string>
+    <string name="bond_import_result">Added: %1$d; replaced: %2$d; kept: %3$d.</string>
+    <string name="bond_preview">Review pairing keys</string>
+    <string name="bond_skipped">Unknown families skipped: %1$d</string>
+    <string name="bond_delete">Delete</string>
+    <string name="bond_delete_question">Delete this saved pairing key? You may need to pair this scooter again.</string>
+    <string name="bond_xiaomi">Xiaomi Mi</string>
+    <string name="bond_ninebot">Ninebot legacy crypto</string>
+    <string name="bond_label">Label (optional, up to 64 characters)</string>
+    <string name="bond_bytes12">Xiaomi: exactly 12 bytes (24 hex digits).</string>
+    <string name="bond_bytes16">Ninebot: exactly 16 bytes (32 hex digits).</string>
+    <string name="bond_manual_invalid">Check the MAC, key length, and label. The label must be at most 64 characters with no control characters.</string>
+    <string name="bond_replace_question">This scooter already has a saved key. Replace it with the key you entered?</string>
 </resources>

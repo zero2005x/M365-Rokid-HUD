@@ -84,6 +84,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenHudDisplay: () -> Unit,
     onOpenLanguage: () -> Unit,
+    onOpenPairingKeys: () -> Unit,
     onOpenLogViewer: () -> Unit,
     onOpenLogging: () -> Unit
 ) {
@@ -134,6 +135,12 @@ fun SettingsScreen(
 
             // --- Advanced ---
             SettingsSection(stringResource(R.string.settings_section_advanced))
+            SettingsRow(
+                icon = "🔑",
+                title = stringResource(R.string.pairing_title),
+                subtitle = stringResource(R.string.pairing_settings_subtitle),
+                onClick = onOpenPairingKeys
+            )
             SettingsRow(
                 icon = "🌐",
                 title = stringResource(R.string.language_title),

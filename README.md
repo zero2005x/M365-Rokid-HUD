@@ -37,6 +37,7 @@
 | 連線品質 | 查看 RSSI 與資料更新狀態，辨識延遲或斷線。 |
 | Demo Ride | 不需滑板車，即可用模擬資料體驗儀表板與 HUD 設定。 |
 | 日誌與控制 | 匯出 CSV／除錯日誌；鎖車與尾燈控制依車型和協議支援而定。 |
+| 配對金鑰 | 匯入、匯出與手動新增小米／Ninebot 金鑰；與 RideFlux 共用 `.rfbond` 格式。[操作與安全說明](doc/PAIRING_TOKEN_BACKUP.md)。 |
 | 多語系 | App 支援 11 種語言；官網提供繁中、英文、簡中。 |
 
 ## App 截圖
@@ -58,6 +59,8 @@
 ## 車型與驗證狀態
 
 **辨識到車型、完成連線、讀取遙測、實車驗證是不同階段。** 下表為摘要，詳細限制以 [MODEL_SUPPORT.md](doc/MODEL_SUPPORT.md) 為準。
+
+小米 BLE 辨識規則以 [`identity.rs`](ninebot-ble/src/identity.rs) 中的 `XIAOMI_SCOOTER_MATCH` 為單一來源。
 
 | 車型 | 目前實作狀態 | 驗證與限制 |
 | --- | --- | --- |

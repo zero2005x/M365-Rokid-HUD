@@ -375,62 +375,71 @@ class ScooterRepository private constructor(
         gatt: android.bluetooth.BluetoothGatt,
         advertisedName: ByteArray,
     ): Boolean {
-        val handshake = com.m365bleapp.protocol.NinebotHandshake(advertisedName)
+        val stored = sharedPreferences.getString(gatt.device.address.uppercase() + "_nb_random", null)
+        val chars = stored?.toCharArray()
+        val random = try { chars?.let { com.m365bleapp.bond.BondInput.hex(it, 16) } }
+        finally { chars?.fill('\u0000') }
+        val handshake = try { com.m365bleapp.protocol.NinebotHandshake(advertisedName, random) }
+        finally { random?.fill(0) }
+        sensitiveHandshake = true
+        try {
 
-        // Drain anything left from service discovery so the first reply belongs to
-        // the first request.
-        while (controlChannel.tryReceive().isSuccess) { /* discard */ }
+            // Drain anything left from service discovery so the first reply belongs to
+            // the first request.
+            while (controlChannel.tryReceive().isSuccess) { /* discard */ }
 
-        var attempts = 0
-        while (currentCoroutineContext().isActive &&
-            activeGatt === gatt &&
-            !handshake.isPaired
-        ) {
-            val frame = handshake.nextFrame()
-            if (frame == null) break
+            var attempts = 0
+            while (currentCoroutineContext().isActive &&
+                activeGatt === gatt &&
+                !handshake.isPaired
+            ) {
+                if (attempts >= NINEBOT_HANDSHAKE_MAX_ATTEMPTS) {
+                    handshake.fail("no reply after $attempts attempts")
+                    break
+                }
+                attempts++
+                val frame = handshake.nextFrame() ?: break
 
-            if (attempts >= NINEBOT_HANDSHAKE_MAX_ATTEMPTS) {
-                handshake.fail("no reply after $attempts attempts")
-                break
+                try {
+                    writeChar(uartService, uartTx, frame, waitForResponse = false)
+                    val reply = withTimeoutOrNull(handshake.retryIntervalMs) {
+                        controlChannel.receive()
+                    }
+                    if (reply == null) {
+                        Log.d(
+                            "ScooterRepo",
+                            "NinebotCrypto: no reply in ${handshake.retryIntervalMs} ms, " +
+                                "resending (attempt $attempts)"
+                        )
+                        continue
+                    }
+                    // A reply may be a full frame or just the counted bytes; the state
+                    // machine only inspects the payload region, so both are passed
+                    // through unchanged and it validates the length itself.
+                    if (!handshake.acceptReply(reply)) {
+                        Log.d(
+                            "ScooterRepo",
+                            "NinebotCrypto: reply did not advance stage " +
+                                "${handshake.stage} (${reply.size} bytes)"
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.w("ScooterRepo", "NinebotCrypto: handshake write failed")
+                } finally { frame.fill(0) }
             }
-            attempts++
 
-            try {
-                writeChar(uartService, uartTx, frame, waitForResponse = false)
-                val reply = withTimeoutOrNull(handshake.retryIntervalMs) {
-                    controlChannel.receive()
-                }
-                if (reply == null) {
-                    Log.d(
-                        "ScooterRepo",
-                        "NinebotCrypto: no reply in ${handshake.retryIntervalMs} ms, " +
-                            "resending (attempt $attempts)"
-                    )
-                    continue
-                }
-                // A reply may be a full frame or just the counted bytes; the state
-                // machine only inspects the payload region, so both are passed
-                // through unchanged and it validates the length itself.
-                if (!handshake.acceptReply(reply)) {
-                    Log.d(
-                        "ScooterRepo",
-                        "NinebotCrypto: reply did not advance stage " +
-                            "${handshake.stage} (${reply.size} bytes)"
-                    )
-                }
-            } catch (e: Exception) {
-                Log.w("ScooterRepo", "NinebotCrypto: handshake write failed: ${e.message}")
+            return if (handshake.isPaired) {
+                Log.i("ScooterRepo", "NinebotCrypto: paired")
+                true
+            } else {
+                val reason = handshake.failureReason ?: "handshake did not complete"
+                Log.e("ScooterRepo", "NinebotCrypto: pairing failed: $reason")
+                _connectionState.value = ConnectionState.Error("Pairing failed: $reason")
+                false
             }
-        }
-
-        return if (handshake.isPaired) {
-            Log.i("ScooterRepo", "NinebotCrypto: paired")
-            true
-        } else {
-            val reason = handshake.failureReason ?: "handshake did not complete"
-            Log.e("ScooterRepo", "NinebotCrypto: pairing failed: $reason")
-            _connectionState.value = ConnectionState.Error("Pairing failed: $reason")
-            false
+        } finally {
+            sensitiveHandshake = false
+            handshake.close()
         }
     }
 
@@ -548,6 +557,9 @@ class ScooterRepository private constructor(
     fun isRegistered(mac: String): Boolean {
         return sharedPreferences.contains(mac.uppercase() + "_token")
     }
+
+    val bondStore by lazy { com.m365bleapp.bond.AndroidBondStore.get(context, sharedPreferences) }
+    @Volatile private var sensitiveHandshake = false
 
     fun scan(): Flow<android.bluetooth.le.ScanResult> {
         return bleManager.scan()
@@ -691,7 +703,8 @@ class ScooterRepository private constructor(
                 }
 
                 val gatt = bleManager.connect(device) { uuid, data ->
-                    Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
+                    val sensitive = sensitiveHandshake || uuid == BleManager.AUTH_AVDTP || uuid == BleManager.AUTH_UPNP
+                    if (!sensitive) Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
                     
                     // Log BLE receive to CSV
                     val charName = when (uuid) {
@@ -700,7 +713,7 @@ class ScooterRepository private constructor(
                         BleManager.AUTH_UPNP -> "AUTH_UPNP"
                         else -> uuid.toString().takeLast(8)
                     }
-                    logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
+                    if (!sensitive) logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
                     
                     // trySend fails silently when the bounded channel is full.
                     // Dropping an AUTH frame causes a spurious handshake
@@ -845,12 +858,12 @@ class ScooterRepository private constructor(
                     // Give scooter a moment to persist the new token and reset auth state
                     delay(1000)
                     
-                    performLogin(tokenStr.hexToBytes())
+                    tokenStr.hexToBytes().let { token -> try { performLogin(token) } finally { token.fill(0) } }
                 } else {
                     val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
                     Log.d("ScooterRepo", "Token retrieved: ${tokenStr != null}")
                     if (tokenStr == null) throw Exception(getString(R.string.error_no_token))
-                    performLogin(tokenStr.hexToBytes())
+                    tokenStr.hexToBytes().let { token -> try { performLogin(token) } finally { token.fill(0) } }
                 }
                 
                 Log.d("ScooterRepo", "Enabling UART RX...")
@@ -939,29 +952,28 @@ class ScooterRepository private constructor(
         if (tokenAndDid.isEmpty()) throw Exception("Handshake failed")
         
         val token = tokenAndDid.sliceArray(0 until 12)
-        val didCiphertext = tokenAndDid.sliceArray(12 until tokenAndDid.size)
-        
-        // Write AVDTP: CMD_SEND_DID (00 00 00 00 02 00)
-        writeChar(AUTH_SERVICE, AUTH_AVDTP, byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x02, 0x00))
-        
-        waitForCmd("00000101") // RCV_RDY
-        writeMiParcel(AUTH_SERVICE, AUTH_AVDTP, didCiphertext)
-        waitForCmd("00000100") // RCV_OK
-        
-        // 5. Auth
-        writeChar(AUTH_SERVICE, AUTH_UPNP, byteArrayOf(0x13, 0x00, 0x00, 0x00)) // CMD_AUTH
-        waitForCmd("11000000") // RCV_AUTH_OK
-        
-        // Save token with normalized MAC address (uppercase)
-        val mac = activeGatt?.device?.address?.uppercase() ?: ""
-        sharedPreferences.edit()
-            .putString(mac + "_token", token.toHex())
-            .apply()
+        try {
+            val didCiphertext = tokenAndDid.sliceArray(12 until tokenAndDid.size)
+
+            // Write AVDTP: CMD_SEND_DID (00 00 00 00 02 00)
+            writeChar(AUTH_SERVICE, AUTH_AVDTP, byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x02, 0x00))
+
+            waitForCmd("00000101") // RCV_RDY
+            writeMiParcel(AUTH_SERVICE, AUTH_AVDTP, didCiphertext)
+            waitForCmd("00000100") // RCV_OK
+
+            // 5. Auth
+            writeChar(AUTH_SERVICE, AUTH_UPNP, byteArrayOf(0x13, 0x00, 0x00, 0x00)) // CMD_AUTH
+            waitForCmd("11000000") // RCV_AUTH_OK
+
+            // Save token with normalized MAC address (uppercase)
+            val mac = activeGatt?.device?.address?.uppercase() ?: ""
+            bondStore.putXiaomi(mac, token)
+        } finally { token.fill(0); tokenAndDid.fill(0) }
     }
 
     private suspend fun performLogin(token: ByteArray) {
         Log.d("ScooterRepo", "=== performLogin START ===")
-        Log.d("ScooterRepo", "Token (${token.size} bytes): ${token.toHex()}")
         
         // 1. Send Key
         // Write UPNP: CMD_LOGIN (24 00 00 00)
@@ -1778,7 +1790,8 @@ class ScooterRepository private constructor(
     // Helpers
     // Changed to default waitForResponse=false (Fire and Forget) + Pacing Delay
     private suspend fun writeChar(service: UUID, char: UUID, data: ByteArray, waitForResponse: Boolean = false) {
-        Log.d("ScooterRepo", "Tx: $char -> ${data.toHex()}")
+        val sensitive = sensitiveHandshake || service == AUTH_SERVICE
+        if (!sensitive) Log.d("ScooterRepo", "Tx: $char -> ${data.toHex()}")
         
         // Log to CSV
         val serviceName = when (service) {
@@ -1793,7 +1806,7 @@ class ScooterRepository private constructor(
             AUTH_AVDTP -> "AVDTP"
             else -> char.toString().takeLast(8)
         }
-        logger.logBle("TX", "WRITE", serviceName, charName, data, "")
+        if (!sensitive) logger.logBle("TX", "WRITE", serviceName, charName, data, "")
         
         val gatt = activeGatt
         if (gatt != null) {
@@ -1859,7 +1872,7 @@ class ScooterRepository private constructor(
             framesRead++
         }
         
-        Log.d("ScooterRepo", "MiParcel read complete: ${buffer.toByteArray().toHex()}")
+        Log.d("ScooterRepo", "MiParcel read complete (${buffer.size()} bytes)")
         
         // Ack (RCV_OK)
         writeChar(AUTH_SERVICE, AUTH_AVDTP, byteArrayOf(0x00, 0x00, 0x01, 0x00))

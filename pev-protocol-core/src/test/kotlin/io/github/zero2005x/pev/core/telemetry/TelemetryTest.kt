@@ -1,4 +1,4 @@
-﻿package io.github.zero2005x.pev.core.telemetry
+package io.github.zero2005x.pev.core.telemetry
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -54,7 +54,7 @@ class TelemetryTest {
     fun currentsAndTemperaturesAreDistinctFields() {
         val names = FieldId.entries.map { it.name }
         assertTrue("PHASE_CURRENT" in names && "BATTERY_CURRENT" in names)
-        assertEquals(4, names.count { it.startsWith("TEMP_") })
+        assertEquals(5, names.count { it.startsWith("TEMP_") })
         assertEquals(PhysUnit.AMP, FieldId.PHASE_CURRENT.unit)
     }
 }

@@ -24,6 +24,8 @@ enum class FieldId(val unit: PhysUnit) {
     TEMP_MOSFET(PhysUnit.CELSIUS),
     TEMP_MOTOR(PhysUnit.CELSIUS),
     TEMP_BATTERY(PhysUnit.CELSIUS),
+    /** Frame/board temperature as labelled by the vendor register (e.g. Xiaomi BB); not an IMU/MOS reading. */
+    TEMP_FRAME(PhysUnit.CELSIUS),
     TRIP_DISTANCE_M(PhysUnit.METER),
     TOTAL_DISTANCE_M(PhysUnit.METER),
     TRIP_TIME_S(PhysUnit.SECOND),

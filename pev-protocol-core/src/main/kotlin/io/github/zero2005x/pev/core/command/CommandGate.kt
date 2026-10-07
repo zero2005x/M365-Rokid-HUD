@@ -6,20 +6,35 @@ import io.github.zero2005x.pev.core.telemetry.FieldId
 import io.github.zero2005x.pev.core.telemetry.TelemetrySnapshot
 
 /** Per-device, per-session write consent. Bound to one profile key; any identity change revokes it. */
-class WriteSession(val deviceId: String, val authenticated: Boolean) {
+class WriteSession(val deviceId: String, val connectionId: String, val authenticated: Boolean) {
     var experimentalProfileKey: String? = null
         private set
+    private var observedProfileKey: String? = null
 
-    /** Owner explicitly opts in for exactly this profile in this session. */
+    /** Called on every identity observation; returning to an old identity never restores consent. */
+    @Synchronized
+    fun observeIdentity(identity: DeviceIdentity) {
+        val key = identity.profileKey
+        if (observedProfileKey != null && observedProfileKey != key) experimentalProfileKey = null
+        observedProfileKey = key
+    }
+
+    @Synchronized
     fun enableExperimental(identity: DeviceIdentity) {
+        observeIdentity(identity)
         experimentalProfileKey = identity.profileKey
     }
 
+    @Synchronized
     fun revokeExperimental() {
         experimentalProfileKey = null
     }
 
-    fun experimentalFor(identity: DeviceIdentity): Boolean = experimentalProfileKey == identity.profileKey
+    @Synchronized
+    fun experimentalFor(identity: DeviceIdentity): Boolean {
+        observeIdentity(identity)
+        return experimentalProfileKey == identity.profileKey
+    }
 }
 
 sealed interface GateDecision {
@@ -34,6 +49,10 @@ sealed interface GateDecision {
  * requirement, nothing else.
  */
 class CommandGate(private val maxSpeedAgeMs: Long = 2_000, private val standstillKmh: Double = 0.5) {
+    init {
+        require(maxSpeedAgeMs >= 0) { "speed age must be nonnegative" }
+        require(standstillKmh.isFinite() && standstillKmh >= 0) { "standstill threshold must be finite and nonnegative" }
+    }
     fun evaluate(
         spec: CommandSpec,
         identity: DeviceIdentity,
@@ -41,8 +60,11 @@ class CommandGate(private val maxSpeedAgeMs: Long = 2_000, private val standstil
         params: Map<String, Double>,
         telemetry: TelemetrySnapshot,
         nowMs: Long,
-    ): GateDecision = firstDenial(spec, identity, session, params, telemetry, nowMs)
-        ?.let { GateDecision.Denied(it) } ?: GateDecision.Allowed
+    ): GateDecision {
+        session.observeIdentity(identity)
+        return firstDenial(spec, identity, session, params, telemetry, nowMs)
+            ?.let { GateDecision.Denied(it) } ?: GateDecision.Allowed
+    }
 
     private fun firstDenial(
         spec: CommandSpec,
@@ -53,12 +75,16 @@ class CommandGate(private val maxSpeedAgeMs: Long = 2_000, private val standstil
         nowMs: Long,
     ): String? = when {
         !session.authenticated -> "session not authenticated"
+        sourceEvidenceIncomplete(spec) -> "command source evidence incomplete"
         !identity.isExact -> "profile not exactly identified"
         !inScope(spec, identity) -> "model/firmware outside command scope"
         spec.evidence != Evidence.VEHICLE_VERIFIED && !session.experimentalFor(identity) ->
             "unverified command requires per-session experimental opt-in"
         else -> paramDenial(spec, params) ?: standstillDenial(spec, telemetry, nowMs)
     }
+
+    private fun sourceEvidenceIncomplete(spec: CommandSpec): Boolean =
+        spec.evidence == Evidence.SYNTHETIC || spec.sourceRefs.isEmpty() || spec.sourceRefs.any { it.isBlank() }
 
     private fun inScope(spec: CommandSpec, id: DeviceIdentity): Boolean {
         val s = spec.scope
@@ -73,8 +99,12 @@ class CommandGate(private val maxSpeedAgeMs: Long = 2_000, private val standstil
 
     private fun standstillDenial(spec: CommandSpec, t: TelemetrySnapshot, nowMs: Long): String? {
         if (!spec.affectsRiding) return null
-        val speed = t.aged(nowMs, maxSpeedAgeMs).usableValue(FieldId.SPEED_KMH)
-            ?: return "speed unknown or stale; riding-affecting command refused"
+        val reading = t[FieldId.SPEED_KMH]
+        val at = reading.observedAtMs ?: return "speed unknown or stale; timestamp missing"
+        val speed = reading.value
+        if (!reading.usable || speed == null || !speed.isFinite() || at < 0 || nowMs < at ||
+            nowMs - at > maxSpeedAgeMs || reading.evidence !in setOf(Evidence.WIRE_CAPTURED, Evidence.VEHICLE_VERIFIED) || reading.source.isNullOrBlank()
+        ) return "speed unknown or stale; trusted stationary evidence required"
         return if (kotlin.math.abs(speed) > standstillKmh) "vehicle not at standstill" else null
     }
 }

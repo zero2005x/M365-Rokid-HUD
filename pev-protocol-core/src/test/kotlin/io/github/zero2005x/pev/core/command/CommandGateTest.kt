@@ -1,4 +1,4 @@
-﻿package io.github.zero2005x.pev.core.command
+package io.github.zero2005x.pev.core.command
 
 import io.github.zero2005x.pev.core.identity.DeviceIdentity
 import io.github.zero2005x.pev.core.identity.Family
@@ -15,7 +15,7 @@ import org.junit.Test
 class CommandGateTest {
     private val gate = CommandGate()
     private val id = DeviceIdentity(Family.BEGODE, "A2", "fw1", source = IdentitySource.USER_SELECTED)
-    private val still = TelemetrySnapshot(mapOf(FieldId.SPEED_KMH to Reading.valid(0.0, 1_000, Evidence.SYNTHETIC)))
+    private val still = TelemetrySnapshot(mapOf(FieldId.SPEED_KMH to Reading.valid(0.0, 1_000, Evidence.WIRE_CAPTURED, "capture:stationary")))
 
     private fun spec(evidence: Evidence = Evidence.VENDOR_STATIC, riding: Boolean = true, fw: Set<String> = emptySet()) =
         CommandSpec(
@@ -25,7 +25,7 @@ class CommandGateTest {
         )
 
     private fun session(auth: Boolean = true, exp: Boolean = true) =
-        WriteSession("dev", auth).also { if (exp) it.enableExperimental(id) }
+        WriteSession("dev", "connection1", auth).also { if (exp) it.enableExperimental(id) }
 
     private fun eval(
         s: CommandSpec = spec(),
@@ -92,8 +92,57 @@ class CommandGateTest {
 
     @Test
     fun movingBlocksRidingCommandsButNotCosmeticOnes() {
-        val moving = TelemetrySnapshot(mapOf(FieldId.SPEED_KMH to Reading.valid(-5.0, 1_000, Evidence.SYNTHETIC)))
+        val moving = TelemetrySnapshot(mapOf(FieldId.SPEED_KMH to Reading.valid(-5.0, 1_000, Evidence.WIRE_CAPTURED, "capture:moving")))
         assertTrue("standstill" in denied(eval(t = moving)))
         assertEquals(GateDecision.Allowed, eval(s = spec(riding = false), t = moving))
     }
+    @Test
+    fun returningToOldProfileDoesNotRestoreConsent() {
+        val ws = session()
+        eval(i = id.copy(firmware = "fw9"), ws = ws)
+        assertTrue("opt-in" in denied(eval(ws = ws)))
+    }
+
+    @Test
+    fun packAndSelectionSourceChangesRevokeConsent() {
+        val ws = session()
+        eval(i = id.copy(packParams = mapOf("cells" to "20")), ws = ws)
+        assertTrue("opt-in" in denied(eval(ws = ws)))
+        val sourceSession = session()
+        eval(i = id.copy(source = IdentitySource.IN_BAND_QUERY), ws = sourceSession)
+        assertTrue("opt-in" in denied(eval(ws = sourceSession)))
+    }
+
+    @Test
+    fun syntheticCommandsAndMissingSourcesCannotBeOptedIn() {
+        assertTrue("evidence" in denied(eval(s = spec(Evidence.SYNTHETIC))))
+        assertTrue("evidence" in denied(eval(s = spec().copy(sourceRefs = emptyList()))))
+    }
+
+    @Test
+    fun speedRequiresTimestampSourceAndObservedPhysicalEvidence() {
+        val r = still[FieldId.SPEED_KMH]
+        val invalid = listOf(r.copy(observedAtMs = null), r.copy(observedAtMs = 1_501),
+            r.copy(source = null), r.copy(evidence = Evidence.SYNTHETIC),
+            r.copy(evidence = Evidence.VENDOR_STATIC), r.copy(value = Double.NaN))
+        invalid.forEach { assertTrue("unknown" in denied(eval(t = TelemetrySnapshot(mapOf(FieldId.SPEED_KMH to it))))) }
+    }
+
+    @Test fun invalidGateConfigurationRejected() {
+        for (config in listOf(-1L to 0.5, 0L to -0.5, 0L to Double.NaN, 0L to Double.POSITIVE_INFINITY)) {
+            try { CommandGate(config.first, config.second); throw AssertionError("invalid safety configuration accepted") }
+            catch (_: IllegalArgumentException) { /* constructor refused it */ }
+        }
+    }
+
+    @Test fun blankSourcesInvalidSpeedAndLowerParameterBoundAreRejected() {
+        assertTrue("evidence" in denied(eval(s = spec().copy(sourceRefs = listOf(" ")))))
+        assertTrue("range" in denied(eval(p = mapOf("kmh" to -1.0))))
+        val r = still[FieldId.SPEED_KMH]
+        for (invalid in listOf(r.copy(value = null), r.copy(state = io.github.zero2005x.pev.core.telemetry.FieldState.STALE),
+            r.copy(observedAtMs = -1), r.copy(source = ""))) {
+            assertTrue("unknown" in denied(eval(t = TelemetrySnapshot(mapOf(FieldId.SPEED_KMH to invalid)))))
+        }
+    }
+
 }

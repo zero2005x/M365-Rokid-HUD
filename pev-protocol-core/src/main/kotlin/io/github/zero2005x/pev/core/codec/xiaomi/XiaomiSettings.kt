@@ -1,6 +1,7 @@
 package io.github.zero2005x.pev.core.codec.xiaomi
 
 import io.github.zero2005x.pev.core.command.CommandPlan
+import io.github.zero2005x.pev.core.command.CommandBinding
 import io.github.zero2005x.pev.core.command.CommandScope
 import io.github.zero2005x.pev.core.command.CommandSpec
 import io.github.zero2005x.pev.core.command.ConfirmKind
@@ -10,6 +11,7 @@ import io.github.zero2005x.pev.core.command.RetryPolicy
 import io.github.zero2005x.pev.core.command.WriteStep
 import io.github.zero2005x.pev.core.identity.Family
 import io.github.zero2005x.pev.core.telemetry.Evidence
+import io.github.zero2005x.pev.core.telemetry.FieldState
 
 /**
  * Byte order used when *writing* the `0x7D` status word. Reads are little-endian in every
@@ -24,6 +26,12 @@ sealed interface PlanResult {
     data class Refused(val reason: String) : PlanResult
 }
 
+/** App attaches the device/session/profile of the actual read; fresh words cannot cross sessions. */
+data class XiaomiStatusWordObservation(
+    val reading: XiaomiRegisterValue<XiaomiEscDecoder.StatusWord>,
+    val binding: CommandBinding,
+)
+
 /**
  * Reversible M365 settings: KERS level, cruise, tail-light-always-on, display units.
  * Every command reads back. Status-word writes are read-modify-write from a *fresh* word so
@@ -35,6 +43,7 @@ sealed interface PlanResult {
 object XiaomiSettings {
     const val TAIL_LIGHT_BIT = 1 shl 1
     const val MPH_BIT = 1 shl 4
+    const val STATUS_WORD_MAX_AGE_MS = 2_000L
     private const val FAMILY_MODELS = "M365"
 
     private val scope = CommandScope(Family.XIAOMI_SCOOTER, setOf(FAMILY_MODELS))
@@ -64,33 +73,63 @@ object XiaomiSettings {
 
     fun cruisePlan(on: Boolean): PlanResult = byteWrite(CRUISE, XiaomiPdu.REG_CRUISE, if (on) 1 else 0)
 
-    /** [currentWord] must be the word just read from 0x7D; null refuses (never assume 0). */
-    fun tailLightPlan(currentWord: Int?, on: Boolean, order: StatusWordWriteOrder): PlanResult =
-        wordWrite(TAIL_LIGHT, currentWord, TAIL_LIGHT_BIT, on, order)
+    /** A fresh timestamped read is required; the resulting plan expires with that read. */
+    fun tailLightPlan(currentWord: XiaomiStatusWordObservation?, on: Boolean,
+        order: StatusWordWriteOrder, nowMs: Long): PlanResult =
+        wordWrite(TAIL_LIGHT, currentWord, TAIL_LIGHT_BIT, on, order, nowMs)
 
-    fun unitsPlan(currentWord: Int?, mph: Boolean, order: StatusWordWriteOrder): PlanResult =
-        wordWrite(UNITS, currentWord, MPH_BIT, mph, order)
+    fun unitsPlan(currentWord: XiaomiStatusWordObservation?, mph: Boolean,
+        order: StatusWordWriteOrder, nowMs: Long): PlanResult =
+        wordWrite(UNITS, currentWord, MPH_BIT, mph, order, nowMs)
+
+    /** Pure compatibility encoding; this byte payload alone conveys no write authorization. */
+    fun statusWordPayload(currentWord: Int, bit: Int, set: Boolean, order: StatusWordWriteOrder): ByteArray {
+        require(currentWord in 0..0xFFFF) { "status word out of u16 range" }
+        require(bit == TAIL_LIGHT_BIT || bit == MPH_BIT) { "unknown setting bit" }
+        val word = if (set) currentWord or bit else currentWord and bit.inv()
+        val hi = (word ushr 8).toByte()
+        val lo = word.toByte()
+        return if (order == StatusWordWriteOrder.BIG_ENDIAN) byteArrayOf(hi, lo) else byteArrayOf(lo, hi)
+    }
 
     private fun byteWrite(spec: CommandSpec, register: Int, value: Int): PlanResult {
         val payload = byteArrayOf(value.toByte(), 0x00)
         val readback = ReadbackSpec(XiaomiPdu.read(register, payload.size)) { raw ->
-            XiaomiReply.parse(raw)?.let { it.register == register && Le.u8(it.data, 0) == value } == true
+            XiaomiReply.parse(raw)?.let {
+                it.direction == 0x23 && it.type == XiaomiPdu.CMD_READ && it.register == register &&
+                    it.data.size == 2 && Le.u16(it.data, 0) == value
+            } == true
         }
-        return PlanResult.Ok(CommandPlan(spec, listOf(WriteStep(XiaomiPdu.write(register, payload))), readback))
+        return PlanResult.Ok(CommandPlan(spec, listOf(WriteStep(XiaomiPdu.write(register, payload))), readback,
+            parameterValues = mapOf(spec.params.single().name to value.toDouble())))
     }
 
-    private fun wordWrite(spec: CommandSpec, current: Int?, bit: Int, set: Boolean, order: StatusWordWriteOrder): PlanResult {
-        if (current == null) return PlanResult.Refused("fresh 0x7D word required for read-modify-write")
+    private fun wordWrite(spec: CommandSpec, observation: XiaomiStatusWordObservation?,
+        bit: Int, set: Boolean, order: StatusWordWriteOrder, nowMs: Long): PlanResult {
+        if (!freshWord(observation?.reading, nowMs)) return PlanResult.Refused("fresh 0x7D word required for read-modify-write")
+        val read = requireNotNull(observation)
+        val current = requireNotNull(read.reading.value).raw
         if (current !in 0..0xFFFF) return PlanResult.Refused("status word out of u16 range")
         val word = if (set) current or bit else current and bit.inv()
-        val hi = (word ushr 8).toByte()
-        val lo = word.toByte()
-        val payload = if (order == StatusWordWriteOrder.BIG_ENDIAN) byteArrayOf(hi, lo) else byteArrayOf(lo, hi)
+        val payload = statusWordPayload(current, bit, set, order)
         val register = XiaomiPdu.REG_STATUS_WORD
         // Read-back is always little-endian: the stored word must equal the intended word.
         val readback = ReadbackSpec(XiaomiPdu.read(register, 2)) { raw ->
-            XiaomiReply.parse(raw)?.let { it.register == register && Le.u16(it.data, 0) == word } == true
+            XiaomiReply.parse(raw)?.let {
+                it.direction == 0x23 && it.type == XiaomiPdu.CMD_READ && it.register == register &&
+                    it.data.size == 2 && Le.u16(it.data, 0) == word
+            } == true
         }
-        return PlanResult.Ok(CommandPlan(spec, listOf(WriteStep(XiaomiPdu.write(register, payload))), readback))
+        return PlanResult.Ok(CommandPlan(spec, listOf(WriteStep(XiaomiPdu.write(register, payload))), readback,
+            parameterValues = mapOf(spec.params.single().name to if (set) 1.0 else 0.0),
+            validUntilMs = read.reading.observedAtMs + STATUS_WORD_MAX_AGE_MS, binding = read.binding,
+            validFromMs = read.reading.observedAtMs))
     }
+
+    private fun freshWord(observation: XiaomiRegisterValue<XiaomiEscDecoder.StatusWord>?, nowMs: Long): Boolean =
+        observation != null && observation.value != null && observation.state == FieldState.VALID &&
+            observation.evidence != Evidence.SYNTHETIC && observation.source == "xiaomi.M365.ESC.7d" &&
+            observation.observedAtMs >= 0 && observation.observedAtMs <= nowMs &&
+            nowMs - observation.observedAtMs <= STATUS_WORD_MAX_AGE_MS &&
+            observation.observedAtMs <= Long.MAX_VALUE - STATUS_WORD_MAX_AGE_MS
 }

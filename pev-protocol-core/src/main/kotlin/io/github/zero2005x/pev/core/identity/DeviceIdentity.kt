@@ -20,9 +20,13 @@ data class DeviceIdentity(
 ) {
     /** Exact-model profile is only known when a model was established beyond a GATT hint. */
     val isExact: Boolean
-        get() = family != Family.UNKNOWN && model != null && source != IdentitySource.GATT_HINT
+        get() = family != Family.UNKNOWN && !model.isNullOrBlank() && source != IdentitySource.GATT_HINT
 
     /** Stable key used to bind write-session consent; any change revokes it. */
     val profileKey: String
-        get() = listOf(family.name, model, firmware, board).joinToString("|") { it ?: "?" }
+        get() {
+            val parts = listOf(family.name, model, firmware, board, source.name) +
+                packParams.toSortedMap().flatMap { listOf(it.key, it.value) }
+            return parts.joinToString("|") { value -> value?.let { "${it.length}:$it" } ?: "-" }
+        }
 }

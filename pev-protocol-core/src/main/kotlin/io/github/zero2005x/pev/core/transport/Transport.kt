@@ -1,17 +1,31 @@
 package io.github.zero2005x.pev.core.transport
 
-/**
- * Minimal BLE-agnostic transport. Implemented in the app layer (GATT); the core only
- * sees bytes. Blocking by design so the single write coordinator stays trivially ordered.
- */
+/** One notify event, tagged by the connection and monotonically increasing receive cursor. */
+class TransportNotification(val sequence: Long, val connectionId: String, bytes: ByteArray) {
+    private val payload = bytes.copyOf()
+    val bytes: ByteArray get() = payload.copyOf()
+}
+
+/** App-layer transport; every reconnect must allocate a new opaque connectionId. */
 interface PevTransport {
     val mtu: Int
+    val connected: Boolean
+    val deviceId: String
+    val connectionId: String
+    val notificationSequence: Long
 
-    /** Writes one packet; false on a write failure or disconnect. */
+    /** False means submission failed; it is not a vehicle acknowledgment. */
     fun write(bytes: ByteArray): Boolean
 
-    /** Waits for the next notification or returns null on timeout/disconnect. */
+    /**
+     * Atomically bind the current GATT/session before encryption and submission.
+     * Refuse if its connectionId differs; never re-resolve another GATT after this check.
+     */
+    fun writeForConnection(bytes: ByteArray, expectedConnectionId: String): Boolean
+
+    /** Raw consumer API; this must not be used as command confirmation. */
     fun awaitNotify(timeoutMs: Long): ByteArray?
 
-    val connected: Boolean
+    /** Return only notifications received after the cursor, never buffered earlier replies. */
+    fun awaitNotifyAfter(timeoutMs: Long, afterSequence: Long): TransportNotification?
 }

@@ -57,7 +57,7 @@ internal object Le {
     fun u8(d: ByteArray, o: Int): Int? = if (o in d.indices) d[o].toInt() and 0xFF else null
 
     fun u16(d: ByteArray, o: Int): Int? =
-        if (o >= 0 && o + 2 <= d.size) (d[o].toInt() and 0xFF) or ((d[o + 1].toInt() and 0xFF) shl 8) else null
+        if (o >= 0 && o <= d.size - 2) (d[o].toInt() and 0xFF) or ((d[o + 1].toInt() and 0xFF) shl 8) else null
 
     fun i16(d: ByteArray, o: Int): Int? = u16(d, o)?.let { if (it >= 0x8000) it - 0x10000 else it }
 

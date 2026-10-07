@@ -171,24 +171,8 @@ object BondJson {
                     var count = 0
                     parser.array {
                         require(++count <= 64)
-                        var mac: String? = null; var family: String? = null; var hex: CharArray? = null
-                        var label: String? = null; var model: String? = null
-                        try {
-                            parser.obj { key -> when(key) {
-                                "mac" -> mac = parser.string(); "family" -> family = parser.string()
-                                "credentialHex" -> { hex?.fill('\u0000'); hex = parser.stringChars() }
-                                "label" -> label = parser.string(); "model" -> model = parser.string()
-                                else -> parser.skip()
-                            } }
-                            val address = requireNotNull(mac)
-                            require(address.matches(Regex("([0-9A-F]{2}:){5}[0-9A-F]{2}")) && addresses.add(address))
-                            BondEntry.validateText(label); BondEntry.validateText(model)
-                            val kind = BondFamily.entries.firstOrNull { it.id == requireNotNull(family) }
-                            val credential = requireNotNull(hex)
-                            require(credential.isNotEmpty() && credential.size % 2 == 0 && credential.all { it in '0'..'9' || it.lowercaseChar() in 'a'..'f' })
-                            if (kind == null) skipped++
-                            else entries.add(BondEntry(address, kind, BondInput.hex(credential, kind.bytes), label, model))
-                        } finally { hex?.fill('\u0000') }
+                        val entry = decodeEntry(parser, addresses)
+                        if (entry == null) skipped++ else entries.add(entry)
                     }
                 }
                 else -> parser.skip()
@@ -198,6 +182,28 @@ object BondJson {
             return BondDocument(entries, skipped)
         } catch (e: Exception) { entries.forEach { it.close() }; throw e }
         finally { chars.fill('\u0000') }
+    }
+    private fun decodeEntry(parser: Parser, addresses: MutableSet<String>): BondEntry? {
+        var mac: String? = null; var family: String? = null; var hex: CharArray? = null
+        var label: String? = null; var model: String? = null
+        try {
+            parser.obj { key -> when (key) {
+                "mac" -> mac = parser.string()
+                "family" -> family = parser.string()
+                "credentialHex" -> { hex?.fill('\u0000'); hex = parser.stringChars() }
+                "label" -> label = parser.string()
+                "model" -> model = parser.string()
+                else -> parser.skip()
+            } }
+            val address = requireNotNull(mac)
+            require(address.matches(Regex("([0-9A-F]{2}:){5}[0-9A-F]{2}")) && addresses.add(address))
+            BondEntry.validateText(label); BondEntry.validateText(model)
+            val familyId = requireNotNull(family)
+            val kind = BondFamily.entries.firstOrNull { it.id == familyId }
+            val credential = requireNotNull(hex)
+            require(credential.isNotEmpty() && credential.size % 2 == 0 && credential.all { it in '0'..'9' || it.lowercaseChar() in 'a'..'f' })
+            return kind?.let { BondEntry(address, it, BondInput.hex(credential, it.bytes), label, model) }
+        } finally { hex?.fill('\u0000') }
     }
     private class Parser(private val chars: CharArray, private val length: Int) {
         private var p = 0

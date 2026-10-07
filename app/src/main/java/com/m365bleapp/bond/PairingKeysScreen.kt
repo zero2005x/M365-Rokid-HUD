@@ -4,6 +4,9 @@ import android.app.Activity
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.content.res.Resources
+import android.net.Uri
 import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
 import android.os.CancellationSignal
@@ -43,6 +46,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.m365bleapp.R
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,69 +90,58 @@ private class BondScreenSession : AutoCloseable {
     @Synchronized override fun close() { closed = true; signal?.cancel(); clear() }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val resources = LocalResources.current
-    val macDescription = stringResource(R.string.pairing_mac)
-    val labelDescription = stringResource(R.string.bond_label)
+private enum class BondTransferMode { IMPORT, EXPORT }
+
+/** State and operations are separate from the Compose rendering functions. */
+private class BondScreenState(
+    val store: BondStore,
+    val context: Context,
+    var resources: Resources,
+    val scope: CoroutineScope,
+) {
     val activity = context.activity()
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val scope = rememberCoroutineScope()
-    val session = remember { BondScreenSession() }
-    val keyguard = remember { context.getSystemService(KeyguardManager::class.java) }
-    var entries by remember { mutableStateOf(emptyList<BondSummary>()) }
-    var selected by remember { mutableStateOf(emptySet<String>()) }
-    var preview by remember { mutableStateOf<List<BondSummary>?>(null) }
-    var importSelected by remember { mutableStateOf(emptySet<String>()) }
-    var replace by remember { mutableStateOf(emptySet<String>()) }
-    var skipped by remember { mutableIntStateOf(0) }
-    var passwordDialog by remember { mutableStateOf<String?>(null) }
-    var password by remember { mutableStateOf("") }
-    var confirm by remember { mutableStateOf("") }
-    var manual by remember { mutableStateOf(false) }
-    var mac by remember { mutableStateOf("") }
-    var credential by remember { mutableStateOf("") }
-    var label by remember { mutableStateOf("") }
-    var family by remember { mutableStateOf(BondFamily.XIAOMI) }
-    var manualConflict by remember { mutableStateOf(false) }
-    var deleteMac by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var dialogError by remember { mutableStateOf<String?>(null) }
-    var authenticating by remember { mutableStateOf(false) }
+    val session = BondScreenSession()
+    val keyguard = context.getSystemService(KeyguardManager::class.java)
+    var createDocument: (String) -> Unit = {}
+    var openDocument: () -> Unit = {}
+    var authenticateLegacy: (Intent) -> Unit = {}
+    var entries by mutableStateOf(emptyList<BondSummary>())
+    var selected by mutableStateOf(emptySet<String>())
+    var preview by mutableStateOf<List<BondSummary>?>(null)
+    var importSelected by mutableStateOf(emptySet<String>())
+    var replace by mutableStateOf(emptySet<String>())
+    var skipped by mutableIntStateOf(0)
+    var passphraseMode by mutableStateOf<BondTransferMode?>(null)
+    var password by mutableStateOf("")
+    var confirm by mutableStateOf("")
+    var manual by mutableStateOf(false)
+    var mac by mutableStateOf("")
+    var credential by mutableStateOf("")
+    var label by mutableStateOf("")
+    var family by mutableStateOf(BondFamily.XIAOMI)
+    var manualConflict by mutableStateOf(false)
+    var deleteMac by mutableStateOf<String?>(null)
+    var busy by mutableStateOf(false)
+    var message by mutableStateOf<String?>(null)
+    var dialogError by mutableStateOf<String?>(null)
+    var authenticating by mutableStateOf(false)
 
     fun reset() {
         password = ""; confirm = ""; credential = ""; mac = ""; label = ""
-        passwordDialog = null; manual = false; manualConflict = false; preview = null; dialogError = null
+        passphraseMode = null; manual = false; manualConflict = false; preview = null; dialogError = null
         session.clear()
     }
     suspend fun refresh() {
         entries = withContext(Dispatchers.IO) { store.list() }
         selected = entries.map { it.mac }.toSet()
     }
-    DisposableEffect(activity, lifecycle) {
-        val secure = WindowManager.LayoutParams.FLAG_SECURE
-        activity?.window?.addFlags(secure)
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) activity?.window?.addFlags(secure)
-        }
-        lifecycle.addObserver(observer)
-        onDispose {
-            lifecycle.removeObserver(observer)
-            session.close()
-            password = ""; confirm = ""; credential = ""; mac = ""; label = ""
-            activity?.window?.clearFlags(secure)
-        }
-    }
-    LaunchedEffect(store) {
+    suspend fun load() {
         busy = true
         try { withContext(Dispatchers.IO) { store.migrateXiaomi() }; refresh() }
         catch (_: Exception) { message = resources.getString(R.string.pairing_operation_failed) }
         finally { busy = false }
     }
-    val create = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+    fun writeDocument(uri: Uri?) {
         val bytes = session.takeSealed()
         if (uri == null || bytes == null) { bytes?.let { session.release(it) }; session.permit.clear() }
         else {
@@ -162,13 +155,13 @@ fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
             }
         }
     }
-    val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    fun readDocument(uri: Uri?) {
         if (uri != null) {
             reset(); busy = true
             scope.launch {
                 try {
                     withContext(Dispatchers.IO) { session.source(BondFiles.read(context, uri)) }
-                    passwordDialog = "import"
+                    passphraseMode = BondTransferMode.IMPORT
                 } catch (e: Exception) {
                     message = resources.getString(if (e is UnsupportedBondBackup || uri.scheme != "content")
                         R.string.bond_invalid_file else R.string.bond_wrong_password_or_damage)
@@ -181,11 +174,8 @@ fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
     fun confirmed() {
         authenticating = false
         if (keyguard?.isDeviceSecure == true) {
-            session.permit.grant(true); passwordDialog = "export"; dialogError = null
+            session.permit.grant(true); passphraseMode = BondTransferMode.EXPORT; dialogError = null
         } else message = resources.getString(R.string.bond_screen_lock_required)
-    }
-    val deviceAuth = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) confirmed() else authenticating = false
     }
     fun authenticate() {
         if (selected.isEmpty()) { message = resources.getString(R.string.bond_select_one); return }
@@ -198,7 +188,7 @@ fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
                 @Suppress("DEPRECATION")
                 val intent = keyguard.createConfirmDeviceCredentialIntent(resources.getString(R.string.bond_auth_title), null)
                 if (intent == null) { authenticating = false; message = resources.getString(R.string.bond_screen_lock_required) }
-                else deviceAuth.launch(intent)
+                else authenticateLegacy(intent)
             } else {
                 val builder = BiometricPrompt.Builder(context).setTitle(resources.getString(R.string.bond_auth_title))
                 if (Build.VERSION.SDK_INT >= 30) builder.setAllowedAuthenticators(
@@ -213,26 +203,14 @@ fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
             }
         } catch (_: Exception) { authenticating = false; message = resources.getString(R.string.pairing_operation_failed) }
     }
-    fun savePreview(choices: Set<String>, replacements: Set<String>, manualEntry: Boolean = false) {
+    fun savePreview(choices: Set<String>, replacements: Set<String>) {
         val document = session.entriesCopy()
         busy = true
         scope.launch {
             try {
-                val result = withContext(Dispatchers.IO) { document.use { doc ->
-                    if (!manualEntry) store.importEntries(doc.entries, choices, replacements)
-                    else synchronized(store) {
-                        val entry = doc.entries.single()
-                        val exists = store.list().any { it.mac == entry.mac }
-                        if (exists && entry.mac !in replacements) ImportResult(0, 0, 1)
-                        else {
-                            when (entry.family) {
-                                BondFamily.XIAOMI -> store.putXiaomi(entry.mac, entry.credential, entry.label, entry.model)
-                                BondFamily.NINEBOT -> store.putNinebot(entry.mac, entry.credential, entry.label, entry.model)
-                            }
-                            if (exists) ImportResult(0, 1, 0) else ImportResult(1, 0, 0)
-                        }
-                    }
-                } }
+                val result = withContext(Dispatchers.IO) {
+                    document.use { doc -> store.importEntries(doc.entries, choices, replacements) }
+                }
                 reset(); refresh()
                 message = resources.getString(R.string.bond_import_result, result.added, result.replaced, result.kept)
             } catch (_: Exception) { message = resources.getString(R.string.pairing_operation_failed) }
@@ -240,6 +218,134 @@ fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
         }
     }
 
+    fun submitPassphrase(mode: BondTransferMode) {
+        val pass = password.toCharArray()
+        val confirmation = confirm.toCharArray()
+        try {
+            if (mode == BondTransferMode.EXPORT && !BondInput.passwords(pass, confirmation)) {
+                pass.fill('\u0000')
+                dialogError = resources.getString(R.string.bond_password_invalid)
+                return
+            }
+            if (mode == BondTransferMode.EXPORT && !session.permit.valid()) {
+                pass.fill('\u0000'); reset()
+                message = resources.getString(R.string.bond_export_expired_or_failed)
+                return
+            }
+        } finally { confirmation.fill('\u0000') }
+        session.hold(pass); password = ""; confirm = ""; busy = true
+        val choices = selected.toSet()
+        scope.launch {
+            try {
+                when (mode) {
+                    BondTransferMode.EXPORT -> sealExport(choices, pass)
+                    BondTransferMode.IMPORT -> openImport(pass)
+                }
+            } catch (_: Exception) {
+                transferFailed(mode)
+            } finally { session.release(pass); busy = false }
+        }
+    }
+    private suspend fun sealExport(choices: Set<String>, pass: CharArray) {
+        withContext(Dispatchers.Default) {
+            store.export(choices).use { document ->
+                require(document.entries.isNotEmpty())
+                session.sealed(BondEnvelope.seal(document.entries, pass))
+            }
+        }
+        check(session.permit.valid())
+        passphraseMode = null
+        createDocument("m365-bonds-${LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)}.rfbond")
+    }
+    private suspend fun openImport(pass: CharArray) {
+        withContext(Dispatchers.Default) {
+            val file = session.sourceCopy()
+            try {
+                val doc = BondEnvelope.open(file, pass)
+                session.preview(doc)
+                preview = doc.entries.map { BondSummary(it.mac, it.family, it.label, it.model) }
+                skipped = doc.skipped
+            } finally { file.fill(0) }
+        }
+        importSelected = preview.orEmpty().map { it.mac }.toSet(); replace = emptySet()
+        passphraseMode = null
+    }
+    private fun transferFailed(mode: BondTransferMode) {
+        if (mode == BondTransferMode.IMPORT) {
+            dialogError = resources.getString(R.string.bond_wrong_password_or_damage)
+        } else {
+            reset(); message = resources.getString(R.string.bond_export_expired_or_failed)
+        }
+    }
+    fun submitManualEntry() {
+        val chars = credential.toCharArray()
+        var bytes: ByteArray? = null
+        try {
+            bytes = BondInput.hex(chars, family.bytes, manual = true)
+            val entry = BondEntry(BondInput.mac(mac), family, bytes, label.ifBlank { null })
+            bytes = null // Entry now owns it.
+            session.preview(BondDocument(listOf(entry))); credential = ""; manual = false
+            checkManualConflict(entry)
+        } catch (_: Exception) { dialogError = resources.getString(R.string.bond_manual_invalid) }
+        finally { chars.fill('\u0000'); bytes?.fill(0) }
+    }
+    private fun checkManualConflict(entry: BondEntry) {
+        busy = true
+        scope.launch {
+            try {
+                entries = withContext(Dispatchers.IO) { store.list() }
+                busy = false
+                if (entries.any { it.mac == entry.mac }) manualConflict = true
+                else savePreview(setOf(entry.mac), emptySet())
+            } catch (_: Exception) {
+                busy = false; reset(); message = resources.getString(R.string.pairing_operation_failed)
+            }
+        }
+    }
+
+}
+
+@Composable
+fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val resources = LocalResources.current
+    val scope = rememberCoroutineScope()
+    val state = remember(store, context) { BondScreenState(store, context, resources, scope) }
+    state.resources = resources
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(state, lifecycle) {
+        val secure = WindowManager.LayoutParams.FLAG_SECURE
+        state.activity?.window?.addFlags(secure)
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) state.activity?.window?.addFlags(secure)
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            state.session.close()
+            state.reset()
+            state.activity?.window?.clearFlags(secure)
+        }
+    }
+    LaunchedEffect(state) { state.load() }
+    val create = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream"), state::writeDocument)
+    val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument(), state::readDocument)
+    val deviceAuth = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) state.confirmed() else state.authenticating = false
+    }
+    state.createDocument = { create.launch(it) }
+    state.openDocument = { open.launch(arrayOf("application/octet-stream", "*/*")) }
+    state.authenticateLegacy = { deviceAuth.launch(it) }
+    state.Content(onBack)
+    state.PassphraseDialog()
+    state.ImportPreviewDialog()
+    state.ManualEntryDialog()
+    state.ReplacementDialog()
+    state.DeletionDialog()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun BondScreenState.Content(onBack: () -> Unit) {
     Scaffold(topBar = { TopAppBar(expandedHeight = 64.dp * LocalDensity.current.fontScale.coerceAtLeast(1f), title = { Text(stringResource(R.string.pairing_title),
         style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
         IconButton(onClick = { reset(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
@@ -267,68 +373,35 @@ fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
                 }
             }
             Button(modifier = Modifier.fillMaxWidth(), enabled = !busy && !authenticating && selected.isNotEmpty(), onClick = { authenticate() }) { Text(stringResource(R.string.pairing_export)) }
-            OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy && !authenticating, onClick = { open.launch(arrayOf("application/octet-stream", "*/*")) }) { Text(stringResource(R.string.pairing_import)) }
+            OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy && !authenticating, onClick = { openDocument() }) { Text(stringResource(R.string.pairing_import)) }
             OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy && !authenticating, onClick = { reset(); family = BondFamily.XIAOMI; manual = true }) { Text(stringResource(R.string.pairing_manual)) }
             if (busy || authenticating) CircularProgressIndicator()
             message?.let { Text(it) }
         }
     }
-    passwordDialog?.let { mode ->
+}
+
+@Composable private fun BondScreenState.PassphraseDialog() {
+    passphraseMode?.let { mode ->
         BondDialog(
-            onDismissRequest = { if (!busy) reset() }, title = { Text(stringResource(if (mode == "export") R.string.pairing_export else R.string.pairing_import), style = MaterialTheme.typography.titleLarge) },
+            onDismissRequest = { if (!busy) reset() }, title = { Text(stringResource(if (mode == BondTransferMode.EXPORT) R.string.pairing_export else R.string.pairing_import), style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (mode == "export") Text(stringResource(R.string.pairing_password_help))
+                    if (mode == BondTransferMode.EXPORT) Text(stringResource(R.string.pairing_password_help))
                     SecretField(password, { password = it }, R.string.pairing_password)
-                    if (mode == "export") SecretField(confirm, { confirm = it }, R.string.pairing_confirm_password)
+                    if (mode == BondTransferMode.EXPORT) SecretField(confirm, { confirm = it }, R.string.pairing_confirm_password)
                     dialogError?.let { Text(it) }
                 }
             }, confirmButton = {
                 TextButton(modifier = Modifier.fillMaxWidth(), enabled = !busy && password.isNotEmpty(), onClick = {
-                    val pass = password.toCharArray(); val confirmation = confirm.toCharArray()
-                    if (mode == "export" && !BondInput.passwords(pass, confirmation)) {
-                        pass.fill('\u0000'); confirmation.fill('\u0000')
-                        dialogError = resources.getString(R.string.bond_password_invalid)
-                    } else if (mode == "export" && !session.permit.valid()) {
-                        pass.fill('\u0000'); confirmation.fill('\u0000'); reset()
-                        message = resources.getString(R.string.bond_export_expired_or_failed)
-                    } else {
-                        confirmation.fill('\u0000'); session.hold(pass); password = ""; confirm = ""; busy = true
-                        val choices = selected.toSet()
-                        scope.launch {
-                            try {
-                                if (mode == "export") {
-                                    withContext(Dispatchers.Default) {
-                                        store.export(choices).use { document ->
-                                            require(document.entries.isNotEmpty())
-                                            session.sealed(BondEnvelope.seal(document.entries, pass))
-                                        }
-                                    }
-                                    check(session.permit.valid())
-                                    passwordDialog = null
-                                    create.launch("m365-bonds-${LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)}.rfbond")
-                                } else {
-                                    withContext(Dispatchers.Default) {
-                                        val file = session.sourceCopy()
-                                        try {
-                                            val doc = BondEnvelope.open(file, pass)
-                                            session.preview(doc)
-                                            preview = doc.entries.map { BondSummary(it.mac, it.family, it.label, it.model) }
-                                            skipped = doc.skipped
-                                        } finally { file.fill(0) }
-                                    }
-                                    importSelected = preview.orEmpty().map { it.mac }.toSet(); replace = emptySet()
-                                    passwordDialog = null
-                                }
-                            } catch (_: Exception) {
-                                if (mode == "import") dialogError = resources.getString(R.string.bond_wrong_password_or_damage)
-                                else { reset(); message = resources.getString(R.string.bond_export_expired_or_failed) }
-                            } finally { session.release(pass); busy = false }
-                        }
-                    }
+                    submitPassphrase(mode)
                 }) { Text(stringResource(R.string.pairing_save)) }
             }, dismissButton = { TextButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { reset() }) { Text(stringResource(R.string.cancel)) } })
     }
+
+}
+
+@Composable private fun BondScreenState.ImportPreviewDialog() {
     preview?.let { rows ->
         BondDialog(
             onDismissRequest = { if (!busy) reset() }, title = { Text(stringResource(R.string.bond_preview), style = MaterialTheme.typography.titleLarge) }, text = {
@@ -356,6 +429,12 @@ fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
         }, confirmButton = { TextButton(modifier = Modifier.fillMaxWidth(), enabled = !busy && importSelected.isNotEmpty(), onClick = { savePreview(importSelected, replace) }) { Text(stringResource(R.string.pairing_import)) } },
             dismissButton = { TextButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { reset() }) { Text(stringResource(R.string.cancel)) } })
     }
+
+}
+
+@Composable private fun BondScreenState.ManualEntryDialog() {
+    val macDescription = stringResource(R.string.pairing_mac)
+    val labelDescription = stringResource(R.string.bond_label)
     if (manual) {
         BondDialog(
             onDismissRequest = { if (!busy) reset() }, title = { Text(stringResource(R.string.pairing_manual), style = MaterialTheme.typography.titleLarge) }, text = {
@@ -379,34 +458,25 @@ fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
                 dialogError?.let { Text(it) }
             }
         }, confirmButton = { TextButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = {
-            val chars = credential.toCharArray()
-            var bytes: ByteArray? = null
-            try {
-                bytes = BondInput.hex(chars, family.bytes, manual = true)
-                val entry = BondEntry(BondInput.mac(mac), family, bytes, label.ifBlank { null })
-                bytes = null // Entry now owns it.
-                session.preview(BondDocument(listOf(entry))); credential = ""; manual = false
-                busy = true
-                scope.launch {
-                    try {
-                        entries = withContext(Dispatchers.IO) { store.list() }
-                        busy = false
-                        if (entries.any { it.mac == entry.mac }) manualConflict = true
-                        else savePreview(setOf(entry.mac), emptySet(), manualEntry = true)
-                    } catch (_: Exception) { busy = false; reset(); message = resources.getString(R.string.pairing_operation_failed) }
-                }
-            } catch (_: Exception) { dialogError = resources.getString(R.string.bond_manual_invalid) }
-            finally { chars.fill('\u0000'); bytes?.fill(0) }
+            submitManualEntry()
         }) { Text(stringResource(R.string.pairing_save)) } },
             dismissButton = { TextButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { reset() }) { Text(stringResource(R.string.cancel)) } })
     }
+
+}
+
+@Composable private fun BondScreenState.ReplacementDialog() {
     if (manualConflict) BondDialog(
         onDismissRequest = { if (!busy) reset() }, title = { Text(stringResource(R.string.pairing_replace_existing), style = MaterialTheme.typography.titleLarge) },
         text = { Text(stringResource(R.string.bond_replace_question)) },
         confirmButton = { TextButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = {
-            session.entriesCopy().use { doc -> val address = doc.entries.single().mac; savePreview(setOf(address), setOf(address), manualEntry = true) }
+            session.entriesCopy().use { doc -> val address = doc.entries.single().mac; savePreview(setOf(address), setOf(address)) }
         }) { Text(stringResource(R.string.pairing_replace_existing)) } },
         dismissButton = { TextButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { reset() }) { Text(stringResource(R.string.cancel)) } })
+
+}
+
+@Composable private fun BondScreenState.DeletionDialog() {
     deleteMac?.let { address -> BondDialog(
         onDismissRequest = { deleteMac = null }, title = { Text(stringResource(R.string.bond_delete), style = MaterialTheme.typography.titleLarge) },
         text = { Text(stringResource(R.string.bond_delete_question)) }, confirmButton = {
@@ -417,6 +487,7 @@ fun PairingKeysScreen(store: BondStore, onBack: () -> Unit) {
             } }) { Text(stringResource(R.string.bond_delete)) }
         }, dismissButton = { TextButton(modifier = Modifier.fillMaxWidth(), onClick = { deleteMac = null }) { Text(stringResource(R.string.cancel)) } }) }
 }
+
 
 @Composable private fun Summary(entry: BondSummary) {
     (entry.label?.takeIf { it.isNotBlank() } ?: entry.model)?.let {

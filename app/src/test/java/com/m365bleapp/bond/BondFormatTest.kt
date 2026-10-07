@@ -108,4 +108,41 @@ class BondFormatTest {
         }
     }
     @Test fun maskedAddressContainsOnlyLastTwoOctets() { entry().use { assertEquals("••:••:••:••:EE:FF", it.maskedMac) } }
+
+    @Test fun jsonEscapesAndUnknownNestedValuesRoundTrip() {
+        val label = "Quote \" slash \\ 滑板車"
+        BondEntry("AA:BB:CC:DD:EE:FF", BondFamily.XIAOMI, ByteArray(12), label, "Model").use { entry ->
+            BondJson.decode(BondJson.encode(listOf(entry), "2026-10-05T00:00:00Z")).use {
+                assertEquals(label, it.entries.single().label)
+                assertEquals("Model", it.entries.single().model)
+            }
+        }
+        val escaped = raw().dropLast(1) + ",\"label\":\"\\u0041\\/B\",\"future\":{\"empty\":{},\"list\":[[],false,-1.25e+2]}}"
+        BondJson.decode(json(escaped)).use { assertEquals("A/B", it.entries.single().label) }
+        BondJson.decode(json("")).use { assertTrue(it.entries.isEmpty()) }
+    }
+
+    @Test fun malformedJsonAndMissingFieldsAreRejected() {
+        val badEntries = listOf(
+            "{}", raw().replace("\"family\":\"xiaomi_mi\",", ""),
+            raw().replace("\"credentialHex\":\"000102030405060708090a0b\"", "\"other\":null"),
+            raw(hex = ""), raw(hex = "0"), raw(hex = "gg"),
+            raw().dropLast(1) + ",\"mac\":\"AA:BB:CC:DD:EE:FF\"}",
+            raw().dropLast(1) + ",\"label\":\"\\q\"}",
+            raw().dropLast(1) + ",\"label\":\"\\u00zz\"}",
+            raw().dropLast(1) + ",\"future\":invalid}",
+            raw().dropLast(1) + ",\"label\":\"unterminated}",
+        )
+        badEntries.forEach { assertThrows(Exception::class.java) { BondJson.decode(json(it)) } }
+        listOf(
+            "{}", "{\"schema\":\"rideflux-bond/v1\"}",
+            "{\"schema\":\"other\",\"createdAt\":\"2026-10-05T00:00:00Z\",\"entries\":[]}",
+            "{\"schema\":\"rideflux-bond/v1\",\"createdAt\":\"store\",\"entries\":[]}",
+        ).forEach { assertThrows(Exception::class.java) { BondJson.decode(it.toByteArray()) } }
+        reject { BondJson.decode(json(raw()) + "extra".toByteArray()) }
+        assertThrows(java.nio.charset.CharacterCodingException::class.java) {
+            BondJson.decode(byteArrayOf(0xc3.toByte(), 0x28))
+        }
+        reject { BondJson.decode(json(raw(), ",\"future\":" + "[".repeat(33) + "null" + "]".repeat(33))) }
+    }
 }

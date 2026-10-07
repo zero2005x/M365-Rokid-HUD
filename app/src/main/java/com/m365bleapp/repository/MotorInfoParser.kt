@@ -35,17 +35,18 @@ import java.nio.ByteOrder
 internal object MotorInfoParser {
 
     /**
-     * B5 values at or above this are the ESC saying "no speed estimate", not a
+     * B5 values at or above this are a *negative* signed speed (wheel creeping
+     * backwards, or the ESC's "no estimate" value just below `0xFFFF`), not a
      * speed.
      *
-     * When it has nothing to report the register is parked just below `0xFFFF`
-     * (observed `0xFF3E`..`0xFFF4` on hardware — 11 to 193 counts below the top).
-     * Read as unsigned that is ~65 km/h, which is *further* from the truth than
-     * the ~-0.1 km/h a signed read produces, so masking the sign is not enough on
-     * its own. No M365 reaches 65 km/h, so cutting at `0xFF00` separates the
-     * sentinel from every real reading with plenty of room either side.
+     * Hardware captures show the register is really an i16 in m/h whose
+     * small negative values (down to about -5 km/h: `0xEA76`, and 2026-10-07
+     * `0xF5xx`..`0xFEBx` = 62.9..65.2 read unsigned, with the odometer barely
+     * moving) are far more common than a genuine reading above 49 km/h, which no
+     * M365 reaches. Cutting at `0xC000` (49.152 km/h unsigned / -16.384 signed)
+     * leaves every real forward speed untouched.
      */
-    private const val NO_SPEED_RAW = 0xFF00
+    private const val NEGATIVE_SPEED_RAW = 0xC000
 
     fun parse(data: ByteArray, existing: MotorInfo? = null): MotorInfo? {
         if (data.size < 22) return null
@@ -86,6 +87,6 @@ internal object MotorInfoParser {
      */
     private fun decodeSpeed(bb: ByteBuffer): Double {
         val raw = bb.getShort(10).toInt() and 0xFFFF
-        return if (raw >= NO_SPEED_RAW) 0.0 else raw / 1000.0
+        return if (raw >= NEGATIVE_SPEED_RAW) 0.0 else raw / 1000.0
     }
 }

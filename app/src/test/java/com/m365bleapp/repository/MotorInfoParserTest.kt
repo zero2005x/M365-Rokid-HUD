@@ -84,7 +84,21 @@ class MotorInfoParserTest {
         // "-5 km/h" on the HUD while avgSpeed two fields over was masked correctly.
         assertEquals(32.768, MotorInfoParser.parse(withRawSpeed(0x8000))!!.speed, 0.00001)
         assertEquals(40.0, MotorInfoParser.parse(withRawSpeed(0x9C40))!!.speed, 0.00001)
-        assertEquals(60.022, MotorInfoParser.parse(withRawSpeed(0xEA76))!!.speed, 0.00001)
+        assertEquals(49.151, MotorInfoParser.parse(withRawSpeed(0xBFFF))!!.speed, 0.00001)
+    }
+
+    @Test
+    fun `small negative speeds read as zero rather than 60 plus km per hour`() {
+        // 2026-10-07 capture: 62.883..65.197 km/h unsigned with the odometer
+        // advancing ~2.7 km/h. 0xEA76 (-5.5 km/h) was the same thing seen earlier.
+        for (raw in intArrayOf(0xC000, 0xEA76, 0xF5C3, 0xF900, 0xFEAD)) {
+            assertEquals(
+                "raw 0x${raw.toString(16)} is a negative speed",
+                0.0,
+                MotorInfoParser.parse(withRawSpeed(raw))!!.speed,
+                0.00001
+            )
+        }
     }
 
     @Test
@@ -106,8 +120,8 @@ class MotorInfoParserTest {
     fun `the sentinel cut-off sits exactly at the documented constant`() {
         // Largest accepted value, then the first rejected one. Pinned so a future
         // change to the threshold has to be deliberate.
-        assertEquals(65.279, MotorInfoParser.parse(withRawSpeed(0xFEFF))!!.speed, 0.00001)
-        assertEquals(0.0, MotorInfoParser.parse(withRawSpeed(0xFF00))!!.speed, 0.00001)
+        assertEquals(49.151, MotorInfoParser.parse(withRawSpeed(0xBFFF))!!.speed, 0.00001)
+        assertEquals(0.0, MotorInfoParser.parse(withRawSpeed(0xC000))!!.speed, 0.00001)
     }
 
     @Test

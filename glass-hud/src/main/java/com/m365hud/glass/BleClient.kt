@@ -33,7 +33,8 @@ class BleClient(
     
     companion object {
         private const val TAG = "BleClient"
-        private const val SCAN_TIMEOUT_MS = 30000L  // 30 seconds per scan cycle (service will retry)
+        private const val FAILED_DEVICE_TTL_MS = 15000L  // retry a device that lacked the HUD service after this long
+        private const val SCAN_TIMEOUT_MS = 30000L // 30 seconds per scan cycle (service will retry)
         
         // LATENCY MONITORING: Watchdog timeout for stale data detection
         // If no telemetry received for this long, consider connection stale
@@ -239,11 +240,10 @@ class BleClient(
             }
             
             // Skip devices that previously failed service discovery
-            if (failedDevices.contains(address)) {
-                Log.d(TAG, "Skipping previously failed device: $address")
+            if (isRecentlyFailed(address)) {
                 return
             }
-            
+
             // Check if this device is advertising our service
             val hasOurService = serviceUuids?.any { it.uuid == GattProfile.SERVICE_UUID } == true
             
@@ -364,8 +364,21 @@ class BleClient(
     
     // ========== Callbacks ==========
     
-    // Track devices that failed service discovery (to avoid reconnecting to them)
-    private val failedDevices = mutableSetOf<String>()
+    // Devices that failed service discovery, with the time they failed. The entry
+    // expires: the real gateway phone can briefly lack the HUD service (gateway
+    // restarted, app swiped away) and must be retried once it is back, instead of
+    // being blacklisted until the glasses app restarts.
+    private val failedDevices = mutableMapOf<String, Long>()
+
+    private fun isRecentlyFailed(address: String): Boolean = synchronized(failedDevices) {
+        val failedAt = failedDevices[address] ?: return false
+        if (System.currentTimeMillis() - failedAt >= FAILED_DEVICE_TTL_MS) {
+            failedDevices.remove(address)
+            false
+        } else {
+            true
+        }
+    }
     
     // Flag to prevent multiple connection attempts during scan
     @Volatile
@@ -377,11 +390,10 @@ class BleClient(
             val address = result.device.address
             
             // Skip devices that previously failed service discovery
-            if (failedDevices.contains(address)) {
-                Log.d(TAG, "Skipping previously failed device: $address")
+            if (isRecentlyFailed(address)) {
                 return
             }
-            
+
             Log.i(TAG, "Found Gateway via UUID filter: name=$deviceName, addr=$address, RSSI=${result.rssi}")
             
             // Auto-connect to the first device with our service
@@ -548,8 +560,10 @@ class BleClient(
                 Log.e(TAG, "HUD service not found on device $deviceAddress, adding to failed list and retrying scan")
                 
                 // Add this device to failed list so we don't connect to it again
-                failedDevices.add(deviceAddress)
-                Log.i(TAG, "Failed devices list: $failedDevices")
+                synchronized(failedDevices) {
+                    failedDevices[deviceAddress] = System.currentTimeMillis()
+                }
+                Log.i(TAG, "Failed devices (retry after ${FAILED_DEVICE_TTL_MS}ms): $deviceAddress")
                 
                 // Disconnect and clean up
                 gatt.disconnect()
@@ -634,7 +648,7 @@ class BleClient(
             _connectionState.value = ConnectionState.Connected
             
             // Clear failed devices list on successful connection
-            failedDevices.clear()
+            synchronized(failedDevices) { failedDevices.clear() }
             Log.i(TAG, "Successfully connected, cleared failed devices list")
             
             // LATENCY MONITORING: Start watchdog timer

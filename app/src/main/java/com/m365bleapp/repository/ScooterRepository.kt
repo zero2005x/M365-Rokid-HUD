@@ -192,7 +192,8 @@ class ScooterRepository private constructor(
     }
     
     private val native = M365Native()
-    private val bleManager = BleManager(context)
+    private val connectionResources = ConnectionResources<BluetoothGatt>(native::freeSessionSafe)
+    private val bleManager = BleManager(context, connectionResources)
     private val scope = CoroutineScope(ioDispatcher + SupervisorJob())
     
     // Helper function to get localized strings
@@ -210,8 +211,7 @@ class ScooterRepository private constructor(
     )
 
     // Channel capacity limited to prevent memory leaks if consumer is blocked
-    private val controlChannel = Channel<ByteArray>(64)
-    private val uartRxChannel = Channel<ByteArray>(64)
+    @Volatile private var activeConnection: ConnectionEpoch? = null
     
     /**
      * Durable last-known vehicle state, so the detail page is readable offline.
@@ -256,17 +256,23 @@ class ScooterRepository private constructor(
     
     private val logger = com.m365bleapp.utils.TelemetryLogger(context)
 
-    // These are touched from the connect coroutine (Dispatchers.IO), the
-    // telemetry loop, disconnect() (often Main) and the disconnect callback
-    // (Main). @Volatile gives cross-thread visibility; connectionLock makes
-    // teardown atomic so the native session cannot be released while another
-    // thread is still deciding to use it.
-    @Volatile
-    private var activeGatt: BluetoothGatt? = null
-    @Volatile
-    private var sessionPtr: Long = 0
+    private val activeGatt: BluetoothGatt? get() = connectionResources.handle
+    private val uartWriteLane = ConnectionWriteLane(connectionResources)
+    private var plaintextJob: Job? = null
+    private var connectionJob: Job? = null
 
-    private val connectionLock = Any()
+    private suspend fun capturedConnection(): ConnectionEpoch =
+        requireNotNull(currentCoroutineContext()[ConnectionEpoch]) { "missing connection binding" }
+
+    private suspend fun entryConnection(): ConnectionEpoch =
+        ConnectionEpoch.forEntry(currentCoroutineContext(), activeConnection, connectionResources.epoch)
+
+    private suspend fun expectedConnectionEpoch(): Long {
+        currentCoroutineContext().ensureActive()
+        val epoch = currentCoroutineContext()[ConnectionEpoch]?.value ?: connectionResources.epoch
+        check(connectionResources.isCurrent(epoch)) { "connection changed or disconnected" }
+        return epoch
+    }
 
     /**
      * Job feeding synthetic telemetry while the hardware-free demo runs.
@@ -376,18 +382,19 @@ class ScooterRepository private constructor(
         gatt: android.bluetooth.BluetoothGatt,
         advertisedName: ByteArray,
     ): Boolean {
+        val connection = capturedConnection()
         val stored = sharedPreferences.getString(gatt.device.address.uppercase() + "_nb_random", null)
         val chars = stored?.toCharArray()
         val random = try { chars?.let { com.m365bleapp.bond.BondInput.hex(it, 16) } }
         finally { chars?.fill('\u0000') }
         val handshake = try { com.m365bleapp.protocol.NinebotHandshake(advertisedName, random) }
         finally { random?.fill(0) }
-        sensitiveHandshake = true
+        connectionResources.ifCurrent(connection.value) { sensitiveHandshake = true }
         try {
 
             // Drain anything left from service discovery so the first reply belongs to
             // the first request.
-            while (controlChannel.tryReceive().isSuccess) { /* discard */ }
+            while (capturedConnection().uart.tryReceive().isSuccess) { /* discard */ }
 
             var attempts = 0
             while (currentCoroutineContext().isActive &&
@@ -404,7 +411,7 @@ class ScooterRepository private constructor(
                 try {
                     writeChar(uartService, uartTx, frame, waitForResponse = false)
                     val reply = withTimeoutOrNull(handshake.retryIntervalMs) {
-                        controlChannel.receive()
+                        capturedConnection().uart.receive()
                     }
                     if (reply == null) {
                         Log.d(
@@ -424,6 +431,8 @@ class ScooterRepository private constructor(
                                 "${handshake.stage} (${reply.size} bytes)"
                         )
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.w("ScooterRepo", "NinebotCrypto: handshake write failed")
                 } finally { frame.fill(0) }
@@ -435,11 +444,11 @@ class ScooterRepository private constructor(
             } else {
                 val reason = handshake.failureReason ?: "handshake did not complete"
                 Log.e("ScooterRepo", "NinebotCrypto: pairing failed: $reason")
-                _connectionState.value = ConnectionState.Error("Pairing failed: $reason")
+                connectionResources.ifCurrent(connection.value) { _connectionState.value = ConnectionState.Error("Pairing failed: $reason") }
                 false
             }
         } finally {
-            sensitiveHandshake = false
+            connectionResources.ifCurrent(connection.value) { sensitiveHandshake = false }
             handshake.close()
         }
     }
@@ -647,9 +656,12 @@ class ScooterRepository private constructor(
     fun connect(mac: String, register: Boolean = false) { // NOSONAR
         // A real session must never inherit synthetic samples, so the demo is
         // stopped before anything else happens.
-        stopDemo()
+        disconnect()
+        val attempt = connectionResources.epoch
         // Normalize MAC address to uppercase to ensure consistent token lookup
         val normalizedMac = mac.uppercase()
+        val attemptContext = ConnectionEpoch(attempt, normalizedMac)
+        connectionResources.ifCurrent(attempt) { activeConnection = attemptContext }
         lastConnectedMac = normalizedMac
 
         // Record which scooter this session belongs to, before any telemetry is
@@ -675,9 +687,10 @@ class ScooterRepository private constructor(
             Log.w("ScooterRepo", "Could not resolve scooter model: ${it.message}")
             logger.setActiveModel(null)
         }
-        scope.launch(ioDispatcher) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
-            _connectionState.value = ConnectionState.Connecting
+        connectionJob = scope.launch(ioDispatcher + attemptContext) @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT) {
             try {
+                expectedConnectionEpoch()
+                connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Connecting }
                 // Every BLE call below (getDevice, connect, requestMtu,
                 // enableNotifications, requestPriority) throws SecurityException
                 // on Android 12+ without this permission. The @RequiresPermission
@@ -694,56 +707,64 @@ class ScooterRepository private constructor(
                 val device = bleManager.getDevice(normalizedMac)
                 
                 // Clear old data from channels
-                while(controlChannel.tryReceive().isSuccess) {}
-                while(uartRxChannel.tryReceive().isSuccess) {}
+                connectionResources.ifCurrent(attempt) {
+                    while(attemptContext.control.tryReceive().isSuccess) {}
+                    while(attemptContext.uart.tryReceive().isSuccess) {}
+                }
                 
+                expectedConnectionEpoch()
                 // Set up disconnection callback to detect scooter power-off
-                bleManager.setOnDisconnectCallback {
+                bleManager.setOnDisconnectCallback(attempt) { retiredEpoch ->
                     Log.w("ScooterRepo", "BLE disconnection detected - scooter may have powered off")
-                    handleUnexpectedDisconnection()
+                    handleUnexpectedDisconnection(retiredEpoch)
                 }
 
-                val gatt = bleManager.connect(device) { uuid, data ->
-                    val sensitive = sensitiveHandshake || uuid == BleManager.AUTH_AVDTP || uuid == BleManager.AUTH_UPNP
-                    if (!sensitive) Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
+                val gatt = bleManager.connect(device, attempt) { uuid, data ->
+                    connectionResources.ifCurrent(attempt) {
+                        val sensitive = sensitiveHandshake || uuid == BleManager.AUTH_AVDTP || uuid == BleManager.AUTH_UPNP
+                        if (!sensitive) Log.d("ScooterRepo", "Rx: $uuid -> ${data.toHex()}")
                     
-                    // Log BLE receive to CSV
-                    val charName = when (uuid) {
-                        uartRx -> "UART_RX"
-                        BleManager.AUTH_AVDTP -> "AUTH_AVDTP"
-                        BleManager.AUTH_UPNP -> "AUTH_UPNP"
-                        else -> uuid.toString().takeLast(8)
-                    }
-                    if (!sensitive) logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
+                        // Log BLE receive to CSV
+                        val charName = when (uuid) {
+                            uartRx -> "UART_RX"
+                            BleManager.AUTH_AVDTP -> "AUTH_AVDTP"
+                            BleManager.AUTH_UPNP -> "AUTH_UPNP"
+                            else -> uuid.toString().takeLast(8)
+                        }
+                        if (!sensitive) logger.logBle("RX", "NOTIFY", "BLE", charName, data, "")
                     
-                    // trySend fails silently when the bounded channel is full.
-                    // Dropping an AUTH frame causes a spurious handshake
-                    // timeout, and dropping telemetry loses a sample, so at
-                    // least make the loss visible instead of invisible.
-                    // Route by "is this the data plane?" rather than by an
-                    // exact UUID. The data-plane UUID depends on the discovered
-                    // layout, which is only known after service discovery ??and
-                    // the auth characteristics are the only other thing this app
-                    // subscribes to, so treating everything else as telemetry is
-                    // both correct and immune to a late profile switch.
-                    val isDataPlane = uuid != BleManager.AUTH_UPNP &&
-                        uuid != BleManager.AUTH_AVDTP
-                    val delivered = if (isDataPlane) {
-                        uartRxChannel.trySend(data).isSuccess
-                    } else {
-                        controlChannel.trySend(data).isSuccess
-                    }
-                    if (!delivered) {
-                        Log.w("ScooterRepo", "Dropped ${data.size}-byte notification from $charName: channel full")
+                        // trySend fails silently when the bounded channel is full.
+                        // Dropping an AUTH frame causes a spurious handshake
+                        // timeout, and dropping telemetry loses a sample, so at
+                        // least make the loss visible instead of invisible.
+                        // Route by "is this the data plane?" rather than by an
+                        // exact UUID. The data-plane UUID depends on the discovered
+                        // layout, which is only known after service discovery ??and
+                        // the auth characteristics are the only other thing this app
+                        // subscribes to, so treating everything else as telemetry is
+                        // both correct and immune to a late profile switch.
+                        val isDataPlane = uuid != BleManager.AUTH_UPNP &&
+                            uuid != BleManager.AUTH_AVDTP
+                        val delivered = if (isDataPlane) {
+                            attemptContext.uart.trySend(data).isSuccess
+                        } else {
+                            attemptContext.control.trySend(data).isSuccess
+                        }
+                        if (!delivered) {
+                            Log.w("ScooterRepo", "Dropped ${data.size}-byte notification from $charName: channel full")
+                        }
                     }
                 } 
                 if (gatt == null) throw Exception(getString(R.string.error_gatt_failed))
-                activeGatt = gatt
+                if (connectionResources.boundHandle(attempt) !== gatt) {
+                    gatt.close()
+                    throw CancellationException("connection attempt retired")
+                }
 
                 // Service discovery has completed by the time connect() returns,
                 // so the layout is known here. Everything below uses the
                 // resolved data plane instead of assuming Nordic UART.
-                adoptDiscoveredProfile()
+                connectionResources.ifCurrent(attempt) { adoptDiscoveredProfile() }
                 
                 // Request high priority for faster handshake
                 Log.d("ScooterRepo", "Requesting High Connection Priority")
@@ -780,14 +801,14 @@ class ScooterRepository private constructor(
                             writeChar(uartService, uartTx, frame, waitForResponse = false)
                         },
                     )
-                    plaintextSession = session
+                    connectionResources.ifCurrent(attempt) { plaintextSession = session }
                     rememberProtocol(com.m365bleapp.protocol.ScooterProtocol.NINEBOT_PLAIN)
 
                     Log.d("ScooterRepo", "Enabling UART RX for plaintext telemetry")
-                    bleManager.enableNotifications(gatt, uartService, uartRx) { }
+                    check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { "UART subscription failed" }
 
-                    _connectionState.value = ConnectionState.Ready
-                    startPlaintextTelemetryLoop(session, gatt)
+                    connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Ready }
+                    startPlaintextTelemetryLoop(session, gatt, attemptContext)
                     return@launch
                 }
 
@@ -801,24 +822,21 @@ class ScooterRepository private constructor(
                 ) {
                     Log.i("ScooterRepo", "NinebotCrypto dialect: starting 5B/5C/5D pairing")
                     val name = runCatching {
-                        activeGatt?.device?.name?.toByteArray(Charsets.ISO_8859_1)
+                        gatt.device?.name?.toByteArray(Charsets.ISO_8859_1)
                     }.getOrNull()
                     if (name == null || name.isEmpty()) {
                         // The session key is derived from the advertised name, so
                         // without it no frame can ever be decrypted.
-                        _connectionState.value =
-                            ConnectionState.Error("NinebotCrypto needs the advertised name")
-                        return@launch
+                        throw IllegalStateException("NinebotCrypto needs the advertised name")
                     }
 
-                    _connectionState.value =
-                        ConnectionState.Handshaking(getString(R.string.connecting))
-                    bleManager.enableNotifications(gatt, uartService, uartRx) { }
-                    val paired = runNinebotHandshake(gatt, name)
-                    if (!paired) {
-                        return@launch
+                    connectionResources.ifCurrent(attempt) {
+                        _connectionState.value = ConnectionState.Handshaking(getString(R.string.connecting))
                     }
-                    _connectionState.value = ConnectionState.Ready
+                    check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { "UART subscription failed" }
+                    val paired = runNinebotHandshake(gatt, name)
+                    check(paired) { "Ninebot pairing failed" }
+                    connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Ready }
                     // The handshake installs the session cipher; the telemetry loop
                     // still needs the fallback path until an encrypted plaintext loop
                     // exists, which is the next piece of work.
@@ -831,26 +849,27 @@ class ScooterRepository private constructor(
                             },
                         ),
                         gatt,
+                        attemptContext,
                     )
                     return@launch
                 }
 
                 // Enable Notifications on Handshake chars
                 Log.d("ScooterRepo", "Enabling AUTH UPNP")
-                bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_UPNP) { }
+                check(bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_UPNP) { }) { "AUTH UPNP subscription failed" }
                 // delay(300) removed
                 
                 Log.d("ScooterRepo", "Enabling AUTH AVDTP")
-                bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_AVDTP) { }
+                check(bleManager.enableNotifications(gatt, AUTH_SERVICE, AUTH_AVDTP) { }) { "AUTH AVDTP subscription failed" }
                 // delay(500) removed
 
-                _connectionState.value = ConnectionState.Handshaking(getString(R.string.connecting))
+                connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Handshaking(getString(R.string.connecting)) }
 
                 if (register) {
                     performRegistration()
                     // Registration successful. Chain to Login immediately for seamless experience.
                     Log.d("ScooterRepo", "Registration complete. Proceeding to Login.")
-                    _connectionState.value = ConnectionState.Handshaking(getString(R.string.state_logging_in))
+                    connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Handshaking(getString(R.string.state_logging_in)) }
                     
                     // Retrieve the token we just saved
                     val tokenStr = sharedPreferences.getString(normalizedMac + "_token", null)
@@ -868,10 +887,10 @@ class ScooterRepository private constructor(
                 }
                 
                 Log.d("ScooterRepo", "Enabling UART RX...")
-                val uartOk = bleManager.enableNotifications(gatt, uartService, uartRx) { }
-                Log.d("ScooterRepo", "UART RX Status: $uartOk")
+                check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { "UART subscription failed" }
+                Log.d("ScooterRepo", "UART RX subscribed")
                 
-                _connectionState.value = ConnectionState.Ready
+                connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Ready }
                 // Beep to confirm connection (Optional but nice)
                 beep()
                 
@@ -881,22 +900,28 @@ class ScooterRepository private constructor(
                 
                 startTelemetryLoop()
 
+            } catch (e: TimeoutCancellationException) {
+                failConnectionAttempt(attempt, e)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.e("ScooterRepo", "Connection error", e)
-                // The handshake failed, so whatever dialect was cached for this
-                // scooter is either wrong or no longer true (a reflash changes it
-                // while the MAC stays the same). Drop it so the next attempt
-                // re-probes instead of repeating a known-bad guess.
-                forgetProtocol(e.message ?: "handshake failed")
-                // Clean up first: disconnect() sets state to Disconnected, so
-                // setting Error before it meant the UI never saw the failure.
-                disconnect()
-                _connectionState.value = ConnectionState.Error(e.message ?: getString(R.string.state_unknown_error))
+                failConnectionAttempt(attempt, e)
             }
         }
     }
 
+    private suspend fun failConnectionAttempt(attempt: Long, failure: Exception) {
+        if (!connectionResources.isCurrent(attempt)) return
+        Log.e("ScooterRepo", "Connection error", failure)
+        forgetProtocol(failure.message ?: "handshake failed")
+        val retired = releaseConnection(expectedEpoch = attempt)
+        if (retired != null) connectionResources.ifCurrent(retired) {
+            _connectionState.value = ConnectionState.Error(failure.message ?: getString(R.string.state_unknown_error))
+        }
+    }
+
     private suspend fun performRegistration() {
+        val connection = capturedConnection()
         // 1. Get Remote Info (UPNP -> AVDTP)
         // CMD_GET_INFO: A2 00 00 00
         writeChar(AUTH_SERVICE, AUTH_UPNP, byteArrayOf(0xA2.toByte(), 0x00, 0x00, 0x00))
@@ -930,7 +955,7 @@ class ScooterRepository private constructor(
         
         // Wait for RCV_RDY (00 00 01 01) - User needs to press power button!
         Log.d("ScooterRepo", "Waiting for RCV_RDY... PLEASE PRESS POWER BUTTON ON SCOOTER!")
-        _connectionState.value = ConnectionState.Handshaking(getString(R.string.state_press_power_button))
+        connectionResources.ifCurrent(connection.value) { _connectionState.value = ConnectionState.Handshaking(getString(R.string.state_press_power_button)) }
         // Essential: Users need time to reach and press the physical button on the scooter.
         // Use 30 second timeout for this step.
         waitForCmd("00000101", 30000)
@@ -968,8 +993,9 @@ class ScooterRepository private constructor(
             waitForCmd("11000000") // RCV_AUTH_OK
 
             // Save token with normalized MAC address (uppercase)
-            val mac = activeGatt?.device?.address?.uppercase() ?: ""
-            bondStore.putXiaomi(mac, token)
+            connectionResources.ifCurrent(connection.value) {
+                bondStore.putXiaomi(connection.deviceId, token)
+            } ?: throw CancellationException("registration belongs to retired connection")
         } finally { token.fill(0); tokenAndDid.fill(0) }
     }
 
@@ -1010,7 +1036,11 @@ class ScooterRepository private constructor(
         val res = native.loginSafe(token, randKey, remoteKey, remoteInfo)
         if (res.isEmpty()) throw Exception("Login calc failed")
         
-        sessionPtr = res.sliceArray(0 until 8).toLong()
+        val candidate = res.sliceArray(0 until 8).toLong()
+        // Installation also frees a late native allocation if reconnect retired this login.
+        if (!connectionResources.installNative(requireNotNull(currentCoroutineContext()[ConnectionEpoch]).value, candidate)) {
+            throw CancellationException("login belongs to a retired connection")
+        }
         val loginData = res.sliceArray(8 until res.size)
         
         // 5. Send Info
@@ -1110,10 +1140,13 @@ class ScooterRepository private constructor(
      * Written through [com.m365bleapp.protocol.ProtocolProbe] so a later connect
      * can try the known dialect first instead of re-probing blindly.
      */
-    private fun rememberProtocol(protocol: com.m365bleapp.protocol.ScooterProtocol) {
-        lastConnectedMac?.let { protocolProbe.remember(it, protocol) }
-        _detectedProtocol.value = protocol
-        Log.i("ScooterRepo", "Protocol dialect detected: ${protocol.label} (${protocol.id})")
+    private suspend fun rememberProtocol(protocol: com.m365bleapp.protocol.ScooterProtocol) {
+        val connection = capturedConnection()
+        connectionResources.ifCurrent(connection.value) {
+            protocolProbe.remember(connection.deviceId, protocol)
+            _detectedProtocol.value = protocol
+            Log.i("ScooterRepo", "Protocol dialect detected: ${protocol.label} (${protocol.id})")
+        }
     }
 
     /**
@@ -1123,14 +1156,17 @@ class ScooterRepository private constructor(
      * stale entry must not be trusted forever: without this the app would retry
      * a dialect that can no longer work and never re-probe.
      */
-    private fun forgetProtocol(reason: String) {
-        lastConnectedMac?.let {
-            if (protocolProbe.hasCached(it)) {
-                Log.w("ScooterRepo", "Forgetting cached protocol for $it: $reason")
+    private suspend fun forgetProtocol(reason: String) {
+        val connection = capturedConnection()
+        connectionResources.ifCurrent(connection.value) {
+            connection.deviceId.let {
+                if (protocolProbe.hasCached(it)) {
+                    Log.w("ScooterRepo", "Forgetting cached protocol for $it: $reason")
+                }
+                protocolProbe.forget(it)
             }
-            protocolProbe.forget(it)
+            _detectedProtocol.value = com.m365bleapp.protocol.ScooterProtocol.UNKNOWN
         }
-        _detectedProtocol.value = com.m365bleapp.protocol.ScooterProtocol.UNKNOWN
     }
     
     // ... startTelemetryLoop uses writeNbParcel (raw) which is correct for UART ...
@@ -1167,104 +1203,113 @@ class ScooterRepository private constructor(
     // discipline: per-register scheduling, timeout/retry and reconnect-on-death
     // are one cohesive control flow. Extracting parts would split the request/
     // reply invariant across functions. Restructure needs on-hardware checking.
-    private fun startPlaintextTelemetryLoop(session: PlaintextRegisterSession, gatt: android.bluetooth.BluetoothGatt) { // NOSONAR
-        scope.launch(ioDispatcher) {
-            Log.i("ScooterRepo", "Plaintext telemetry loop starting (${session.protocol.label})")
+    private fun startPlaintextTelemetryLoop(session: PlaintextRegisterSession, gatt: android.bluetooth.BluetoothGatt, connection: ConnectionEpoch) { // NOSONAR
+        val expectedEpoch = connection.value
+        connectionResources.ifCurrent(expectedEpoch) {
+            plaintextJob = scope.launch(ioDispatcher + connection) {
+                Log.i("ScooterRepo", "Plaintext telemetry loop starting (${session.protocol.label})")
 
-            // Drain anything left over from the handshake attempt so the first
-            // reply we read belongs to the first request we send.
-            while (controlChannel.tryReceive().isSuccess) { /* discard */ }
+                // Drain anything left over from the handshake attempt so the first
+                // reply we read belongs to the first request we send.
+                while (capturedConnection().uart.tryReceive().isSuccess) { /* discard */ }
 
-            var index = 0
-            var consecutiveFailures = 0
+                var index = 0
+                var consecutiveFailures = 0
 
-            while (currentCoroutineContext().isActive && activeGatt === gatt) {
-                val (register, readLength) = plaintextRegisters[index % plaintextRegisters.size]
-                index++
+                while (currentCoroutineContext().isActive && connectionResources.isCurrent(expectedEpoch) && activeGatt === gatt) {
+                    val (register, readLength) = plaintextRegisters[index % plaintextRegisters.size]
+                    index++
 
-                try {
-                    // The request is framed by PlaintextRegisterSession, which is
-                    // what puts FrameCodec on a live path: it supplies the sync
-                    // word, the length byte and the checksum.
-                    val request = session.buildRead(
-                        register = register.toByte(),
-                        argument = readLength.toByte(),
-                        destination = PlaintextRegisterSession.ADDRESS_ESC,
-                    )
-                    writeChar(uartService, uartTx, request, waitForResponse = false)
-
-                    // Collect notifications until the frame is complete rather than
-                    // assuming one notification carries the whole reply: a reply
-                    // longer than the negotiated chunk size arrives in pieces.
-                    val deadline = System.currentTimeMillis() + PLAINTEXT_REPLY_TIMEOUT_MS
-                    var assembled: ByteArray? = null
-                    while (System.currentTimeMillis() < deadline && assembled == null) {
-                        val chunk = withTimeoutOrNull(PLAINTEXT_CHUNK_WAIT_MS) {
-                            controlChannel.receive()
-                        } ?: continue
-                        val complete = session.isComplete(chunk)
-                        if (complete == true) {
-                            assembled = chunk
-                        } else if (complete == false) {
-                            // Keep the partial frame and try to extend it.
-                            val more = withTimeoutOrNull(PLAINTEXT_CHUNK_WAIT_MS) {
-                                controlChannel.receive()
-                            }
-                            if (more != null) {
-                                val joined = session.reassemble(listOf(chunk, more))
-                                if (session.isComplete(joined) == true) assembled = joined
-                            }
-                        }
-                        // complete == null means the length byte is not here yet.
-                    }
-
-                    val frame = assembled
-                    if (frame == null) {
-                        consecutiveFailures++
-                        Log.w(
-                            "ScooterRepo",
-                            "Plaintext: no complete reply for 0x${register.toString(16)} " +
-                                "(failure $consecutiveFailures)"
+                    try {
+                        // The request is framed by PlaintextRegisterSession, which is
+                        // what puts FrameCodec on a live path: it supplies the sync
+                        // word, the length byte and the checksum.
+                        val request = session.buildRead(
+                            register = register.toByte(),
+                            argument = readLength.toByte(),
+                            destination = PlaintextRegisterSession.ADDRESS_ESC,
                         )
-                    } else {
-                        val decoded = session.accept(frame)
-                        if (session.isReplyFor(decoded, register.toByte())) {
-                            applyPlaintextReply(decoded)
-                            consecutiveFailures = 0
-                        } else {
+                        writeChar(uartService, uartTx, request, waitForResponse = false)
+
+                        // Collect notifications until the frame is complete rather than
+                        // assuming one notification carries the whole reply: a reply
+                        // longer than the negotiated chunk size arrives in pieces.
+                        val deadline = System.currentTimeMillis() + PLAINTEXT_REPLY_TIMEOUT_MS
+                        var assembled: ByteArray? = null
+                        while (System.currentTimeMillis() < deadline && assembled == null) {
+                            val chunk = withTimeoutOrNull(PLAINTEXT_CHUNK_WAIT_MS) {
+                                capturedConnection().uart.receive()
+                            } ?: continue
+                            val complete = session.isComplete(chunk)
+                            if (complete == true) {
+                                assembled = chunk
+                            } else if (complete == false) {
+                                // Keep the partial frame and try to extend it.
+                                val more = withTimeoutOrNull(PLAINTEXT_CHUNK_WAIT_MS) {
+                                    capturedConnection().uart.receive()
+                                }
+                                if (more != null) {
+                                    val joined = session.reassemble(listOf(chunk, more))
+                                    if (session.isComplete(joined) == true) assembled = joined
+                                }
+                            }
+                            // complete == null means the length byte is not here yet.
+                        }
+
+                        val frame = assembled
+                        if (frame == null) {
+                            consecutiveFailures++
                             Log.w(
                                 "ScooterRepo",
-                                "Plaintext: reply for 0x${decoded.command.toString(16)} " +
-                                    "while waiting for 0x${register.toString(16)}"
+                                "Plaintext: no complete reply for 0x${register.toString(16)} " +
+                                    "(failure $consecutiveFailures)"
                             )
+                        } else {
+                            val decoded = session.accept(frame)
+                            if (session.isReplyFor(decoded, register.toByte())) {
+                                connectionResources.ifCurrent(expectedEpoch) { applyPlaintextReply(decoded) }
+                                consecutiveFailures = 0
+                            } else {
+                                Log.w(
+                                    "ScooterRepo",
+                                    "Plaintext: reply for 0x${decoded.command.toString(16)} " +
+                                        "while waiting for 0x${register.toString(16)}"
+                                )
+                            }
                         }
+                    } catch (e: com.m365bleapp.protocol.FrameCodec.FrameException) {
+                        // A malformed frame is dropped, not guessed at. The next tick
+                        // re-requests the same register, so nothing is lost but a tick.
+                        consecutiveFailures++
+                        Log.w("ScooterRepo", "Plaintext: dropped malformed frame: ${e.message}")
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        consecutiveFailures++
+                        Log.w("ScooterRepo", "Plaintext: request failed: ${e.message}")
                     }
-                } catch (e: com.m365bleapp.protocol.FrameCodec.FrameException) {
-                    // A malformed frame is dropped, not guessed at. The next tick
-                    // re-requests the same register, so nothing is lost but a tick.
-                    consecutiveFailures++
-                    Log.w("ScooterRepo", "Plaintext: dropped malformed frame: ${e.message}")
-                } catch (e: Exception) {
-                    consecutiveFailures++
-                    Log.w("ScooterRepo", "Plaintext: request failed: ${e.message}")
+
+                    if (!connectionResources.isCurrent(expectedEpoch)) return@launch
+                    if (consecutiveFailures >= PLAINTEXT_FAILURES_BEFORE_RECONNECT) {
+                        Log.e(
+                            "ScooterRepo",
+                            "Plaintext: $consecutiveFailures consecutive failures; " +
+                                "declaring the link dead"
+                        )
+                        // The encrypted path has no equivalent of this: Scootbatt never
+                        // counts timeouts and relies on the GATT callback alone.
+                        val retired = releaseConnection(expectedEpoch = expectedEpoch)
+                        if (retired != null) connectionResources.ifCurrent(retired) {
+                            _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+                        }
+                        return@launch
+                    }
+
+                    delay(PLAINTEXT_POLL_INTERVAL_MS)
                 }
 
-                if (consecutiveFailures >= PLAINTEXT_FAILURES_BEFORE_RECONNECT) {
-                    Log.e(
-                        "ScooterRepo",
-                        "Plaintext: $consecutiveFailures consecutive failures; " +
-                            "declaring the link dead"
-                    )
-                    // The encrypted path has no equivalent of this: Scootbatt never
-                    // counts timeouts and relies on the GATT callback alone.
-                    disconnect()
-                    return@launch
-                }
-
-                delay(PLAINTEXT_POLL_INTERVAL_MS)
+                Log.i("ScooterRepo", "Plaintext telemetry loop ended")
             }
-
-            Log.i("ScooterRepo", "Plaintext telemetry loop ended")
         }
     }
 
@@ -1301,8 +1346,9 @@ class ScooterRepository private constructor(
     }
 
     private suspend fun startTelemetryLoop() {
-        logger.startSession()
-        Log.d("ScooterRepo", "Starting Telemetry Loop (sessionPtr=$sessionPtr)")
+        val expectedEpoch = expectedConnectionEpoch()
+        connectionResources.ifCurrent(expectedEpoch) { logger.startSession() }
+        Log.d("ScooterRepo", "Starting Telemetry Loop")
         
         // NOTE: The Rust ninebot-ble library ALWAYS uses counter=0 for every message!
         // See: mi_session.rs -> encrypt_uart(&self.keys.app, &cmd.as_bytes(), 0, None)
@@ -1320,9 +1366,9 @@ class ScooterRepository private constructor(
         var lastTripQueryTick = 0
         var lastRangeQueryTick = 0
         
-        while (currentCoroutineContext().isActive && activeGatt != null) {
+        while (currentCoroutineContext().isActive && connectionResources.isCurrent(expectedEpoch) && activeGatt != null) {
             try {
-                if (sessionPtr == 0L) {
+                if (!connectionResources.hasNative) {
                      delay(1000)
                      continue
                 }
@@ -1360,19 +1406,21 @@ class ScooterRepository private constructor(
                 
                 Log.d("ScooterRepo", "Loop: Query 0x${attribute.toString(16)}: ${packet.toHex()}")
                 
-                val encrypted = native.encryptSafe(sessionPtr, packet, counter)
+                val encrypted = connectionResources.useNative(expectedEpoch) { native.encryptSafe(it, packet, counter) }
+                    ?: throw CancellationException("native session retired")
                 Log.d("ScooterRepo", "Encrypted (${encrypted.size} bytes): ${encrypted.toHex()}")
                 
                 // Write Encrypted to UART TX
-                writeUartEncrypted(encrypted)
+                writeUartEncrypted(encrypted, expectedEpoch)
                 
                 val frame = readEncryptedFrame()
                 if (frame.isNotEmpty()) {
                     Log.d("ScooterRepo", "Rx Encrypted (${frame.size} bytes): ${frame.toHex()}")
-                    val decrypted = native.decryptSafe(sessionPtr, frame)
+                    val decrypted = connectionResources.useNative(expectedEpoch) { native.decryptSafe(it, frame) }
+                        ?: throw CancellationException("native session retired")
                     if (decrypted.isNotEmpty()) {
                          Log.d("ScooterRepo", "Rx Decrypted: ${decrypted.toHex()}")
-                         parseTelemetry(decrypted)
+                         connectionResources.ifCurrent(expectedEpoch) { parseTelemetry(decrypted) }
                          consecutiveFailures = 0 // Reset on success
                          // Update last known speed for dynamic polling
                          _motorInfo.value?.let { lastSpeed = it.speed }
@@ -1394,8 +1442,10 @@ class ScooterRepository private constructor(
                         // the GATT link open and the native session allocated,
                         // so the next connect() leaked both.
                         Log.e("ScooterRepo", "CONNECTION HEALTH: Too many failures ($consecutiveFailures), tearing down connection")
-                        releaseConnection()
-                        _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+                        val retired = releaseConnection(expectedEpoch = expectedEpoch)
+                        if (retired != null) connectionResources.ifCurrent(retired) {
+                            _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+                        }
                         break
                     }
                     is RetryStrategy.LongDelay -> {
@@ -1412,7 +1462,10 @@ class ScooterRepository private constructor(
                 }
                 
                 tick++
+            } catch (e: CancellationException) {
+                throw e
             } catch(e: Exception) {
+                if (!connectionResources.isCurrent(expectedEpoch)) break
                 Log.e("ScooterRepo", "Loop error: ${e.message}", e)
                 consecutiveFailures++
                 
@@ -1420,7 +1473,10 @@ class ScooterRepository private constructor(
                 if (e.message?.contains("disconnect", ignoreCase = true) == true ||
                     e.message?.contains("closed", ignoreCase = true) == true) {
                     Log.e("ScooterRepo", "CONNECTION HEALTH: Connection error detected in telemetry loop")
-                    _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+                    val retired = releaseConnection(expectedEpoch = expectedEpoch)
+                    if (retired != null) connectionResources.ifCurrent(retired) {
+                        _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+                    }
                     break
                 }
                 
@@ -1488,8 +1544,7 @@ class ScooterRepository private constructor(
     // give-up policy; the loop, the WriteRetryPolicy decision and its logging are
     // one unit. Only 2 over the threshold; kept whole to avoid splitting the
     // accepted/rejected/give-up handling of an untestable BLE write path.
-    private suspend fun writeUartEncrypted(data: ByteArray) { // NOSONAR
-        val gatt = activeGatt ?: return
+    private suspend fun writeUartEncrypted(data: ByteArray, expectedEpoch: Long) = uartWriteLane.write(expectedEpoch) { gatt ->
         // Chunk by the MTU the scooter actually granted, not a guess. `write()`
         // asks for MTU 512, but a peripheral may grant as little as the 23-byte
         // minimum, and a write larger than ATT_MTU - 3 is dropped by the peer
@@ -1506,6 +1561,8 @@ class ScooterRepository private constructor(
 
             while (true) {
                 attemptsMade++
+                expectedConnectionEpoch()
+                check(connectionResources.boundHandle(expectedEpoch) === gatt) { "connection changed during write" }
                 val accepted = bleManager.write(gatt, uartService, uartTx, chunk, true)
 
                 val outcome = if (accepted) {
@@ -1531,11 +1588,7 @@ class ScooterRepository private constructor(
                             // failure used to look like an idle scooter,
                             // because the telemetry loop counted it as a
                             // missing reply and simply tried again.
-                            Log.e(
-                                "ScooterRepo",
-                                "Chunk ${index + 1}/${chunks.size} could not be written: " +
-                                    decision.reason
-                            )
+                            throw IllegalStateException("UART chunk rejected: ${decision.reason}")
                         } else {
                             Log.d(
                                 "ScooterRepo",
@@ -1565,8 +1618,8 @@ class ScooterRepository private constructor(
      * Protocol: Write 0x0001 to address 0x70
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun lock(): Result<Unit> = withContext(ioDispatcher) {
-        if (sessionPtr == 0L) {
+    suspend fun lock(): Result<Unit> = withContext(ioDispatcher + entryConnection()) {
+        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
@@ -1579,6 +1632,8 @@ class ScooterRepository private constructor(
             )
             sendCommand(packet, "Lock Motor")
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("ScooterRepo", "Lock failed: ${e.message}", e)
             Result.failure(e)
@@ -1592,8 +1647,8 @@ class ScooterRepository private constructor(
      * Protocol: Write 0x0001 to address 0x71
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun unlock(): Result<Unit> = withContext(ioDispatcher) {
-        if (sessionPtr == 0L) {
+    suspend fun unlock(): Result<Unit> = withContext(ioDispatcher + entryConnection()) {
+        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
@@ -1606,6 +1661,8 @@ class ScooterRepository private constructor(
             )
             sendCommand(packet, "Unlock Motor")
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("ScooterRepo", "Unlock failed: ${e.message}", e)
             Result.failure(e)
@@ -1628,8 +1685,8 @@ class ScooterRepository private constructor(
      * Protocol: Write 0x0002 to address 0x7D
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun lightOn(): Result<Unit> = withContext(ioDispatcher) {
-        if (sessionPtr == 0L) {
+    suspend fun lightOn(): Result<Unit> = withContext(ioDispatcher + entryConnection()) {
+        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
@@ -1651,6 +1708,8 @@ class ScooterRepository private constructor(
             readLightState()
             
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("ScooterRepo", "Light on failed: ${e.message}", e)
             Result.failure(e)
@@ -1663,8 +1722,8 @@ class ScooterRepository private constructor(
      * Protocol: Write 0x0000 to address 0x7D
      * Direction: Master to Motor (0x20), Command: Write (0x03)
      */
-    suspend fun lightOff(): Result<Unit> = withContext(ioDispatcher) {
-        if (sessionPtr == 0L) {
+    suspend fun lightOff(): Result<Unit> = withContext(ioDispatcher + entryConnection()) {
+        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
@@ -1686,6 +1745,8 @@ class ScooterRepository private constructor(
             readLightState()
             
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("ScooterRepo", "Light off failed: ${e.message}", e)
             Result.failure(e)
@@ -1707,8 +1768,8 @@ class ScooterRepository private constructor(
      * Direction: Master to Motor (0x20), Command: Read (0x01)
      * Response: 0x0000=off, 0x0001=on brake, 0x0002=always on
      */
-    suspend fun readLightState(): Result<Boolean> = withContext(ioDispatcher) {
-        if (sessionPtr == 0L) {
+    suspend fun readLightState(): Result<Boolean> = withContext(ioDispatcher + entryConnection()) {
+        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
             return@withContext Result.failure(Exception("No active session"))
         }
         try {
@@ -1722,6 +1783,8 @@ class ScooterRepository private constructor(
             sendCommand(packet, "Read Tail Light")
             // Response will be parsed in parseTelemetryPacket
             Result.success(_isLightOn.value)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("ScooterRepo", "Read light state failed: ${e.message}", e)
             Result.failure(e)
@@ -1752,19 +1815,21 @@ class ScooterRepository private constructor(
      */
     private suspend fun sendCommand(packet: ByteArray, commandName: String = "Command") {
         val counter = 0L  // Always use counter=0 (scooter doesn't track)
-        val encrypted = native.encryptSafe(sessionPtr, packet, counter)
+        val epoch = expectedConnectionEpoch()
+        val encrypted = connectionResources.useNative(epoch) { native.encryptSafe(it, packet, counter) }
+            ?: throw CancellationException("native session retired")
         Log.d("ScooterRepo", "Command Encrypted (${encrypted.size} bytes): ${encrypted.toHex()}")
         
         // Log the command to CSV
         logger.logCommand(commandName, packet)
         logger.logUartTx(encrypted, "$commandName (encrypted)")
         
-        writeUartEncrypted(encrypted)
+        writeUartEncrypted(encrypted, epoch)
     }
     
     // Beep command
     suspend fun beep() {
-        if (sessionPtr == 0L) return
+        if (!connectionResources.hasNative) return
         try {
             // Beep logic not verified, using a known safe query (get version) or silence usually.
             // Let's rely on Connect sound for now if we can't confirm CMD_BEEP.
@@ -1809,9 +1874,9 @@ class ScooterRepository private constructor(
         }
         if (!sensitive) logger.logBle("TX", "WRITE", serviceName, charName, data, "")
         
-        val gatt = activeGatt
-        if (gatt != null) {
-            bleManager.write(gatt, service, char, data, waitForResponse)
+        val epoch = expectedConnectionEpoch()
+        uartWriteLane.write(epoch) { gatt ->
+            check(bleManager.write(gatt, service, char, data, waitForResponse)) { "GATT write rejected" }
         }
         delay(20) // Normal pacing delay
     }
@@ -1894,21 +1959,21 @@ class ScooterRepository private constructor(
         // BLE can be slow, especially during heavy crypto or negotiation.
         // Increased to 30s to avoid timeouts during registration/pairing
         return withTimeout(30000) {
-            controlChannel.receive()
+            capturedConnection().control.receive()
         }
     }
 
     private suspend fun waitForData(timeoutMs: Long = 5000): ByteArray {
         // Shorter timeout for UART telemetry responses
         return withTimeout(timeoutMs) {
-            uartRxChannel.receive()
+            capturedConnection().uart.receive()
         }
     }
 
     private suspend fun waitForCmd(expectedHex: String, timeoutMs: Long = 5000): ByteArray {
         return withTimeout(timeoutMs) {
             while (true) {
-                val data = controlChannel.receive()
+                val data = capturedConnection().control.receive()
                 val hex = data.toHex()
                 if (hex.startsWith(expectedHex)) {
                     Log.d("ScooterRepo", "Matched CMD: $hex")
@@ -1947,11 +2012,11 @@ class ScooterRepository private constructor(
             while (true) {
                 try {
                     // Short timeout for fragments
-                    val next = withTimeout(500) { uartRxChannel.receive() }
+                    val next = withTimeout(500) { capturedConnection().uart.receive() }
                     Log.d("ScooterRepo", "Received Fragment: ${next.toHex()}")
                     buffer.write(next, 0, next.size)
                     if (next.size < 20) break // Last packet is usually smaller
-                } catch (e: Exception) {
+                } catch (e: TimeoutCancellationException) {
                     break // Timeout means no more fragments
                 }
             }
@@ -2175,25 +2240,33 @@ class ScooterRepository private constructor(
      * Releases the GATT link and the native crypto session.
      *
      * Idempotent and safe to call from any thread: the whole teardown runs
-     * under [connectionLock], and each resource is cleared before it is
+     * under the connection resource monitor, and each resource is cleared before it is
      * released so a concurrent caller cannot free the same session twice.
      */
     @SuppressLint("MissingPermission")
-    private fun releaseConnection(closeGatt: Boolean = true) {
-        val (gatt, ptr) = synchronized(connectionLock) {
-            val g = activeGatt
-            val p = sessionPtr
-            activeGatt = null
-            sessionPtr = 0
-            g to p
-        }
+    private fun releaseConnection(closeGatt: Boolean = true, expectedEpoch: Long? = null): Long? {
+        val retired = connectionResources.withCurrent { current ->
+            if (expectedEpoch != null && current != expectedEpoch) return@withCurrent null
+            plaintextJob?.cancel()
+            plaintextJob = null
+            connectionJob?.cancel()
+            connectionJob = null
+            bleManager.clearOnDisconnectCallback()
+            val gatt = bleManager.retireConnection()
+            plaintextSession = null
+            activeConnection?.closeMailboxes()
+            activeConnection = null
+            sensitiveHandshake = false
+            logger.stopSession()
+            gatt to connectionResources.epoch
+        } ?: return null
 
+        // Radio close/pacing is outside the resource monitor. The detached handle is never
+        // resolved again, and state publication below must use this retired generation.
+        val gatt = retired.first
         if (closeGatt && gatt != null) {
             try {
                 gatt.disconnect()
-                // Give the stack a moment to complete the disconnect before
-                // close(); closing immediately leaves the device cached and
-                // undiscoverable on the next scan.
                 Thread.sleep(100)
             } catch (e: Exception) {
                 Log.w("ScooterRepo", "Error during disconnect: ${e.message}")
@@ -2204,67 +2277,34 @@ class ScooterRepository private constructor(
                 Log.w("ScooterRepo", "Error during close: ${e.message}")
             }
         }
-
-        if (ptr != 0L) {
-            native.freeSessionSafe(ptr)
-        }
+        return retired.second
     }
 
-    /**
-     * Handle unexpected BLE disconnection (e.g., scooter powered off, out of range).
-     * This is called from BleManager's disconnect callback.
-     */
-    private fun handleUnexpectedDisconnection() {
+    /** The manager already retired/closed this link; do not retire a later connection again. */
+    private fun handleUnexpectedDisconnection(retiredEpoch: Long) {
         scope.launch(Dispatchers.Main) {
-            Log.e("ScooterRepo", "CONNECTION HEALTH: Unexpected disconnection detected!")
-
-            // Only handle if we were in Ready state (connected and authenticated)
-            if (_connectionState.value == ConnectionState.Ready ||
-                _connectionState.value is ConnectionState.Handshaking) {
-
-                // The stack already closed the GATT client in
-                // onConnectionStateChange, so only release the native session.
-                releaseConnection(closeGatt = false)
-
-                // Update state to trigger UI notification
+            connectionResources.ifCurrent(retiredEpoch) {
+                plaintextJob?.cancel()
+                plaintextJob = null
+                connectionJob?.cancel()
+                connectionJob = null
+                plaintextSession = null
+                activeConnection?.closeMailboxes()
+                activeConnection = null
+                sensitiveHandshake = false
+                logger.stopSession()
                 _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
-                
-                // Clear motor info to show "--" on UI
                 _motorInfo.value = null
-                
-                Log.i("ScooterRepo", "Cleaned up after unexpected disconnection")
             }
         }
     }
 
     fun disconnect() {
-        // Stopping the demo here means the UI's existing "disconnect" action also
-        // ends a demo ride, so there is no separate control to discover.
         stopDemo()
-        // Clear the disconnect callback first to avoid recursive calls
-        bleManager.clearOnDisconnectCallback()
-        
-        logger.stopSession()
-        // releaseConnection handles permission rejection while still freeing local/native resources.
-        
-        // Track if we had an actual connection
-        val hadConnection = activeGatt != null
-        
-        // Important: releaseConnection() calls disconnect() BEFORE close() to
-        // properly release the BLE connection and clear Android's connection
-        // cache. Just calling close() leaves the device in a cached state,
-        // preventing it from being discovered again on subsequent scans.
-        releaseConnection()
-        _connectionState.value = ConnectionState.Disconnected
-
-        // Only log if we actually had a connection to disconnect
-        if (hadConnection) {
-            Log.i("ScooterRepo", "Disconnected and cleaned up BLE resources")
-        } else {
-            Log.d("ScooterRepo", "disconnect() called but no active connection")
-        }
+        val retired = releaseConnection() ?: return
+        connectionResources.ifCurrent(retired) { _connectionState.value = ConnectionState.Disconnected }
     }
-    
+
     fun getLogs(): List<java.io.File> = logger.getLogFiles()
     
     // Utils

@@ -248,3 +248,65 @@ ended after a usage-limit report, leaving root only. Earlier independent review 
 Native artifacts were reused; Rust/JNI/hardware were not newly certified. Production sole-writer,
 per-session experimental UI and negotiated V2 delivery/display remain unfinished. All work is local;
 no push, merge, release, original RideFlux checkout modification or automatic vehicle write.
+
+
+### Phone GATT/native epoch continuation (`342a0a5`)
+
+Final frozen code revision `342a0a518ce829d0c804624811eda121b81c0970` passed the same committed
+`scripts/verify-hud-wsl.sh` command in 4m39s, 120 tasks (20 executed /100 up-to-date), JDK21/offline.
+Core 182 +phone 383 +glasses 16 =**581 tests**, zero failures/errors/skips. Phone adds 16 tests
+(seven resource/context/mailbox, three whole-message lane, six pending-operation identity/concurrency).
+Final core remains LINE930/932 (99.79%), BRANCH959/1013 (94.67%), above both 90% floors.
+New helpers including nested classes are 100% line/branch covered:
+ConnectionEpoch6/6 lines,4/4 branches; ConnectionResources34/34,24/24;
+ConnectionWriteLane7/7,6/6; GattOperationSlot28/28,18/18. This is helper coverage,
+not Android callback/Binder/hardware acceptance or an overall App >=90% claim.
+
+Both lintDebug tasks passed: phone zero errors,98 warnings+2 hints; glasses zero errors,19 warnings.
+Both debug APKs assembled; final phone SHA256
+`078bf1ff713e1fec3f6ef286e6d5bfdfe6bbc62739fa6245d0487043676819b9` (74424579 bytes),
+glasses `947cd5db0ab5b3f4d4d351df78f78bd5431fa3deb5e8ef4a2d0740b385bd7e04` (30509550 bytes).
+All eight changed source/test files were byte-compared with the final verification stage.
+Exact counters, source/APK/log hashes and limitations are committed in
+`doc/PHONE_SESSION_VERIFICATION.json`; copied artifacts/reports remain ignored in `build/hud-verification/`.
+Two intermediate snapshots also passed (4m05s/2m59s) before independent review corrections;
+their APK hashes are superseded by this final run, not treated as final-source evidence.
+
+Production GATT and native session ownership now share one generation monitor. JNI encrypt/decrypt
+cannot overlap native session retirement; late login allocations are freed rather than installed.
+Every handshake/poll retains its context and separate bounded mailboxes. Nested commands inherit
+that context rather than binding to the replacement link. Whole-message writes hold one coroutine
+lane through all MTU fragments/pacing. GATT write and CCCD callbacks match epoch plus exact target;
+even WRITE_NO_RESPONSE awaits the Android stack callback (not a vehicle acknowledgment).
+Host timeouts are3s for stack writes/CCCD and15s for connection/service discovery. Pending cancellation
+or timeout retires the connection before another operation can register, avoiding late-callback reuse.
+Missing/failed CCCD setup cannot publish Ready. Auth reply timeout and missing-name/failed-pairing
+paths use expected-epoch teardown and retired-generation Error publication. Permission-sensitive
+radio close is best effort after ownership/native retirement. Native API/wire bytes were not changed.
+
+Independent `phone_epoch_review` reviewed root's integration, reported teardown/error/context,
+callback identity/deadline, stale side-effect and cancellation blockers, and confirmed the final
+snapshot had no remaining blocker in the reviewed Kotlin changes. The agent authored the pending
+slot/helper tests; root separately inspected them and ran the full suite. No new dependency, lint
+baseline or coverage exclusion was added. Existing permission/deprecation annotations remain on
+low-level Android wrappers; no external Sonar quality-gate pass is claimed.
+
+Remaining native gap: registration `prepareHandshakeSafe` inserts a JNI handshake registry entry;
+`processHandshakeSafe` consumes it, but `freeSession` only frees login session entries. Cancellation
+between prepare/process has no native handshake-cancel API. This pre-existing gap needs an explicit
+JNI cancel operation, prepare/process/cancel ownership tests and rebuilt native artifacts; it is not
+fixed by login session retirement. Actual stack callback delivery/Binder timing and physical reconnect
+are NOT EXECUTED. `connect` is currently called by the main-thread ScanScreen; arbitrary-thread
+simultaneous connect calls are outside this verified contract. No Rust/native rebuild or vehicle write.
+
+The new radio lane is not the requested complete plan coordinator: polling/readback isolation,
+PevTransport adaptation, production CommandCoordinator-only settings and per-session experimental
+UI remain pending. Existing legacy light/lock semantics, signed-speed display and read-state
+confirmation limitations were not relabeled as verified settings.
+RideFlux's700-test consumer evidence remains valid for unchanged MIT core revision `bd3913d`;
+this phone-only change adds no consumer dependency/code. Original RideFlux advanced independently
+to owner `230ee91e5c0b7bfe3597826ea735d3f795868f95`, remote main
+`3de5bf486feeecc77109cd41dc1c7f0569ebfb71`; tracked status clean, GEMINI prompt untracked.
+Read-only diffs from83ef5a8 show diagnostic export/privacy/translations and HUD signing changes,
+plus owner-only HUD visibility/frame-session work. Preserve all on future integration. Neither
+owner nor isolated consumer was modified during this phone continuation; no push/merge/release.

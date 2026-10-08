@@ -91,7 +91,7 @@ Note on JNI build stamp:
 
 Out of scope this round: Tuya/ThingClips, LEBI, KuKirin, NIU (no empty adapters), calibration/OTA/unlock/shutdown/battery-protection commands.
 
-## 9. Latest continuation checkpoint — 2026-10-08
+## 9. Earlier continuation checkpoint — 2026-10-08 (superseded by phone checkpoint below)
 - HUD core fix `8d6587c`; production V1/ingress/lifecycle/permission wiring `1b1b2d9`; BLE fencing `04e141c`; I1 raw envelopes/tools `bd3913d`.
 - `scripts/verify-hud-wsl.sh` BUILD SUCCESSFUL: core 182 + phone 367 + glasses 16 =565 tests,
   zero failures/errors/skips; core LINE 930/932 (99.79%), BRANCH 959/1013 (94.67%); both lintDebug
@@ -134,7 +134,7 @@ consumer changes into HUD. Do not treat the isolated older RideFlux base as curr
 
 Next implementation priority: finish the Rust/GATT epoch-bound adapter and isolate polling/settings
 through one coordinator; phone per-session experimental-mode UI; negotiated V2 delivery/display;
-then factual, provenance-audited additional family codecs/settings. Use the source/research chains
+then factual, provenance-audited additional family codecs/settings. Read the latest phone checkpoint below before implementing; old global channels/sessionPtr examples are obsolete. Use the source/research chains
 and field/command matrices. Physical M365 0x7D order and A2 CAP-B scaling remain owner tests NOT RUN.
 One subagent reported a usage limit; the latest team snapshot shows only root. No follow-up child
 edits were produced. Root completed BLE fencing and the I1 receive-only envelope, final HUD/consumer
@@ -144,8 +144,8 @@ Keep source ownership per namespace, preserve screenshots/owner edits, and appen
 and results before local commits. If interrupted, leave exact active process/staging and file-owner
 state here; do not convert unrun work into DONE.
 
-### Completed verification checkpoint
-No build/replay process or child agent is active. HUD stage `/home/kali/build/pev-core-stage` passed
+### I1/consumer completed verification checkpoint (before phone continuation)
+At that checkpoint no build/replay process or child agent was active. HUD stage `/home/kali/build/pev-core-stage` passed
 final verification (9m36s), then the committed I1 replay tool reran against its final JAR.
 Consumer stages `/home/kali/build/rideflux-pev-consumer-stage` and
 `/home/kali/build/rideflux-pev-core-source` passed strict offline validation (4m27s).
@@ -164,3 +164,50 @@ are not certified original BLE notification boundaries. External GPL-associated 
 outside the MIT checkout. Reproduction tools/spec and only independent synthetic tests are committed.
 External Sonar, native freshness, hardware reconnect and owner M365/A2 acceptance remain NOT RUN.
 Full requested product scope is PARTIAL; do not mark the phone writer/UI, V2 delivery or other families done.
+
+
+### Latest phone continuation checkpoint — code `342a0a5`
+
+- Final code commit `342a0a518ce829d0c804624811eda121b81c0970`; core/I1 remains unchanged at `bd3913d`.
+  Root owns production source/tests/docs; phone_epoch_review authored only the pending slot/test and
+  independently reviewed the root integration. Final review reports no remaining blocker in its Kotlin
+  scope after fixing the reported issues. New I1/glasses BLE independent review remains a separate queue.
+- Final `scripts/verify-hud-wsl.sh` passed4m39s/120tasks: core182 +phone383 +glasses16 =581 tests,
+  no failures/errors/skips; core99.79% line/94.67% branch, four new helper groups100% line/branch.
+  Both lintDebug and APK tasks passed; phone98 warnings+2hints /glasses19 warnings, zero errors.
+  Exact source hashes, counts, APK/log hashes: `doc/PHONE_SESSION_VERIFICATION.json`.
+- No process remains active at this completed checkpoint. Stage `/home/kali/build/pev-core-stage` is idle;
+  do not overwrite it concurrently. Final reports/artifacts in ignored `build/hud-verification/`.
+  Intermediate sessions47182/82024 and final9223 all finished; final9223 is authoritative.
+- Shared ConnectionResources owns GATT and login pointer under one monitor; crypto use cannot overlap
+  free. Coroutine ConnectionEpoch includes captured deviceId and separate64-capacity control/UART
+  mailboxes. Nested commands preserve inherited epoch. ConnectionWriteLane serializes a complete
+  fragmented message. GattOperationSlot correlates epoch+exact target; all ATT write types await stack
+  callback, with3s stack/CCCD and15s connection deadlines. Cancel/timeout retires first, then best-effort
+  closes old GATT. Callback success is stack completion only; no vehicle ACK/readback claim.
+- Session-bound cache/token/handshake flags and Ready/Error publication cannot overwrite a replacement
+  link. Auth reply timeout, failed pairing and missing advertised name use common captured teardown.
+  Subscription failure/missing CCCD rejects Ready. Plaintext/Ninebot data-plane readers now consume
+  their captured UART mailbox rather than auth/control traffic. No physical Ninebot acceptance.
+- Remaining JNI issue: incomplete registration handshake native registry allocation has no cancel API.
+  Add explicit cancelHandshake + prepare/process/cancel tests and rebuild/check all affected native
+  artifacts before claiming it solved. freeSessionSafe only handles login sessions. Rust is unchanged;
+  existing Windows/Linux fingerprint warning and hardware/Sonar NOT_RUN remain. Main-thread ScanScreen
+  is the current connect caller; arbitrary-thread simultaneous connect is not covered.
+- The message lane is not yet full production CommandCoordinator/PevTransport wiring. Legacy lock/light
+  still need audited gates/0x7D RMW/readback; never call them generally verified because a write succeeds.
+  Next owner must implement one plan/poll transaction authority and per-device/session experimental UI,
+  preserve byte-order uncertainty and unknown-speed/motion interlocks, then negotiated V2 delivery/UI.
+- Latest baseline recheck: HUD remote main stays `3d01e6f492141fd2c29aced4b19f98d51cb8364c`.
+  RideFlux remote main advanced to `3de5bf486feeecc77109cd41dc1c7f0569ebfb71`, owner HEAD
+  `230ee91e5c0b7bfe3597826ea735d3f795868f95`. Owner tracked status clean and GEMINI prompt remains
+  untracked. Read-only diffs: diagnostics/privacy/translations +HUD signing on main, plus owner branch
+  HUD visibility/session-frame changes. Do not overwrite/rebase/reset/stash/push/merge them.
+- Isolated RideFlux consumer remains clean at `68351e3`;700 tests and both lint/APKs still correspond to
+  unchanged authoritative core. Its9bd9eaa base is older than current owner/main and keeps0.1.10/code11;
+  preserve newer0.1.11/code12, security/diagnostics/signing/visibility changes on eventual integration.
+  No consumer code was copied to MIT HUD. No vehicle write/push/merge/publication occurred.
+
+If work stops, next agent reads this latest checkpoint, original pasted prompt, source ledger, matrices,
+and code/test witness before re-querying current git/owner status. Do not relabel581 tests or this peer
+review as Sonar/hardware/full-product acceptance. All remaining phone plans/UI/V2/families remain PARTIAL.

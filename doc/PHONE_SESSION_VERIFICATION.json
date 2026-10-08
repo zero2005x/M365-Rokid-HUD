@@ -1,0 +1,168 @@
+{
+  "date": "2026-10-08",
+  "status": "PASS",
+  "codeRevision": "342a0a518ce829d0c804624811eda121b81c0970",
+  "command": "wsl -d kali-linux -- bash /mnt/c/Users/liangtinglin/Documents/codebase/Android/M365-Rokid-HUD/scripts/verify-hud-wsl.sh",
+  "duration": "4m39s",
+  "actionableTasks": 120,
+  "executedTasks": 20,
+  "upToDateTasks": 100,
+  "offline": true,
+  "jdk": 21,
+  "nativeRebuilt": false,
+  "externalSonar": "NOT_RUN",
+  "hardwareAcceptance": false,
+  "independentKotlinReview": "phone_epoch_review: no remaining blocker in final frozen snapshot",
+  "sourceHashes": {
+    "app/src/main/java/com/m365bleapp/ble/BleManager.kt": "124224a773049766d4168115f3b1f344c0bf8964ca16080b8ccd9d419c604036",
+    "app/src/main/java/com/m365bleapp/ble/GattOperationSlot.kt": "4c38295146211bd1029017adfa7838c5413543a8de9a427aac7c2be16415768a",
+    "app/src/main/java/com/m365bleapp/repository/ScooterRepository.kt": "c84a14b859a394334f4368e423e63640d810a81cac1bf4682e7c21297962ed54",
+    "app/src/main/java/com/m365bleapp/repository/ConnectionResources.kt": "bd06e106c4c40e64c61e88ab7a97dda0edcc2d94665be19983a5c3a50c73c7b3",
+    "app/src/main/java/com/m365bleapp/repository/ConnectionWriteLane.kt": "9ece065f4dfc67291af066d5178c589da31d73cae869b07777daf7c92b919073",
+    "app/src/test/java/com/m365bleapp/ble/GattOperationSlotTest.kt": "2a6deeaf2ce3fcbc5f26231386c89392927e72f68649ae42dfc9d43701222cba",
+    "app/src/test/java/com/m365bleapp/repository/ConnectionResourcesTest.kt": "ba82bc625e014db8026d08dbdcabce36cdb59a98bf49213e2c1e648f496409e7",
+    "app/src/test/java/com/m365bleapp/repository/ConnectionWriteLaneTest.kt": "76ccca99c5943807d0b739e2411e91ab4f980e57491ce9b8cfda5694feec48a9"
+  },
+  "tests": {
+    "pev-protocol-core": {
+      "tests": 182,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "app": {
+      "tests": 383,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "glass-hud": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "lint": {
+    "app": {
+      "Warning": 98,
+      "Hint": 2
+    },
+    "glass-hud": {
+      "Warning": 19
+    }
+  },
+  "apks": {
+    "app": {
+      "sha256": "078bf1ff713e1fec3f6ef286e6d5bfdfe6bbc62739fa6245d0487043676819b9",
+      "bytes": 74424579
+    },
+    "glass-hud": {
+      "sha256": "947cd5db0ab5b3f4d4d351df78f78bd5431fa3deb5e8ef4a2d0740b385bd7e04",
+      "bytes": 30509550
+    }
+  },
+  "helperCoverage": {
+    "ConnectionEpoch": {
+      "INSTRUCTION": {
+        "missed": 0,
+        "covered": 81
+      },
+      "BRANCH": {
+        "missed": 0,
+        "covered": 4
+      },
+      "LINE": {
+        "missed": 0,
+        "covered": 6
+      },
+      "METHOD": {
+        "missed": 0,
+        "covered": 4
+      }
+    },
+    "ConnectionResources": {
+      "INSTRUCTION": {
+        "missed": 0,
+        "covered": 293
+      },
+      "BRANCH": {
+        "missed": 0,
+        "covered": 24
+      },
+      "LINE": {
+        "missed": 0,
+        "covered": 34
+      },
+      "METHOD": {
+        "missed": 0,
+        "covered": 12
+      }
+    },
+    "ConnectionWriteLane": {
+      "INSTRUCTION": {
+        "missed": 0,
+        "covered": 131
+      },
+      "BRANCH": {
+        "missed": 0,
+        "covered": 6
+      },
+      "LINE": {
+        "missed": 0,
+        "covered": 7
+      },
+      "METHOD": {
+        "missed": 0,
+        "covered": 2
+      }
+    },
+    "GattOperationSlot": {
+      "INSTRUCTION": {
+        "missed": 0,
+        "covered": 189
+      },
+      "BRANCH": {
+        "missed": 0,
+        "covered": 18
+      },
+      "LINE": {
+        "missed": 0,
+        "covered": 28
+      },
+      "METHOD": {
+        "missed": 0,
+        "covered": 7
+      }
+    }
+  },
+  "limitations": [
+    "Registration native handshake registry has no cancellation API; session handle cleanup does not reclaim incomplete registration handshakes.",
+    "Actual Android callback delivery/Binder timing and hardware reconnect not executed.",
+    "connect entry currently called on main thread; arbitrary-thread simultaneous connect not claimed.",
+    "PevTransport/sole plan coordinator, per-session experimental UI and V2 delivery remain pending."
+  ],
+  "coreKover": {
+    "INSTRUCTION": {
+      "missed": 151,
+      "covered": 8894
+    },
+    "BRANCH": {
+      "missed": 54,
+      "covered": 959
+    },
+    "LINE": {
+      "missed": 2,
+      "covered": 930
+    },
+    "METHOD": {
+      "missed": 1,
+      "covered": 266
+    },
+    "CLASS": {
+      "missed": 0,
+      "covered": 104
+    }
+  },
+  "logSha256": "7f7f05bab33621f1161d893c10dfb54538a6d5babb592af58a353099e3ef1b52"
+}

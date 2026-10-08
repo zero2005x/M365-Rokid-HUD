@@ -55,3 +55,26 @@ may be added there. No checklist item here is passed by a synthetic test or hist
 
 Inmotion I1 has no owner-testable vehicle in this scope. The 501-frame historical reference replay
 does not pass an owner checklist, validate physical scales or authorize a setting.
+
+
+## Phone epoch and stack-operation acceptance (NOT EXECUTED)
+
+Use a stationary M365 with its existing pairing keys and record the exact debug APK/source revision.
+1. Login normally; confirm AUTH/UART subscriptions complete and ordinary telemetry still arrives.
+   WRITE_NO_RESPONSE now waits for Android's stack completion. A device/stack that omits that callback
+   must produce a bounded failure, not a falsely delivered command or a stuck write lane.
+2. Disconnect/reconnect during login, polling, native crypto and a fragmented message. Late callbacks,
+   login results, cached protocol updates and old readers must not mutate or consume the new session.
+3. With a controlled test peripheral, omit a write/CCCD callback or service-discovery response.
+   Expect3s stack-operation /15s connect failure and retired resources, then a deliberate new connection.
+   These host timeouts are not proof that the vehicle applied or rejected a setting.
+4. Revoke Bluetooth permission during setup/close and reject/miss CCCD. Expect explicit Error,
+   local/native login cleanup and no fake Ready. Auth reply timeout and Ninebot pairing failure should
+   also clear the captured connection; no untested Ninebot physical support is inferred.
+5. Keep old command delays/readback work queued across reconnect. They must retain old context and
+   never write to the replacement device/session. Stop on any unexpected setting or stale/incorrect data.
+
+All items are unexecuted owner acceptance. The software tests exercise fake resources/continuations;
+they do not certify actual Bluetooth timing. Incomplete registration handshake cancellation remains
+a native registry limitation requiring a JNI cancellation API and fresh native build. The full
+production plan writer, per-session experimental UI and correlated readback remain pending.

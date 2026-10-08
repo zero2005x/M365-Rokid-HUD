@@ -109,3 +109,13 @@ Independent runner source `93ed8724d1b84f769294a1421f02dd08bc3b5afa102c986c0fed5
 CSV transform `935876a4993bf1587ff1bcbbe5e77b1bf38ffe545500f79e2ff2203561e24082`. Actual replay report SHA256 `7fede9168857f0d014326b6fe891a67e01a585e44f9b632ed8cf78b61501b76c`.
 The runner used the root Kotlin2.2.10 runtime, SHA256 `9c67cc79efd6b9215b49d2a4308f5f3433537376c7c88e89bdd6729bd096e61a`;
 no capture or GPL implementation is a runtime dependency of the MIT module.
+
+
+Phone session continuation `342a0a5`: ConnectionResources/ConnectionEpoch, ConnectionWriteLane and
+GattOperationSlot plus synthetic resource/callback/concurrency tests were independently authored
+inside the existing MIT HUD App; Android objects/JNI remain outside the pure shared core. Sources
+are the existing MIT repository's connection path and its already-used Kotlin/coroutine/Android APIs;
+no GPL/vendor code, external fixture, new runtime dependency or capture was copied. Slot/helper authored
+by phone_epoch_review, production integration by root; root inspected the slot and ran all tests,
+the reviewer separately inspected root's final integration. Source hashes and actual coverage/build
+witness: `doc/PHONE_SESSION_VERIFICATION.json`. Hardware/Sonar/native registry cleanup remain separate.

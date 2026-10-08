@@ -28,7 +28,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.m365hud.glass.ui.theme.GlassHudTheme
-import kotlinx.coroutines.Job
+import com.m365hud.glass.wifi.UnifiedConnectionManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -41,16 +43,15 @@ class MainActivity : ComponentActivity() {
     private var bleService: BleConnectionService? = null
     private var serviceBound = false
     
-    // Single job holding every state-flow collector, so re-observing replaces
-    // rather than duplicates them.
-    private var observeJob: Job? = null
+    // The lifecycle collector switches sources when Android rebinds the service.
+    private val observedClient = MutableStateFlow<UnifiedConnectionManager?>(null)
 
     // State holders for UI
     private val connectionState = mutableStateOf<BleClient.ConnectionState>(BleClient.ConnectionState.Disconnected)
     private val telemetryState = mutableStateOf(TelemetryData())
     private val timeDataState = mutableStateOf(TimeData())
     private val signalStrengthState = mutableStateOf(BleClient.SignalStrength.Good)
-    private val isTelemetryFreshState = mutableStateOf(true)
+    private val isTelemetryFreshState = mutableStateOf(false)
 
     /**
      * Which fields to render, as chosen on the phone.
@@ -68,14 +69,15 @@ class MainActivity : ComponentActivity() {
             bleService = binder.getService()
             serviceBound = true
             
-            // Observe service state flows
-            observeServiceState()
+            observedClient.value = bleService?.connectionManager
         }
         
         override fun onServiceDisconnected(name: ComponentName?) {
             Log.i(TAG, "Service disconnected")
             bleService = null
             serviceBound = false
+            observedClient.value = null
+            isTelemetryFreshState.value = false
         }
     }
     
@@ -145,6 +147,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         
+        observeServiceState()
         // Check permissions and start service
         checkPermissionsAndStart()
     }
@@ -183,20 +186,9 @@ class MainActivity : ComponentActivity() {
         if (hasFocus) applyImmersiveMode()
     }
 
-    override fun onStart() {
-        super.onStart()
-        // Collectors are normally registered from onServiceConnected. Only
-        // re-register if this Activity restarted while already bound; the
-        // observeJob guard means this can never stack duplicates.
-        if (serviceBound && observeJob?.isActive != true) {
-            observeServiceState()
-        }
-    }
-    
     override fun onDestroy() {
         super.onDestroy()
-        observeJob?.cancel()
-        observeJob = null
+        observedClient.value = null
         // Unbind from service but don't stop it - let it run in background
         if (serviceBound) {
             unbindService(serviceConnection)
@@ -271,37 +263,28 @@ class MainActivity : ComponentActivity() {
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
     
-    /**
-     * Collects the client's state flows into the Compose state holders.
-     *
-     * Uses [lifecycleScope] + [repeatOnLifecycle] rather than `MainScope()`.
-     * `MainScope()` created a brand-new scope per call that was never
-     * cancelled, so each of these collectors ran forever while capturing this
-     * Activity ??leaking the Activity (and the bound service/BLE client) across
-     * every stop/start and configuration change. Because this method is called
-     * from both onServiceConnected and onStart, those leaked collectors also
-     * accumulated, so every emission triggered N redundant state writes.
-     *
-     * [observeJob] guarantees only one set of collectors is ever active.
-     */
+    /** Registered once from onCreate; lifecycle stop cancels collection, start resumes it. */
     private fun observeServiceState() {
-        val client = bleService?.connectionManager ?: return
-
-        observeJob?.cancel()
-        observeJob = lifecycleScope.launch {
+        lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                client.hudState.collect { snapshot ->
-                    connectionState.value = snapshot.connection
-                    telemetryState.value = snapshot.telemetry
-                    timeDataState.value = snapshot.time
-                    signalStrengthState.value = snapshot.signal
-                    isTelemetryFreshState.value = snapshot.fresh
-                    displayPrefsState.value = snapshot.preferences
+                observedClient.collectLatest { client ->
+                    if (client == null) {
+                        isTelemetryFreshState.value = false
+                    } else {
+                        client.hudState.collect { snapshot ->
+                            connectionState.value = snapshot.connection
+                            telemetryState.value = snapshot.telemetry
+                            timeDataState.value = snapshot.time
+                            signalStrengthState.value = snapshot.signal
+                            isTelemetryFreshState.value = snapshot.fresh
+                            displayPrefsState.value = snapshot.preferences
+                        }
+                    }
                 }
             }
         }
     }
-    
+
     private fun retryConnection() {
         Log.i(TAG, "Retry connection requested")
         if (serviceBound) {

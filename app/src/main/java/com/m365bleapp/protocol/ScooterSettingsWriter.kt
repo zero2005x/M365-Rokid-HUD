@@ -1,7 +1,17 @@
 package com.m365bleapp.protocol
 
+import io.github.zero2005x.pev.core.codec.xiaomi.PlanResult
+import io.github.zero2005x.pev.core.codec.xiaomi.StatusWordWriteOrder
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiPdu
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiSettings
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiStatusWordObservation
+import io.github.zero2005x.pev.core.command.CommandPlan
+
 /**
  * The reversible settings writes, and nothing else.
+ *
+ * Builders delegate logic and constants to [XiaomiSettings] and [XiaomiPdu]
+ * from `:pev-protocol-core`.
  *
  * ## Scope, and what is deliberately excluded
  *
@@ -44,13 +54,13 @@ package com.m365bleapp.protocol
 object ScooterSettingsWriter {
 
     /** Register for the KERS level. */
-    const val REG_KERS = 0x7B
+    const val REG_KERS = XiaomiPdu.REG_KERS
 
     /** Register for cruise control. */
-    const val REG_CRUISE = 0x7C
+    const val REG_CRUISE = XiaomiPdu.REG_CRUISE
 
     /** Register for the shared status word (tail light + units). */
-    const val REG_STATUS = 0x7D
+    const val REG_STATUS = XiaomiPdu.REG_STATUS_WORD
 
     /** KERS levels the reference app can set. There is no "off". */
     enum class Kers(val code: Int, val label: String) {
@@ -88,12 +98,24 @@ object ScooterSettingsWriter {
     // ------------------------------------------------------------- builders
 
     /** Builds the KERS write. */
-    fun setKers(level: Kers): Write =
-        Write(REG_KERS, byteArrayOf(level.code.toByte(), 0x00))
+    fun setKers(level: Kers): Write {
+        val plan = when (val res = XiaomiSettings.kersPlan(level.code)) {
+            is PlanResult.Ok -> res.plan
+            is PlanResult.Refused -> error(res.reason)
+        }
+        val pdu = plan.steps[0].bytes
+        return Write(REG_KERS, pdu.copyOfRange(4, pdu.size))
+    }
 
     /** Builds the cruise-control write. */
-    fun setCruise(engaged: Boolean): Write =
-        Write(REG_CRUISE, byteArrayOf(if (engaged) 0x01 else 0x00, 0x00))
+    fun setCruise(engaged: Boolean): Write {
+        val plan = when (val res = XiaomiSettings.cruisePlan(engaged)) {
+            is PlanResult.Ok -> res.plan
+            is PlanResult.Refused -> error(res.reason)
+        }
+        val pdu = plan.steps[0].bytes
+        return Write(REG_CRUISE, pdu.copyOfRange(4, pdu.size))
+    }
 
     /**
      * Builds a tail-light write from the **word that was just read**.
@@ -102,12 +124,9 @@ object ScooterSettingsWriter {
      * @param on whether the tail light should stay on.
      */
     fun setTailLight(currentlyReadWord: Int, on: Boolean): Write {
-        val updated = if (on) {
-            currentlyReadWord or EscTelemetryParser.TAIL_LIGHT_BIT
-        } else {
-            currentlyReadWord and EscTelemetryParser.TAIL_LIGHT_BIT.inv()
-        }
-        return statusWordWrite(updated)
+        val masked = currentlyReadWord and 0xFFFF
+        return Write(REG_STATUS, XiaomiSettings.statusWordPayload(masked, XiaomiSettings.TAIL_LIGHT_BIT, on,
+            StatusWordWriteOrder.BIG_ENDIAN))
     }
 
     /**
@@ -116,12 +135,9 @@ object ScooterSettingsWriter {
      * @param currentlyReadWord the 16-bit value returned by [EscTelemetryParser.statusBits].
      */
     fun setUnits(currentlyReadWord: Int, units: Units): Write {
-        val updated = if (units == Units.MPH) {
-            currentlyReadWord or EscTelemetryParser.MPH_BIT
-        } else {
-            currentlyReadWord and EscTelemetryParser.MPH_BIT.inv()
-        }
-        return statusWordWrite(updated)
+        val masked = currentlyReadWord and 0xFFFF
+        return Write(REG_STATUS, XiaomiSettings.statusWordPayload(masked, XiaomiSettings.MPH_BIT, units == Units.MPH,
+            StatusWordWriteOrder.BIG_ENDIAN))
     }
 
     /**
@@ -149,13 +165,14 @@ object ScooterSettingsWriter {
      */
     fun statusWordWrite(word: Int): Write {
         val masked = word and 0xFFFF
-        return Write(
+        val pdu = XiaomiPdu.write(
             REG_STATUS,
             byteArrayOf(
                 ((masked ushr 8) and 0xFF).toByte(),
                 (masked and 0xFF).toByte(),
             ),
         )
+        return Write(REG_STATUS, pdu.copyOfRange(4, pdu.size))
     }
 
     // ------------------------------------------------------------- read-back
@@ -227,4 +244,45 @@ object ScooterSettingsWriter {
     /** Builds a cruise write together with its inverse. */
     fun setCruiseReversible(previousEngaged: Boolean, engaged: Boolean): ReversibleWrite =
         ReversibleWrite(write = setCruise(engaged), undo = setCruise(previousEngaged))
+
+    /**
+     * Converts a legacy big-endian [Write] into one typed plan. Status writes require a
+     * fresh core observation and an explicit wire byte order. Multiple changed bits are refused.
+     */
+    fun toCommandPlan(
+        write: Write,
+        currentStatusWord: XiaomiStatusWordObservation? = null,
+        order: StatusWordWriteOrder? = null,
+        nowMs: Long = System.currentTimeMillis(),
+    ): CommandPlan? {
+        if (write.payload.size != 2) return null
+        return when (write.register) {
+        REG_KERS -> {
+            val level = write.payload[0].toInt() and 0xFF
+            if (write.payload[1] != 0.toByte()) null else (XiaomiSettings.kersPlan(level) as? PlanResult.Ok)?.plan
+        }
+        REG_CRUISE -> {
+            val raw = write.payload[0].toInt() and 0xFF
+            if (write.payload[1] != 0.toByte() || raw !in 0..1) null
+            else (XiaomiSettings.cruisePlan(raw == 1) as? PlanResult.Ok)?.plan
+        }
+        REG_STATUS -> statusPlan(write, currentStatusWord, order, nowMs)
+        else -> null
+        }
+    }
+
+    private fun statusPlan(write: Write, current: XiaomiStatusWordObservation?,
+        order: StatusWordWriteOrder?, nowMs: Long): CommandPlan? {
+        if (order == null) return null
+        val previous = current?.reading?.value?.raw ?: return null
+        val intended = ((write.payload[0].toInt() and 0xFF) shl 8) or (write.payload[1].toInt() and 0xFF)
+        val result = when (previous xor intended) {
+            XiaomiSettings.TAIL_LIGHT_BIT -> XiaomiSettings.tailLightPlan(current,
+                intended and XiaomiSettings.TAIL_LIGHT_BIT != 0, order, nowMs)
+            XiaomiSettings.MPH_BIT -> XiaomiSettings.unitsPlan(current,
+                intended and XiaomiSettings.MPH_BIT != 0, order, nowMs)
+            else -> return null
+        }
+        return (result as? PlanResult.Ok)?.plan
+    }
 }

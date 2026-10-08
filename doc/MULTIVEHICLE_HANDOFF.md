@@ -1,0 +1,213 @@
+# Multi-vehicle core — agent handoff (read this first)
+
+Living status file. **Any agent continuing the work: read this, then update §3/§4 as you finish items,
+commit, and leave the next agent a clean state.** Do not push, merge or release without the owner.
+
+## 1. Source of truth for the task
+- Full requirements prompt: `/home/kali/PEVAppRE/handoffs/20261007-m365-rokid-multivehicle/AI_AGENT_PROMPT.md`
+  (Windows: `\\wsl.localhost\kali-linux\home\kali\PEVAppRE\handoffs\20261007-m365-rokid-multivehicle\`), plus `RESEARCH.md` beside it.
+- PEVAppRE is **read-only** reference. RideFlux (`../RideFlux`, GPL, has uncommitted edits) must not be reset/stashed/overwritten and is never a code source.
+
+## 2. Baseline (recorded 2026-10-07)
+- HUD `origin/main` = `3d01e6f492141fd2c29aced4b19f98d51cb8364c`; old local branch `fix/negative-speed-and-gateway-retry` has an identical tree (squash-merged).
+- Work branch: `feat/pev-protocol-core` (from origin/main). Untracked `glasses-screen.png`, `phone-screen.png` are the user's; leave them.
+- No AGENTS.md exists in the HUD repo. Files have mixed LF/CRLF endings. Preserve each file's existing endings; do not blanket-convert or rewrite with `Set-Content`. For retained CRLF files, use `git -c core.whitespace=cr-at-eol diff --check`.
+
+## 3. Decisions already made (do not re-ask)
+Scooters + EUCs, telemetry + settings; experimental (unverified) writes only behind an explicit per-device/per-session
+opt-in on the phone; only vehicles owner can test: **Xiaomi M365, Begode A2**; independent MIT core consumed by HUD and RideFlux;
+settings on phone only, glasses show telemetry + alerts only (never vehicle settings).
+
+## 4. Build / test (this machine)
+Native Windows Gradle fails here ("Unable to establish loopback connection", even unsandboxed). Use WSL (Kali):
+```bash
+src=/mnt/c/Users/liangtinglin/Documents/codebase/Android/M365-Rokid-HUD; st=/home/kali/build/pev-core-stage
+rsync -a --delete --exclude build --exclude .gradle --exclude .git --exclude target --exclude '*.jks' --exclude '*.bak' --exclude research --exclude docs --exclude .idea $src/ $st/
+cd $st && sed -i 's/\r$//' gradlew && printf 'sdk.dir=/home/kali/android-sdk\n' > local.properties
+bash gradlew --no-daemon --offline :pev-protocol-core:test :pev-protocol-core:koverXmlReport
+```
+(WSL has JDK 21/25 only, hence the core pins `jvmTarget 17` instead of a toolchain. Passing multi-line scripts via `wsl bash -c` from PowerShell mangles quotes — write a `.sh` file and run it.)
+Full repo build/tests: `scripts/build-wsl.ps1` expects `/home/kali/ScooterHacking/env.sh`, which does **not** exist now — recreate or adapt.
+Sonar: core sources/tests/Kover are configured in `sonar-project.properties` and CI. External Sonar has not run locally (no scanner/token).
+Use JDK21 explicitly: `export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64; export PATH="$JAVA_HOME/bin:$PATH"`.
+`scripts/verify-hud-wsl.sh` stages the checkout and runs core/App/glasses Kover, both lintDebug and debug APK builds; it explicitly uses existing native artifacts with `-PskipRustBuild`. Do not run staging scripts concurrently against the same stage.
+
+## 5. Quality gates for every change (SonarCloud)
+Small functions, no unused code, no `!!` where avoidable, no duplicated literals, tests for every branch, no new
+dependencies without license check. Pure logic must be JVM-unit-tested (Kover). Keep coverage on new code high (aim ≥ 90%).
+
+## 6. Done so far (branch `feat/pev-protocol-core`)
+- `:pev-protocol-core` module (Kotlin/JVM, MIT, registered in settings + root kover).
+- `telemetry/` Reading/FieldState/Evidence/FieldId/TelemetrySnapshot (unknown ≠ 0, aging).
+- `identity/` DeviceIdentity + IdentitySource + profileKey.
+- `codec/StreamReassembler` + `FixedFrameSplitter` (bounded, resync, diagnostics).
+- `command/` CommandSpec/Plan, CommandGate (default-deny, experimental opt-in bound to profileKey), WriteSession, CommandCoordinator (single writer, no auto-retry, ACK vs readback vs unconfirmed).
+- Queue item 2a DONE: `codec/xiaomi/` — `XiaomiPdu` (logical read/write messages + reply parse), `XiaomiMotorInfoDecoder` (0xB0: SOC/speed signed/total distance/`TEMP_FRAME`, evidence WIRE_CAPTURED, 2 real-capture fixtures), `XiaomiSettings` (KERS, cruise, tail light, units; all readback-confirmed, VENDOR_STATIC ⇒ experimental-only, M365-scoped; 0x7D is RMW from a fresh word and **requires an explicit `StatusWordWriteOrder`**, no default).
+- Root docs started: `SUPPORT_MATRIX.md`, `COMMAND_MATRIX.md`, `OWNER_VALIDATION.md` (0x7D byte-order test procedure). `scripts/core-test-wsl.sh` runs core tests in WSL.
+- Queue item 2b(i) DONE: `codec/xiaomi/` — `XiaomiBmsDecoder` (0x31/0x35/0x40/0x38/0x39/0x3B, cell voltages, dual temperatures, cycle/charge counts), `XiaomiEscDecoder` (0x25, 0x3A, 0x1B error code, 0x1A/0x39 firmware/identity, 0x7B/0x7C/0x7D settings readback), and `XiaomiRegisterBytes`.
+- Queue item 2b(iv) DONE: `XiaomiCaptureReplayTest` replaying 152 real B0 payloads + 3 RX3A + 1 RX25 from `logcat-spin-raw.txt` with manifest verification, regression oracles, and 92 matching phone CSV records.
+- Queue item 2b(v) / App delegation DONE: `BmsTelemetryParser` and `EscTelemetryParser` delegate to `XiaomiBmsDecoder` and `XiaomiEscDecoder` while preserving legacy app behaviors (display clamping, percent fallback, nullable status).
+- Queue item 3 (Begode A2 raw codec) DONE: `BegodeA2Codec` in `io.github.zero2005x.pev.core.codec.begode`, implementing bounded 24-byte envelope reassembly, 0x00/01/04/07 branch decoding with byte19 discriminator, and strictly raw diagnostic representations (no fake PWM, no fused distances, no unproven voltage/SOC scaling). Compiled-core replay across 11,424 CAP-A frames verified.
+- Queue item 4 (Gateway G) PARTIAL: original `51536b5` draft passed unit tests but independent review found decoder length/CRC overlap, incorrect magic, V1 precision/wrap differences, zero-filled unknown values, and conflated current/temperature sensors. This continuation fixes the core wire contract and delegates actual BLE/Wi-Fi V1 producers and glasses V1 parser to it. V2 remains an unreleased core schema; negotiated delivery, MTU framing, upgrade UI and alert freshness/deduplication are still required. No multi-vehicle glasses support is claimed.
+- Command safety hardening DONE: `CommandCoordinator` and `CommandGate` hardened against ungated execution, uncorrelated ACK, cancellation after final delay, reconnect write races, profile changes restoring consent, pack/source identity omissions, mutable buffer exposure, cross-session RMW reuse/expiry, late confirmations, and wrong-source/type readback.
+- Coverage enforcement DONE: `scripts/check-core-coverage.py` enforces core LINE and BRANCH coverage >= 90%.
+- Docs: `pev-protocol-core/{README,ARCHITECTURE,SOURCE_PROVENANCE}.md`, `SUPPORT_MATRIX.md`, `COMMAND_MATRIX.md`, `OWNER_VALIDATION.md`, `TEST_REPORT.md`.
+- Unit tests for all of the above (see §7 for the last verified result).
+
+## 7. Verification log (append; never write "passed" without a run)
+| Date | Command | Result |
+|---|---|---|
+| 2026-10-07 | WSL `:pev-protocol-core:test :koverXmlReport` | BUILD SUCCESSFUL; 42 tests, 0 failures; Kover LINE 181/182, BRANCH 125/131 |
+| 2026-10-07 | scripts/core-test-wsl.sh (core + Xiaomi adapter) | BUILD SUCCESSFUL; 65 tests, 0 failures; Kover LINE 250/251, BRANCH 190/205 |
+| 2026-10-07 | scripts/app-and-core-test-wsl.sh (pre-change core + app unit tests) | BUILD SUCCESSFUL; Core 66 tests, 0 failures; App 22 testsuites, 361 tests, 0 failures (309 in the earlier handoff was incorrect) |
+| 2026-10-07 | scripts/app-and-core-test-wsl.sh (integrated core + app unit tests + Kover XML) | BUILD SUCCESSFUL; Core 142 tests, 0 failures; App 22 testsuites, 367 tests, 0 failures; Core Kover LINE 569/569 (100.00%), BRANCH 522/549 (95.08%) |
+| 2026-10-07 | scripts/app-and-core-test-wsl.sh (with Gateway protocol V1/V2 & Guard) | BUILD SUCCESSFUL; Core 155 tests, 0 failures; App 22 testsuites, 367 tests, 0 failures; Core Kover LINE 819/822 (99.64%), BRANCH 621/651 (95.39%) |
+| 2026-10-07 | Windows native toolchain cargo test (ninebot-ffi) | Prior agent recorded 5 passed; not rerun/independently witnessed in the 2026-10-08 continuation |
+| 2026-10-07 | Windows native toolchain cargo test (ninebot-ble) | Prior agent recorded 148 passed; not rerun/independently witnessed in the 2026-10-08 continuation |
+| 2026-10-07 | Windows native toolchain test-jni.ps1 | Prior agent recorded 56 passed; not rerun/independently witnessed in the 2026-10-08 continuation |
+| 2026-10-07 | WSL compiled-core replay of Begode A2 CAP-A | 11,424 frames decoded, 0 overflows, 0 physical guesses |
+| — | SonarCloud | NOT RUN (CI configured; local Sonar scanner/token not present; see TEST_REPORT.md) |
+
+Note on JNI build stamp:
+`app/build.gradle.kts` computes `rustInputFingerprint` over file relative paths using host file separators (`\` on Windows, `/` on Linux). The Rust sources in `ninebot-ffi` and `ninebot-ble` are pristine and unedited. The Windows-built `rust-build.stamp` matches the Windows fingerprint (`e80791fd...`). When building in WSL/Linux, use `-PskipRustBuild` unless rebuilding native libraries with a Linux NDK toolchain.
+
+## 8. Work queue (ordered). Owner = who may touch shared files
+1. **Integration owner**: CI step running `:pev-protocol-core:test :pev-protocol-core:koverXmlReport` added to `.github/workflows/ci.yml`; `SUPPORT_MATRIX.md`, `COMMAND_MATRIX.md`, `TEST_REPORT.md`, `OWNER_VALIDATION.md` completed. [DONE]
+2. **Xiaomi adapter (B)**:
+   - 2a: DONE (`codec/xiaomi/XiaomiPdu`, `XiaomiMotorInfoDecoder`, `XiaomiSettings`)
+   - 2b(i): DONE (`XiaomiBmsDecoder`, `XiaomiEscDecoder`, `XiaomiRegisterBytes`)
+   - 2b(ii): DONE (`MotorInfoParser`, `ScooterSettingsWriter` delegate to core)
+   - 2b(iv): DONE (M365 152-payload capture replay + phone CSV correspondence test)
+   - 2b(v): SOFTWARE CONTRACTS DONE (fresh session-bound RMW, explicit write order, signed-speed isolation). Physical 0x7D endianness remains unresolved; owner procedure NOT EXECUTED.
+   - 2b(iii) [Remaining]: app-side `PevTransport` adapter over the Rust/JNI encrypt path — the core emits logical PDUs `[len,to,cmd,reg,payload]`, the adapter encrypts/frames.
+3. **Begode/Gotway (C)**:
+   - A2 raw-only codec + unit tests + 11,424 CAP-A frame replay [DONE].
+   - Remaining: command builders/plans for verified or experimental Begode settings when safe.
+4. **Gateway (G) [PARTIAL]**: share legacy V1 serialization/parser and strict inbound command refusal. Finish per-connection capability/version negotiation, V2 BLE fragmentation + Wi-Fi framing, generation/field freshness, upgrade UI, semantic display and alert deduplication; exercise old/new clients. Existing primitive M365 update APIs still lack field provenance and are not safe multi-vehicle entry points. No new vehicle may enter that legacy path.
+5. **Phone UI + app wiring**: adopt `CommandCoordinator` as the only GATT writer; experimental-mode screen (per device/session opt-in, shows profile/firmware/command/unit/why-unverified); no raw hex console.
+6. **Inmotion I1 (E) [PARTIAL]**: `bd3913d` adds independent MIT bounded receive-only envelopes and immutable raw CAN diagnostics; 16 synthetic tests and 501-frame historical reference replay passed. No physical fields/auth/model/settings or App family selection. Continue profile/semantic evidence separately. **Zydtech (D), Ninebot ESx/G30 (B), KingSong (E), Veteran/NOSFET + Inmotion I2 (F)**: each in its own `codec/<family>/` namespace with fixtures, tests, capability proposals, provenance rows. Unidentified layout ⇒ raw diagnostics only. Never infer family from UUID (FFE0/NUS collide).
+7. **RideFlux integration [PARTIAL]**: isolated `RideFlux-pev-core-consumer`, branch `codex/pev-core-consumer`, local commit `eb94187` on explicit base `9bd9eaa`; configurable thin Gradle included build consumes external MIT core without source copying. M365 read PDUs/SOC/odometer/frame temperature delegated; legacy speed/B9 compatibility still unresolved. Strict domain/protocol/core tests passed 684, M365Codec 100% line / 93.55% branch. Keep newer main privacy/token-log fixes and owner version commit `ee23b875` when integrating; original checkout untouched. Android lint and both debug APK builds also passed; full command/gateway migration remains pending. Latest authoritative core/Android evidence is committed as `68351e3`; see consumer `docs/pev-core-latest-validation.json` for exact results. Historical evidence remains at `c984f52`.
+8. Final: independent review (provenance, A2 corrections, UUID collision, setting gates, gateway unknown handling, M365 regression), owner validation checklist for M365/A2 (list unexecuted items explicitly).
+
+Out of scope this round: Tuya/ThingClips, LEBI, KuKirin, NIU (no empty adapters), calibration/OTA/unlock/shutdown/battery-protection commands.
+
+## 9. Earlier continuation checkpoint — 2026-10-08 (superseded by phone checkpoint below)
+- HUD core fix `8d6587c`; production V1/ingress/lifecycle/permission wiring `1b1b2d9`; BLE fencing `04e141c`; I1 raw envelopes/tools `bd3913d`.
+- `scripts/verify-hud-wsl.sh` BUILD SUCCESSFUL: core 182 + phone 367 + glasses 16 =565 tests,
+  zero failures/errors/skips; core LINE 930/932 (99.79%), BRANCH 959/1013 (94.67%); both lintDebug
+  zero errors (phone 98 warnings / 2 hints; glasses 19 warnings), both debugAPKs assembled.
+  Use `PEV_GRADLE_ONLINE=1` only if declared dependencies are missing from offline cache.
+- Native libraries used with explicit `-PskipRustBuild`; host fingerprint separator warning remains.
+  Rust/native freshness/hardware/Sonar were not newly certified. Prior Rust counts above are historical.
+- Gateway production now shares V1 encoder/parser and rejects glasses vehicle commands. V2 schema
+  is core-only and documented in `pev-protocol-core/GATEWAY_SCHEMA.md`; retain PARTIAL status.
+- BLE follow-up `04e141c` now serializes GATT admission and state mutation with connect/disconnect.
+  Scan callbacks have per-attempt ownership; old watchdog/battery/RSSI/discovery jobs retain their
+  captured handle. Delayed reconnect is revision-bound and manual disconnect/disable invalidates it.
+  Freshness uses monotonic elapsed time. Detached handles close synchronously before scope cancellation.
+  Four synthetic session-ownership tests passed; helper Kover LINE 12/12 and BRANCH 2/2. Android stack
+  timing/physical reconnect acceptance remains an owner test, not proven by these JVM tests.
+- Lint fixes: collect lifecycle once from onCreate and switch bound StateFlow clients; permission
+  rejection in preference notification is handled; disconnect always releases local/native resources.
+- Independent read-only review completed gateway schema/production paths, lifecycle/permission
+  changes and isolated RideFlux consumer. MotorInfo's old signed-i16/median-ratio comment corrected
+  to the implemented 0xC000 compatibility threshold and limited replay evidence; no algorithm change.
+- Latest read-only recheck: RideFlux owner HEAD `97552efff94907ea50452592f4cffce2ec2010a8`,
+  remote main still `83ef5a8835345d624bbaec3ad899c89b81b084fc`; HUD remote main remains
+  `3d01e6f492141fd2c29aced4b19f98d51cb8364c`. Owner diagnostic-log feature/fixes and settings
+  test commits `66e4e45`, `bb2a793`, `97552ef` are newer than the isolated base. Owner tracked
+  status is clean, with untracked `GEMINI_NOSFET_F18_V11_REMEDIATION_PROMPT.md` preserved.
+  Preserve version 0.1.11/code12, privacy/token-log fixes and these diagnostics on later integration.
+  No reset/stash/owner-file edit/push/merge/release/vehicle write. Isolated consumer documentation
+  now committed at `68351e3e68662f01d35079b284280c9a967f5c6a`, with code unchanged from `eb94187`.
+- Consumer exact hashes, strict dependency integrity evidence and historical 684 test results live in its committed
+  `docs/PEV_CORE_CONSUMER.md`, `docs/pev-core-validation.json`, `docs/pev-core-artifact-verification.json`.
+- Consumer Android follow-up `c984f52`: strict offline lint and APK tasks BUILD SUCCESSFUL; phone/HUD
+  zero lint errors, 37/13 warnings. Both APKs contain the MIT decoder and no coverage-agent namespace.
+  New build/test dependency POMs audited as Apache-2.0, with separate shaded ASM BSD-3-Clause attribution.
+  Exact evidence: `docs/pev-core-android-validation.json` and `docs/pev-core-license-audit.json`.
+
+### Next-agent entry point
+Read this file, `TEST_REPORT.md`, source ledger and the consumer docs, then re-query both repositories
+and owner working-tree status. The pasted historical baseline is obsolete. Never cherry-pick GPL
+consumer changes into HUD. Do not treat the isolated older RideFlux base as current released main.
+
+Next implementation priority: finish the Rust/GATT epoch-bound adapter and isolate polling/settings
+through one coordinator; phone per-session experimental-mode UI; negotiated V2 delivery/display;
+then factual, provenance-audited additional family codecs/settings. Read the latest phone checkpoint below before implementing; old global channels/sessionPtr examples are obsolete. Use the source/research chains
+and field/command matrices. Physical M365 0x7D order and A2 CAP-B scaling remain owner tests NOT RUN.
+One subagent reported a usage limit; the latest team snapshot shows only root. No follow-up child
+edits were produced. Root completed BLE fencing and the I1 receive-only envelope, final HUD/consumer
+tests and final compiled-core replay. New I1/BLE independent peer review remains pending; earlier
+gateway/consumer reviews do not cover those changes. Stages are idle and may be refreshed sequentially.
+Keep source ownership per namespace, preserve screenshots/owner edits, and append actual commands
+and results before local commits. If interrupted, leave exact active process/staging and file-owner
+state here; do not convert unrun work into DONE.
+
+### I1/consumer completed verification checkpoint (before phone continuation)
+At that checkpoint no build/replay process or child agent was active. HUD stage `/home/kali/build/pev-core-stage` passed
+final verification (9m36s), then the committed I1 replay tool reran against its final JAR.
+Consumer stages `/home/kali/build/rideflux-pev-consumer-stage` and
+`/home/kali/build/rideflux-pev-core-source` passed strict offline validation (4m27s).
+Every staged core main Kotlin file was byte-compared with authoritative HUD source.
+Final I1 source SHA256 `092a27d41d55a1c18e1dd62fd133f2ed2d2641d805deffb7e728a76248e2c23f`.
+
+Latest consumer: 123 domain +395 protocol +182 core =700 tests; core LINE 930/932, BRANCH 959/1013;
+phone/HUD lint zero errors (37/13 warnings); both APKs define MIT Xiaomi/I1 classes without coverage
+agent class definitions. Packaging I1 does not expose Inmotion telemetry/settings in the consumer.
+See committed `68351e3` / `docs/pev-core-latest-validation.json`, with exact source/JAR/APK/log hashes.
+Final HUD: 565 tests; phone/glasses lint zero errors (98 warnings +2 hints /19 warnings); both APKs.
+See TEST_REPORT.md for exact hashes and run details; copied artifacts remain ignored.
+I1 final replay: 146 V5F +315 V8S +40 alerts =501 frames; CSV segmentation/bytewise/coalesced agree,
+eight escaped checks, two unsupported lengths, zero overflows/physical fields. Historical CSV segments
+are not certified original BLE notification boundaries. External GPL-associated captures stay read-only
+outside the MIT checkout. Reproduction tools/spec and only independent synthetic tests are committed.
+External Sonar, native freshness, hardware reconnect and owner M365/A2 acceptance remain NOT RUN.
+Full requested product scope is PARTIAL; do not mark the phone writer/UI, V2 delivery or other families done.
+
+
+### Latest phone continuation checkpoint — code `342a0a5`
+
+- Final code commit `342a0a518ce829d0c804624811eda121b81c0970`; core/I1 remains unchanged at `bd3913d`.
+  Root owns production source/tests/docs; phone_epoch_review authored only the pending slot/test and
+  independently reviewed the root integration. Final review reports no remaining blocker in its Kotlin
+  scope after fixing the reported issues. New I1/glasses BLE independent review remains a separate queue.
+- Final `scripts/verify-hud-wsl.sh` passed4m39s/120tasks: core182 +phone383 +glasses16 =581 tests,
+  no failures/errors/skips; core99.79% line/94.67% branch, four new helper groups100% line/branch.
+  Both lintDebug and APK tasks passed; phone98 warnings+2hints /glasses19 warnings, zero errors.
+  Exact source hashes, counts, APK/log hashes: `doc/PHONE_SESSION_VERIFICATION.json`.
+- No process remains active at this completed checkpoint. Stage `/home/kali/build/pev-core-stage` is idle;
+  do not overwrite it concurrently. Final reports/artifacts in ignored `build/hud-verification/`.
+  Intermediate sessions47182/82024 and final9223 all finished; final9223 is authoritative.
+- Shared ConnectionResources owns GATT and login pointer under one monitor; crypto use cannot overlap
+  free. Coroutine ConnectionEpoch includes captured deviceId and separate64-capacity control/UART
+  mailboxes. Nested commands preserve inherited epoch. ConnectionWriteLane serializes a complete
+  fragmented message. GattOperationSlot correlates epoch+exact target; all ATT write types await stack
+  callback, with3s stack/CCCD and15s connection deadlines. Cancel/timeout retires first, then best-effort
+  closes old GATT. Callback success is stack completion only; no vehicle ACK/readback claim.
+- Session-bound cache/token/handshake flags and Ready/Error publication cannot overwrite a replacement
+  link. Auth reply timeout, failed pairing and missing advertised name use common captured teardown.
+  Subscription failure/missing CCCD rejects Ready. Plaintext/Ninebot data-plane readers now consume
+  their captured UART mailbox rather than auth/control traffic. No physical Ninebot acceptance.
+- Remaining JNI issue: incomplete registration handshake native registry allocation has no cancel API.
+  Add explicit cancelHandshake + prepare/process/cancel tests and rebuild/check all affected native
+  artifacts before claiming it solved. freeSessionSafe only handles login sessions. Rust is unchanged;
+  existing Windows/Linux fingerprint warning and hardware/Sonar NOT_RUN remain. Main-thread ScanScreen
+  is the current connect caller; arbitrary-thread simultaneous connect is not covered.
+- The message lane is not yet full production CommandCoordinator/PevTransport wiring. Legacy lock/light
+  still need audited gates/0x7D RMW/readback; never call them generally verified because a write succeeds.
+  Next owner must implement one plan/poll transaction authority and per-device/session experimental UI,
+  preserve byte-order uncertainty and unknown-speed/motion interlocks, then negotiated V2 delivery/UI.
+- Latest baseline recheck: HUD remote main stays `3d01e6f492141fd2c29aced4b19f98d51cb8364c`.
+  RideFlux remote main advanced to `3de5bf486feeecc77109cd41dc1c7f0569ebfb71`, owner HEAD
+  `230ee91e5c0b7bfe3597826ea735d3f795868f95`. Owner tracked status clean and GEMINI prompt remains
+  untracked. Read-only diffs: diagnostics/privacy/translations +HUD signing on main, plus owner branch
+  HUD visibility/session-frame changes. Do not overwrite/rebase/reset/stash/push/merge them.
+- Isolated RideFlux consumer remains clean at `68351e3`;700 tests and both lint/APKs still correspond to
+  unchanged authoritative core. Its9bd9eaa base is older than current owner/main and keeps0.1.10/code11;
+  preserve newer0.1.11/code12, security/diagnostics/signing/visibility changes on eventual integration.
+  No consumer code was copied to MIT HUD. No vehicle write/push/merge/publication occurred.
+
+If work stops, next agent reads this latest checkpoint, original pasted prompt, source ledger, matrices,
+and code/test witness before re-querying current git/owner status. Do not relabel581 tests or this peer
+review as Sonar/hardware/full-product acceptance. All remaining phone plans/UI/V2/families remain PARTIAL.

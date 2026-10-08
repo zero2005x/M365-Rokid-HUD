@@ -4,8 +4,13 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiEscDecoder
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiStatusWordObservation
+import io.github.zero2005x.pev.core.command.CommandBinding
 
 /**
  * Tests for [ScooterSettingsWriter].
@@ -15,6 +20,9 @@ import org.junit.Test
  * leave the other bit in the shared word untouched.
  */
 class ScooterSettingsWriterTest {
+
+    private fun statusObservation() = XiaomiStatusWordObservation(
+        XiaomiEscDecoder.statusWord(byteArrayOf(0, 0), 10), CommandBinding("device", "session", "profile"))
 
     private fun le16(value: Int) = byteArrayOf(
         (value and 0xFF).toByte(),
@@ -275,5 +283,57 @@ class ScooterSettingsWriterTest {
 
         assertTrue(text.contains("0x7B"))
         assertTrue(text.contains("02"))
+    }
+
+    @Test
+    fun `toCommandPlan converts writes to core command plans`() {
+        val kersWrite = ScooterSettingsWriter.setKers(ScooterSettingsWriter.Kers.STRONG)
+        val kersPlan = ScooterSettingsWriter.toCommandPlan(kersWrite)
+        assertNotNull(kersPlan)
+        assertEquals("xiaomi.kers", kersPlan!!.spec.id)
+
+        val cruiseWrite = ScooterSettingsWriter.setCruise(true)
+        val cruisePlan = ScooterSettingsWriter.toCommandPlan(cruiseWrite)
+        assertNotNull(cruisePlan)
+        assertEquals("xiaomi.cruise", cruisePlan!!.spec.id)
+
+        val statusWrite = ScooterSettingsWriter.statusWordWrite(0x0002)
+        val current = statusObservation()
+        val statusPlan = ScooterSettingsWriter.toCommandPlan(statusWrite, currentStatusWord = current,
+            order = io.github.zero2005x.pev.core.codec.xiaomi.StatusWordWriteOrder.BIG_ENDIAN, nowMs = 10)
+        assertNotNull(statusPlan)
+        assertEquals("xiaomi.tail_light_always_on", statusPlan!!.spec.id)
+
+        val unknownWrite = ScooterSettingsWriter.Write(0x99, byteArrayOf(1, 2))
+        assertNull(ScooterSettingsWriter.toCommandPlan(unknownWrite))
+    }
+
+    @Test fun `status plans require fresh original observation and explicit order`() {
+        val write = ScooterSettingsWriter.statusWordWrite(2)
+        val current = statusObservation()
+        val order = io.github.zero2005x.pev.core.codec.xiaomi.StatusWordWriteOrder.LITTLE_ENDIAN
+        assertNull(ScooterSettingsWriter.toCommandPlan(write))
+        assertNull(ScooterSettingsWriter.toCommandPlan(write, currentStatusWord = current, nowMs = 10))
+        assertNull(ScooterSettingsWriter.toCommandPlan(write, order = order, nowMs = 10))
+        assertNull(ScooterSettingsWriter.toCommandPlan(write, current, order, 2011))
+        assertNull(ScooterSettingsWriter.toCommandPlan(ScooterSettingsWriter.statusWordWrite(0), current, order, 10))
+        assertNull(ScooterSettingsWriter.toCommandPlan(ScooterSettingsWriter.statusWordWrite(0x12), current, order, 10))
+        assertNull(ScooterSettingsWriter.toCommandPlan(ScooterSettingsWriter.statusWordWrite(0x80), current, order, 10))
+        val units = requireNotNull(ScooterSettingsWriter.toCommandPlan(ScooterSettingsWriter.statusWordWrite(0x10), current, order, 10))
+        assertEquals("xiaomi.units_mph", units.spec.id)
+        assertArrayEquals(byteArrayOf(4, 0x20, 2, 0x7D, 0x10, 0), units.steps.single().bytes)
+    }
+
+    @Test fun `malformed legacy writes cannot become typed commands`() {
+        for (register in listOf(ScooterSettingsWriter.REG_KERS, ScooterSettingsWriter.REG_CRUISE,
+            ScooterSettingsWriter.REG_STATUS)) {
+            for (payload in listOf(byteArrayOf(), byteArrayOf(0), byteArrayOf(0, 0, 0))) {
+                assertNull(ScooterSettingsWriter.toCommandPlan(ScooterSettingsWriter.Write(register, payload)))
+            }
+        }
+        assertNull(ScooterSettingsWriter.toCommandPlan(ScooterSettingsWriter.Write(ScooterSettingsWriter.REG_KERS, byteArrayOf(3, 0))))
+        assertNull(ScooterSettingsWriter.toCommandPlan(ScooterSettingsWriter.Write(ScooterSettingsWriter.REG_KERS, byteArrayOf(1, 1))))
+        assertNull(ScooterSettingsWriter.toCommandPlan(ScooterSettingsWriter.Write(ScooterSettingsWriter.REG_CRUISE, byteArrayOf(2, 0))))
+        assertNull(ScooterSettingsWriter.toCommandPlan(ScooterSettingsWriter.Write(ScooterSettingsWriter.REG_CRUISE, byteArrayOf(1, 1))))
     }
 }

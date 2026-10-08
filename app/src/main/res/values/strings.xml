@@ -318,4 +318,23 @@
     <string name="bond_bytes16">Ninebot: exactly 16 bytes (32 hex digits).</string>
     <string name="bond_manual_invalid">Check the MAC, key length, and label. The label must be at most 64 characters with no control characters.</string>
     <string name="bond_replace_question">This scooter already has a saved key. Replace it with the key you entered?</string>
+    <string name="experimental_title">Vehicle test settings</string>
+    <string name="experimental_scope">Xiaomi M365 only. Exact model selected by you; firmware scope unverified. Source-reviewed reversible commands, not vehicle-verified. Normal settings remain disabled.</string>
+    <string name="experimental_connect_required">Connect and authenticate a Xiaomi encrypted session first.</string>
+    <string name="experimental_enable">Enable for this session</string>
+    <string name="experimental_confirm_model">I have a Xiaomi M365</string>
+    <string name="experimental_consent">Confirm the exact M365 model (not Pro, Pro2, 1S, Lite, Mi3 or Ninebot). Firmware compatibility is unverified. Consent applies only to this device and connection. Stop if the original app disagrees; reconnect to revoke consent. Keep the vehicle stationary for riding settings.</string>
+    <string name="experimental_device">Selected M365 • %1$s • firmware unknown</string>
+    <string name="experimental_order_note">Tail light and units share status bits. Two sources disagree on write byte order. Choose BE or LE explicitly; no default. A fresh read preserves other bits, and readback must match.</string>
+    <string name="experimental_light_on">Tail light always on</string>
+    <string name="experimental_light_off">Tail light normal</string>
+    <string name="experimental_motion_note">KERS changes braking feel; cruise can hold speed without throttle. Both require fresh trusted stationary telemetry. Unknown or stale speed blocks them.</string>
+    <string name="experimental_kers">KERS %1$d</string>
+    <string name="experimental_cruise_on">Cruise on</string>
+    <string name="experimental_cruise_off">Cruise off</string>
+    <string name="experimental_disable">Disable and disconnect</string>
+    <string name="experimental_command_confirmation">Experimental command, not vehicle-verified. Confirm this single operation. It will not be automatically retried. Readback reports the observed register value; it does not certify safety or compatibility.</string>
+    <string name="experimental_send">Send once</string>
+    <string name="experimental_readback_confirmed">Readback matched. Hardware compatibility remains unverified.</string>
+    <string name="experimental_unconfirmed">Not confirmed</string>
 </resources>

@@ -11,6 +11,8 @@ import android.os.ParcelUuid
 import android.util.Log
 import androidx.annotation.RequiresPermission
 import androidx.core.app.ActivityCompat
+import io.github.zero2005x.pev.core.gateway.GatewayV1Frame
+import io.github.zero2005x.pev.core.gateway.GatewayCommandGuard
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Calendar
@@ -252,6 +254,15 @@ class M365GattServer(
             
             when (characteristic.uuid) {
                 M365HudGattProfile.GLASSES_BATTERY_CHAR_UUID -> {
+                    val allowed = !preparedWrite && offset == 0 &&
+                        GatewayCommandGuard.inspect(GatewayCommandGuard.MSG_TYPE_GLASSES_BATTERY, value) is
+                            GatewayCommandGuard.InspectionResult.Allowed
+                    if (!allowed) {
+                        if (responseNeeded) {
+                            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_WRITE_NOT_PERMITTED, 0, null)
+                        }
+                        return
+                    }
                     if (value.isNotEmpty()) {
                         glassesBatteryLevel = (value[0].toInt() and 0xFF).coerceIn(0, 100)
                         Log.d(TAG, "Received glasses battery: $glassesBatteryLevel% from ${device.address}")
@@ -506,26 +517,18 @@ class M365GattServer(
         }
         lastTelemetryUpdateMs = now
         
-        val buffer = ByteBuffer.allocate(M365HudGattProfile.TELEMETRY_DATA_SIZE)
-            .order(ByteOrder.LITTLE_ENDIAN)
-        
-        buffer.putShort((speedKmh * 100).toInt().toShort())           // 0-1
-        buffer.put(scooterBattery.coerceIn(0, 100).toByte())          // 2
-        buffer.putShort((tempC * 10).toInt().toShort())               // 3-4
-        buffer.putInt(totalMileageM.toInt())                          // 5-8
-        buffer.putShort((avgSpeedKmh * 100).toInt().toShort())        // 9-10
-        buffer.putShort((remainingKm * 10).toInt().toShort())         // 11-12
-        buffer.put(connectionState.toByte())                          // 13
-        buffer.putShort(tripMeters.toShort())                         // 14-15
-        buffer.putShort(tripSeconds.toShort())                        // 16-17
-        
-        // Calculate CRC16
-        val data = buffer.array()
-        val crc = calculateCrc16(data, 0, 18)
-        buffer.putShort(18, crc)
-        
-        currentTelemetry = data
-        
+        currentTelemetry = GatewayV1Frame(
+            speedKmh = speedKmh,
+            batteryPercent = scooterBattery,
+            temperatureC = tempC,
+            totalDistanceMeters = totalMileageM,
+            avgSpeedKmh = avgSpeedKmh,
+            remainingRangeKm = remainingKm,
+            connectionState = connectionState,
+            tripMeters = tripMeters,
+            tripSeconds = tripSeconds,
+        ).toBytes()
+
         // LATENCY OPTIMIZATION: Immediately notify all subscribed devices
         // The notifyCharacteristicChanged with confirm=false (3rd param) uses 
         // notifications (unacknowledged) which is faster than indications (acknowledged)
@@ -607,8 +610,7 @@ class M365GattServer(
         @Suppress("DEPRECATION")
         displayPrefsCharacteristic.value = buildDisplayPrefsPayload()
         subscribersOf(M365HudGattProfile.DISPLAY_PREFS_CHAR_UUID).values.forEach { device ->
-            @Suppress("DEPRECATION")
-            gattServer?.notifyCharacteristicChanged(device, displayPrefsCharacteristic, false)
+            notifyDisplayPrefs(device)
         }
     }
 
@@ -622,22 +624,20 @@ class M365GattServer(
         val device = subscribersOf(M365HudGattProfile.DISPLAY_PREFS_CHAR_UUID)[address] ?: return
         @Suppress("DEPRECATION")
         displayPrefsCharacteristic.value = buildDisplayPrefsPayload()
-        @Suppress("DEPRECATION")
-        gattServer?.notifyCharacteristicChanged(device, displayPrefsCharacteristic, false)
-        Log.d(TAG, "Sent display prefs to $address on subscribe")
-    }
-    
-    private fun calculateCrc16(data: ByteArray, offset: Int, length: Int): Short {
-        var crc = 0xFFFF
-        for (i in offset until offset + length) {
-            crc = crc xor (data[i].toInt() and 0xFF)
-            for (j in 0 until 8) {
-                crc = if (crc and 1 != 0) (crc shr 1) xor 0xA001 else crc shr 1
-            }
+        if (notifyDisplayPrefs(device)) {
+            Log.d(TAG, "Sent display prefs to $address on subscribe")
         }
-        return crc.toShort()
     }
-    
+
+    /** Preferences remain stored even if Bluetooth permission is revoked during notification. */
+    private fun notifyDisplayPrefs(device: BluetoothDevice): Boolean = try {
+        @Suppress("DEPRECATION")
+        gattServer?.notifyCharacteristicChanged(device, displayPrefsCharacteristic, false) == true
+    } catch (e: SecurityException) {
+        Log.w(TAG, "Cannot notify display preferences without Bluetooth permission", e)
+        false
+    }
+
     @RequiresPermission(allOf = [Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE])
     fun stop() {
         isRunning = false

@@ -1,0 +1,169 @@
+{
+  "counts": {
+    "all_rx_by_register": {
+      "25": 1,
+      "3a": 3,
+      "b0": 152
+    },
+    "motor_info": 152,
+    "phone_ambiguous": [],
+    "phone_matches": 92,
+    "phone_unmatched": [
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      100,
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123,
+      124,
+      125,
+      126,
+      127,
+      128,
+      129,
+      130,
+      131,
+      132,
+      133,
+      134,
+      135,
+      136,
+      137,
+      138,
+      139,
+      140,
+      141,
+      142,
+      143,
+      144,
+      145,
+      146,
+      147,
+      148,
+      149,
+      150,
+      151
+    ],
+    "selected_rx": 156
+  },
+  "evidence": "wire-captured",
+  "limits": [
+    "Parsed diagnostics and phone CSVs come from the historical fork app, not an independent vendor app or sensor; they establish regression consistency only.",
+    "Captured odometer increments provide an additional speed-scale cross-check; stationary wheel-off-ground capture is not a new hardware acceptance test.",
+    "Firmware and board identity are not inferred. Only selected decrypted RX is replayed; BLE notifications, auth and encryption are not covered.",
+    "Logged negative speed remains signed for core regression; historical notes describe it as sentinel/transient, not proven reverse motion.",
+    "0x25/0x3A data is preserved as neutral register evidence; shared 0x3A scale/semantics require source resolution."
+  ],
+  "model_scope": "owner Xiaomi M365 only",
+  "outputs_sha256": {
+    "motor-info.csv": "371e3241390885e5e43332614d11696d384783dad5235f6ecdaddfe43a9b31c1",
+    "phone-correspondence.csv": "d550c4a19126735906f6be2e6f11c4da30913c9f4765d5b3910c200cf2776b5e",
+    "rx-registers.csv": "026677411026ca13290c4ebe0368e6eb2f2e17c463fdd4dba108de68f5dad0e1"
+  },
+  "phone_sources": [
+    {
+      "file": "m365_telemetry_20260919_091214.csv",
+      "id": 0,
+      "sha256": "a47fc1ea62dd9c9d155fd471f97c76ac6be790f093359ba02e5a5448ec9e0f2a"
+    },
+    {
+      "file": "m365_telemetry_20260919_091242.csv",
+      "id": 1,
+      "sha256": "a47fc1ea62dd9c9d155fd471f97c76ac6be790f093359ba02e5a5448ec9e0f2a"
+    },
+    {
+      "file": "m365_telemetry_20260919_112631.csv",
+      "id": 2,
+      "sha256": "a47fc1ea62dd9c9d155fd471f97c76ac6be790f093359ba02e5a5448ec9e0f2a"
+    },
+    {
+      "file": "m365_telemetry_20260919_183608.csv",
+      "id": 3,
+      "sha256": "a47fc1ea62dd9c9d155fd471f97c76ac6be790f093359ba02e5a5448ec9e0f2a"
+    },
+    {
+      "file": "m365_telemetry_20260919_183833.csv",
+      "id": 4,
+      "sha256": "a47fc1ea62dd9c9d155fd471f97c76ac6be790f093359ba02e5a5448ec9e0f2a"
+    },
+    {
+      "file": "m365_telemetry_20260919_183936.csv",
+      "id": 5,
+      "sha256": "a47fc1ea62dd9c9d155fd471f97c76ac6be790f093359ba02e5a5448ec9e0f2a"
+    },
+    {
+      "file": "m365_telemetry_20260920_131311.csv",
+      "id": 6,
+      "sha256": "a47fc1ea62dd9c9d155fd471f97c76ac6be790f093359ba02e5a5448ec9e0f2a"
+    },
+    {
+      "file": "m365_telemetry_20260920_135527.csv",
+      "id": 7,
+      "sha256": "a421b8db215a1d86815fd1be1421d3a972db711bab89a1c84320454c97fc65e9"
+    },
+    {
+      "file": "m365_telemetry_20260920_142701.csv",
+      "id": 8,
+      "sha256": "e1ba19a26dc2de66a279c0a6bc1fae03da7621c8cbb64db2454172cffc27bbc6"
+    },
+    {
+      "file": "m365_telemetry_20260920_143318.csv",
+      "id": 9,
+      "sha256": "2b057fddf072351080d791815ce654c4550cb979e96c78bf3564ca117f877e1c"
+    },
+    {
+      "file": "m365_telemetry_20260920_143548.csv",
+      "id": 10,
+      "sha256": "b83e03aeed2b69fe7aa03c372b916f12ccd18f20e0b8951517392f1c24cd9cee"
+    },
+    {
+      "file": "m365_telemetry_20260920_143754.csv",
+      "id": 11,
+      "sha256": "392f7c1e139b19a7b24dbc8d50f283ab742d8de899d7fa4261ec54f90f9020b4"
+    }
+  ],
+  "redistribution": "Owner-authorized captured telemetry, derived into owner's MIT implementation repo; no vendor code.",
+  "schema": 1,
+  "source": {
+    "file": "logcat-spin-raw.txt",
+    "sha256": "e92cf09a2d3a6392367dc1dcbcf243a2174307b96e558bdd11b3f506a3b35b58"
+  },
+  "tool": {
+    "file": "scripts/extract-m365-fixtures.py",
+    "sha256": "c55621ea1108aae994291adbfff70d127a20cdef2140ad74ba2e4b4cfd1a50d0"
+  },
+  "transform": [
+    "Select only ScooterRepo Rx Decrypted direction 0x23, type 0x01, registers B0/25/3A; exclude TX, identity and all unrelated records.",
+    "Strip 3-byte decrypted header and 4-byte trailing padding; retain exact data bytes, relative millisecond times and 1-based source line numbers.",
+    "Associate each MotorInfo raw block with preceding matching B0 RX within 100ms; retain all 152 in capture order including duplicates.",
+    "Copy logged offset hex/decimal word diagnostics and Parsed motor info physical values verbatim; do not generate expected values by decoding payload.",
+    "Read telemetry CSVs only; copy columns Speed/Battery/Temperature/Mileage for a unique timestamp match within 100ms; never match by telemetry value.",
+    "Omit device names, MAC addresses, Model/ModelId/Confidence, keys, identity/serial replies and unrelated logcat; emit no absolute timestamps."
+  ]
+}

@@ -278,4 +278,23 @@
     <string name="bond_bytes16">Ninebot: рівно 16 байтів (32 шістнадцяткові цифри).</string>
     <string name="bond_manual_invalid">Перевірте MAC, довжину ключа й назву. Назва — до 64 символів без керувальних символів.</string>
     <string name="bond_replace_question">Для цього самоката вже збережено ключ. Замінити його введеним ключем?</string>
+    <string name="experimental_title">Тестові налаштування транспорту</string>
+    <string name="experimental_scope">Лише Xiaomi M365. Точну модель обираєте ви; діапазон прошивок не перевірено. Оборотні команди, перевірені за вихідним кодом, але не на реальному транспорті. Звичайні налаштування залишаються вимкненими.</string>
+    <string name="experimental_connect_required">Спершу підключіться та пройдіть автентифікацію зашифрованої сесії Xiaomi.</string>
+    <string name="experimental_enable">Увімкнути для цієї сесії</string>
+    <string name="experimental_confirm_model">У мене Xiaomi M365</string>
+    <string name="experimental_consent">Підтвердьте точну модель M365 (не Pro, Pro2, 1S, Lite, Mi3 і не Ninebot). Сумісність прошивки не перевірено. Згода діє лише для цього пристрою та цього підключення. Зупиніться, якщо оригінальний застосунок показує інше; перепідключіться, щоб відкликати згоду. Для налаштувань їзди тримайте самокат нерухомим.</string>
+    <string name="experimental_device">Обрано M365 • %1$s • прошивка невідома</string>
+    <string name="experimental_order_note">Задній ліхтар і одиниці використовують спільні біти стану. Два джерела розходяться щодо порядку байтів запису. Явно оберіть BE або LE; типового значення немає. Свіже читання зберігає інші біти, а зворотне читання має збігтися.</string>
+    <string name="experimental_light_on">Задній ліхтар завжди ввімкнено</string>
+    <string name="experimental_light_off">Задній ліхтар звичайний</string>
+    <string name="experimental_motion_note">KERS змінює відчуття гальмування; круїз може тримати швидкість без газу. Обидва потребують свіжої достовірної телеметрії у спокої. Невідома або застаріла швидкість їх блокує.</string>
+    <string name="experimental_kers">KERS %1$d</string>
+    <string name="experimental_cruise_on">Круїз увімк.</string>
+    <string name="experimental_cruise_off">Круїз вимк.</string>
+    <string name="experimental_disable">Вимкнути та від’єднати</string>
+    <string name="experimental_command_confirmation">Експериментальна команда, не перевірена на реальному транспорті. Підтвердьте цю єдину операцію. Автоматичного повтору не буде. Зворотне читання повідомляє спостережене значення регістра; воно не гарантує безпеку чи сумісність.</string>
+    <string name="experimental_send">Надіслати один раз</string>
+    <string name="experimental_readback_confirmed">Зворотне читання збіглося. Сумісність обладнання досі не перевірено.</string>
+    <string name="experimental_unconfirmed">Не підтверджено</string>
 </resources>

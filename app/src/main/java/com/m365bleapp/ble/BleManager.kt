@@ -16,24 +16,31 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.m365bleapp.protocol.MtuFragmenter
+import com.m365bleapp.repository.ConnectionResources
 import androidx.annotation.RequiresPermission
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import kotlin.coroutines.resume
 
-class BleManager(private val context: Context) {
+class BleManager internal constructor(
+    private val context: Context,
+    private val connectionOwner: ConnectionResources<BluetoothGatt>,
+) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val adapter = bluetoothManager.adapter
     
     // Disconnection callback for notifying upper layer (ScooterRepository)
-    private var onDisconnectCallback: (() -> Unit)? = null
+    private var onDisconnectCallback: ((Long) -> Unit)? = null
 
     // UUIDs
     companion object {
+        private const val OPERATION_TIMEOUT_MS = 3_000L
+        private const val CONNECT_TIMEOUT_MS = 15_000L
         val UART_SERVICE: UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
         val UART_TX: UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e") // Write
         val UART_RX: UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e") // Notify
@@ -45,9 +52,9 @@ class BleManager(private val context: Context) {
 
     private var connectContinuation: CancellableContinuation<BluetoothGatt?>? = null
     // We only support one pending write at a time (sequential protocol)
-    private var writeContinuation: CancellableContinuation<Boolean>? = null
+    private val writeOperations = GattOperationSlot<BluetoothGattCharacteristic, CancellableContinuation<Boolean>>()
     // We also need to track descriptor writes for enabling notifications securely
-    private var descriptorContinuation: CancellableContinuation<Boolean>? = null
+    private val descriptorOperations = GattOperationSlot<BluetoothGattDescriptor, CancellableContinuation<Boolean>>()
     private var onNotifyCallback: ((UUID, ByteArray) -> Unit)? = null
 
     /**
@@ -148,7 +155,7 @@ class BleManager(private val context: Context) {
     val usableChunkSize: Int
         get() = MtuFragmenter.chunkSizeFor(negotiatedMtu)
 
-    private val gattCallback = object : BluetoothGattCallback() {
+    private fun gattCallback(expectedEpoch: Long) = object : BluetoothGattCallback() {
         /**
          * Records the MTU the peripheral agreed to.
          *
@@ -157,129 +164,125 @@ class BleManager(private val context: Context) {
          * failure mode that loses frames silently.
          */
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                negotiatedMtu = mtu
-                Log.i(
-                    "BleManager",
-                    "MTU negotiated: $mtu (usable payload ${MtuFragmenter.chunkSizeFor(mtu)} bytes)"
-                )
-            } else {
-                Log.w(
-                    "BleManager",
-                    "MTU request failed (status=$status); keeping ${negotiatedMtu} " +
-                        "(usable payload $usableChunkSize bytes)"
-                )
+            connectionOwner.ifCurrent(expectedEpoch) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    negotiatedMtu = mtu
+                    Log.i(
+                        "BleManager",
+                        "MTU negotiated: $mtu (usable payload ${MtuFragmenter.chunkSizeFor(mtu)} bytes)"
+                    )
+                } else {
+                    Log.w(
+                        "BleManager",
+                        "MTU request failed (status=$status); keeping ${negotiatedMtu} " +
+                            "(usable payload $usableChunkSize bytes)"
+                    )
+                }
             }
         }
 
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-             Log.d("BleManager", "onConnectionStateChange: status=$status, newState=$newState (${if(newState == BluetoothProfile.STATE_CONNECTED) "CONNECTED" else if(newState == BluetoothProfile.STATE_DISCONNECTED) "DISCONNECTED" else "OTHER"})")
-             
-             if (status != BluetoothGatt.GATT_SUCCESS) {
-                Log.e("BleManager", "GATT error status: $status - closing connection")
-                gatt.close()
-                val cont = connectContinuation
-                connectContinuation = null
-                if (cont?.isActive == true) cont.resume(null)
-                return
-             }
-             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.i("BleManager", "Connected to ${gatt.device?.address}, refreshing GATT cache and discovering services...")
-                
-                // Try to refresh GATT cache to avoid stale data issues (GATT error 133)
-                try {
-                    val refreshMethod = gatt.javaClass.getMethod("refresh")
-                    val result = refreshMethod.invoke(gatt) as Boolean
-                    Log.d("BleManager", "GATT cache refresh result: $result")
-                } catch (e: Exception) {
-                    Log.w("BleManager", "Failed to refresh GATT cache: ${e.message}")
+            connectionOwner.ifCurrent(expectedEpoch) {
+                if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    abortConnection(expectedEpoch)
+                    return@ifCurrent
                 }
-                
-                gatt.discoverServices()
-             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.w("BleManager", "Disconnected from ${gatt.device?.address}")
-                gatt.close()
-
-                // Reset the negotiated MTU. It belongs to the link, not to this
-                // manager: carrying a 512-byte value from a previous scooter
-                // into a new connection that only granted 23 would over-size
-                // every write and lose frames silently.
-                if (negotiatedMtu != MtuFragmenter.DEFAULT_ATT_MTU) {
-                    Log.d("BleManager", "Resetting MTU $negotiatedMtu -> ${MtuFragmenter.DEFAULT_ATT_MTU}")
-                    negotiatedMtu = MtuFragmenter.DEFAULT_ATT_MTU
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    try {
+                        val refreshMethod = gatt.javaClass.getMethod("refresh")
+                        refreshMethod.invoke(gatt)
+                    } catch (e: Exception) {
+                        Log.w("BleManager", "GATT cache refresh unavailable: ${e.message}")
+                    }
+                    try {
+                        if (!gatt.discoverServices()) abortConnection(expectedEpoch)
+                    } catch (e: SecurityException) {
+                        abortConnection(expectedEpoch)
+                    }
                 }
-
-                // If the link drops before onServicesDiscovered fires (scooter
-                // powered off / out of range mid-connect), connect() would stay
-                // suspended forever and the stale continuation would make every
-                // later connect() fail immediately via the "Busy" check.
-                val cont = connectContinuation
-                connectContinuation = null
-                if (cont?.isActive == true) cont.resume(null)
-
-                // Drop the notification handler: keeping it would deliver
-                // events from a future session to a caller that already gave up.
-                onNotifyCallback = null
-
-                // Notify upper layer about disconnection
-                onDisconnectCallback?.invoke()
-             }
+            }
         }
         @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            Log.d("BleManager", "onServicesDiscovered: status=$status (${if(status == BluetoothGatt.GATT_SUCCESS) "SUCCESS" else "FAILED"})")
-            
-            val cont = connectContinuation
-            connectContinuation = null
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                val services = gatt.services
-                Log.i("BleManager", "Discovered ${services.size} services:")
-                services.forEach { service ->
-                    Log.d("BleManager", "  Service: ${service.uuid}")
+            connectionOwner.ifCurrent(expectedEpoch) {
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    abortConnection(expectedEpoch)
+                    return@ifCurrent
                 }
+                val continuation = connectContinuation
+                connectContinuation = null
                 publishDiscoverableProfiles(gatt)
-                if (cont?.isActive == true) cont.resume(gatt)
-            } else {
-                Log.e("BleManager", "Service discovery failed with status $status")
-                gatt.close()
-                if (cont?.isActive == true) cont.resume(null)
+                if (continuation?.isActive == true) continuation.resume(gatt)
             }
         }
-        
+
         // Android 13+ (API 33) new callback with value parameter
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
-            onNotifyCallback?.invoke(characteristic.uuid, value)
+            connectionOwner.ifCurrent(expectedEpoch) {
+                onNotifyCallback?.invoke(characteristic.uuid, value.copyOf())
+            }
         }
-        
+
         // Android 12 and below (deprecated in API 33)
         @Deprecated("Deprecated in API 33")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            @Suppress("DEPRECATION")
-            characteristic.value?.let { value ->
-                onNotifyCallback?.invoke(characteristic.uuid, value)
+            connectionOwner.ifCurrent(expectedEpoch) {
+                @Suppress("DEPRECATION")
+                characteristic.value?.let { value ->
+                    onNotifyCallback?.invoke(characteristic.uuid, value.copyOf())
+                }
             }
         }
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
-            super.onCharacteristicWrite(gatt, characteristic, status)
-             val success = status == BluetoothGatt.GATT_SUCCESS
-             val cont = writeContinuation
-             writeContinuation = null
-             if (cont?.isActive == true) cont.resume(success)
+            connectionOwner.ifCurrent(expectedEpoch) {
+                if (gatt !== connectionOwner.handle || characteristic == null) return@ifCurrent
+                val continuation = writeOperations.complete(expectedEpoch, characteristic)
+                if (continuation?.isActive == true) continuation.resume(status == BluetoothGatt.GATT_SUCCESS)
+            }
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt?, descriptor: BluetoothGattDescriptor?, status: Int) {
-            super.onDescriptorWrite(gatt, descriptor, status)
-            val success = status == BluetoothGatt.GATT_SUCCESS
-            val cont = descriptorContinuation
-            descriptorContinuation = null
-            if (cont?.isActive == true) cont.resume(success)
+            connectionOwner.ifCurrent(expectedEpoch) {
+                if (gatt !== connectionOwner.handle || descriptor == null) return@ifCurrent
+                val continuation = descriptorOperations.complete(expectedEpoch, descriptor)
+                if (continuation?.isActive == true) continuation.resume(status == BluetoothGatt.GATT_SUCCESS)
+            }
         }
+    }
+
+    /** Retire manager callbacks/continuations before the repository closes the detached GATT. */
+    fun retireConnection(): BluetoothGatt? = connectionOwner.withCurrent {
+        val detached = connectionOwner.invalidate()
+        val connect = connectContinuation
+        val write = writeOperations.retire()
+        val descriptor = descriptorOperations.retire()
+        connectContinuation = null
+        onNotifyCallback = null
+        negotiatedMtu = MtuFragmenter.DEFAULT_ATT_MTU
+        _discoveredProfiles.value = emptyList()
+        if (connect?.isActive == true) connect.resume(null)
+        if (write?.isActive == true) write.resume(false)
+        if (descriptor?.isActive == true) descriptor.resume(false)
+        detached
+    }
+
+    /** Cancellation cannot identify a late callback for the same target, so retire the link. */
+    @SuppressLint("MissingPermission")
+    private fun abortConnection(expectedEpoch: Long) {
+        val retired = connectionOwner.ifCurrent(expectedEpoch) {
+            val callback = onDisconnectCallback
+            val detached = retireConnection()
+            Triple(detached, callback, connectionOwner.epoch)
+        } ?: return
+        runCatching { retired.first?.disconnect() }
+        runCatching { retired.first?.close() }
+        retired.second?.invoke(retired.third)
     }
 
     @SuppressLint("MissingPermission")
@@ -306,111 +309,125 @@ class BleManager(private val context: Context) {
     fun getDevice(mac: String): BluetoothDevice {
         return adapter.getRemoteDevice(mac)
     }
-    
+
     /**
      * Set callback to be notified when BLE connection is lost.
      * This is important for detecting scooter power-off or out-of-range situations.
      */
-    fun setOnDisconnectCallback(callback: () -> Unit) {
-        onDisconnectCallback = callback
+    fun setOnDisconnectCallback(expectedEpoch: Long, callback: (Long) -> Unit) {
+        connectionOwner.ifCurrent(expectedEpoch) { onDisconnectCallback = callback }
     }
-    
-    fun clearOnDisconnectCallback() {
-        onDisconnectCallback = null
-    }
-    
-    @SuppressLint("MissingPermission")
-    suspend fun connect(device: BluetoothDevice, onNotify: (UUID, ByteArray) -> Unit): BluetoothGatt? = suspendCancellableCoroutine { cont ->
-        if (connectContinuation != null) {
-            // Busy
-             cont.resume(null)
-             return@suspendCancellableCoroutine
-        }
-        connectContinuation = cont
-        onNotifyCallback = onNotify
-        // Use TRANSPORT_LE to force BLE connection and avoid BR/EDR interference
-        // autoConnect=false for faster initial connection
-        Log.d("BleManager", "Connecting to ${device.address} with TRANSPORT_LE...")
-        val gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
 
+    fun clearOnDisconnectCallback() {
+        connectionOwner.withCurrent { onDisconnectCallback = null }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun beginConnection(device: BluetoothDevice, expectedEpoch: Long, onNotify: (UUID, ByteArray) -> Unit, continuation: CancellableContinuation<BluetoothGatt?>) {
+        if (!continuation.isActive) return
+        if (connectContinuation != null || connectionOwner.handle != null) {
+            continuation.resume(null)
+            return
+        }
+        connectContinuation = continuation
+        onNotifyCallback = onNotify
+        val gatt = try {
+            device.connectGatt(context, false, gattCallback(expectedEpoch), BluetoothDevice.TRANSPORT_LE)
+        } catch (e: SecurityException) {
+            abortConnection(expectedEpoch)
+            null
+        }
         if (gatt == null) {
-            // connectGatt returns null when the stack refuses the connection
-            // (max GATT clients reached, adapter unavailable, ...). Without
-            // this, no callback ever fires: connect() hangs forever and the
-            // stale continuation wedges every subsequent attempt.
-            Log.e("BleManager", "connectGatt returned null for ${device.address}")
             connectContinuation = null
             onNotifyCallback = null
-            cont.resume(null)
-            return@suspendCancellableCoroutine
+            if (continuation.isActive) continuation.resume(null)
+            return
         }
+        if (!connectionOwner.attach(expectedEpoch, gatt)) {
+            runCatching { gatt.close() }
+            if (continuation.isActive) continuation.resume(null)
+            return
+        }
+        continuation.invokeOnCancellation { cancelConnect(expectedEpoch, continuation) }
+    }
 
-        // If the caller's coroutine is cancelled while suspended here, clear the
-        // fields so the manager does not stay permanently "busy".
-        cont.invokeOnCancellation {
-            if (connectContinuation === cont) {
-                connectContinuation = null
-                onNotifyCallback = null
-            }
-            runCatching { gatt.disconnect() }
+    private fun cancelConnect(epoch: Long, continuation: CancellableContinuation<BluetoothGatt?>) {
+        connectionOwner.ifCurrent(epoch) {
+            if (connectContinuation === continuation) abortConnection(epoch)
         }
     }
+
+    suspend fun connect(device: BluetoothDevice, expectedEpoch: Long, onNotify: (UUID, ByteArray) -> Unit): BluetoothGatt? =
+        withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+            suspendCancellableCoroutine { continuation ->
+                val registered = connectionOwner.ifCurrent(expectedEpoch) {
+                    beginConnection(device, expectedEpoch, onNotify, continuation)
+                }
+                if (registered == null && continuation.isActive) continuation.resume(null)
+            }
+        }
 
     @SuppressLint("MissingPermission")
     fun requestPriority(gatt: BluetoothGatt, priority: Int) {
         gatt.requestConnectionPriority(priority)
     }
 
-    @SuppressLint("MissingPermission")
-    suspend fun write(gatt: BluetoothGatt, serviceUuid: UUID, charUuid: UUID, value: ByteArray, waitForResponse: Boolean = true): Boolean = suspendCancellableCoroutine { cont ->
-        if (waitForResponse && writeContinuation != null) {
-            // Already writing and waiting
-            cont.resume(false)
-            return@suspendCancellableCoroutine
-        }
-        
-        if (waitForResponse) {
-             writeContinuation = cont
-             // Without this, a cancelled caller leaves writeContinuation set and
-             // every later write fails on the "already writing" guard, with no
-             // onCharacteristicWrite left to clear it.
-             cont.invokeOnCancellation {
-                 if (writeContinuation === cont) writeContinuation = null
-             }
-        }
-
-        val char = findCharacteristic(gatt, serviceUuid, charUuid)
-        if (char == null) {
-            if (waitForResponse) writeContinuation = null
-            cont.resume(false)
-            return@suspendCancellableCoroutine
-        }
-        
-        @Suppress("DEPRECATION")
-        char.value = value
-        // The write type has to follow waitForResponse. A no-response write is
-        // never acknowledged by the peripheral, so waiting on
-        // onCharacteristicWrite after one only observes a stack-level callback
-        // that says nothing about whether the scooter processed the command.
-        char.writeType = if (waitForResponse) {
-            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        } else {
-            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-        }
-
-        @Suppress("DEPRECATION")
-        if (!gatt.writeCharacteristic(char)) {
-            Log.e("BleManager", "writeCharacteristic failed for $charUuid")
-            if (waitForResponse) writeContinuation = null
-            cont.resume(false)
-        } else {
-             if (!waitForResponse) {
-                 Log.d("BleManager", "writeCharacteristic initiated (no wait) for $charUuid")
-                 cont.resume(true)
-             }
-             // If waitForResponse is true, we wait for onCharacteristicWrite
+    private fun cancelWrite(epoch: Long, continuation: CancellableContinuation<Boolean>) {
+        connectionOwner.ifCurrent(epoch) {
+            if (writeOperations.cancel(epoch, continuation)) abortConnection(epoch)
         }
     }
+
+    private fun cancelSubscription(epoch: Long, continuation: CancellableContinuation<Boolean>) {
+        connectionOwner.ifCurrent(epoch) {
+            if (descriptorOperations.cancel(epoch, continuation)) abortConnection(epoch)
+        }
+    }
+
+    private fun ownedCharacteristic(epoch: Long, gatt: BluetoothGatt, service: UUID, characteristic: UUID): BluetoothGattCharacteristic? {
+        if (connectionOwner.handle !== gatt) return null
+        return try { findCharacteristic(gatt, service, characteristic) }
+        catch (e: SecurityException) { abortConnection(epoch); null }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun submitWrite(epoch: Long, gatt: BluetoothGatt, serviceUuid: UUID, charUuid: UUID, value: ByteArray, waitForResponse: Boolean, continuation: CancellableContinuation<Boolean>) {
+        if (!continuation.isActive) return
+        val characteristic = ownedCharacteristic(epoch, gatt, serviceUuid, charUuid)
+        if (characteristic == null || !writeOperations.register(epoch, characteristic, continuation)) {
+            continuation.resume(false)
+            return
+        }
+        // WRITE_NO_RESPONSE changes ATT semantics; Android's stack callback is still
+        // awaited so its late completion cannot be assigned to the next operation.
+        continuation.invokeOnCancellation { cancelWrite(epoch, continuation) }
+        if (!continuation.isActive || connectionOwner.boundHandle(epoch) !== gatt) return
+        @Suppress("DEPRECATION")
+        characteristic.value = value
+        characteristic.writeType = if (waitForResponse) BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            else BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        val accepted = try {
+            @Suppress("DEPRECATION")
+            gatt.writeCharacteristic(characteristic)
+        } catch (e: SecurityException) {
+            abortConnection(epoch)
+            false
+        }
+        if (!accepted) {
+            val pending = writeOperations.complete(epoch, characteristic)
+            if (pending?.isActive == true) pending.resume(false)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    suspend fun write(gatt: BluetoothGatt, serviceUuid: UUID, charUuid: UUID, value: ByteArray, waitForResponse: Boolean = true): Boolean =
+        withTimeoutOrNull(OPERATION_TIMEOUT_MS) {
+            suspendCancellableCoroutine { continuation ->
+                connectionOwner.withCurrent { epoch ->
+                    submitWrite(epoch, gatt, serviceUuid, charUuid, value, waitForResponse, continuation)
+                }
+            }
+        } ?: false
 
     /**
      * Finds [charUuid] on [hintedService] if it is there, otherwise on **any**
@@ -453,42 +470,42 @@ class BleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    @Suppress("UNUSED_PARAMETER")
-    suspend fun enableNotifications(gatt: BluetoothGatt, serviceUuid: UUID, charUuid: UUID, @Suppress("unused") callback: (ByteArray) -> Unit): Boolean = suspendCancellableCoroutine { cont ->
-        if (descriptorContinuation != null) {
-            cont.resume(false)
-            return@suspendCancellableCoroutine
+    private fun submitSubscription(epoch: Long, gatt: BluetoothGatt, serviceUuid: UUID, charUuid: UUID, continuation: CancellableContinuation<Boolean>) {
+        if (!continuation.isActive) return
+        val characteristic = ownedCharacteristic(epoch, gatt, serviceUuid, charUuid)
+        val descriptor = characteristic?.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+        if (descriptor == null || !descriptorOperations.register(epoch, descriptor, continuation)) {
+            continuation.resume(false)
+            return
         }
-
-        val char = findCharacteristic(gatt, serviceUuid, charUuid)
-        if (char == null) {
-            cont.resume(false)
-            return@suspendCancellableCoroutine
-        }
-        
-        if (!gatt.setCharacteristicNotification(char, true)) {
-            cont.resume(false)
-            return@suspendCancellableCoroutine
-        }
-        
-        // Write Descriptor for CCCD
-        val descriptor = char.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-        if (descriptor != null) {
-            descriptorContinuation = cont
-            cont.invokeOnCancellation {
-                if (descriptorContinuation === cont) descriptorContinuation = null
+        continuation.invokeOnCancellation { cancelSubscription(epoch, continuation) }
+        if (!continuation.isActive || connectionOwner.boundHandle(epoch) !== gatt) return
+        val accepted = try {
+            if (!gatt.setCharacteristicNotification(characteristic, true)) false
+            else {
+                @Suppress("DEPRECATION")
+                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                @Suppress("DEPRECATION")
+                gatt.writeDescriptor(descriptor)
             }
-            @Suppress("DEPRECATION")
-            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            @Suppress("DEPRECATION")
-            if (!gatt.writeDescriptor(descriptor)) {
-                descriptorContinuation = null
-                cont.resume(false)
-            }
-            // Wait for onDescriptorWrite in callback
-        } else {
-            // No descriptor (rare for Notify), just assume success
-            cont.resume(true)
+        } catch (e: SecurityException) {
+            abortConnection(epoch)
+            false
+        }
+        if (!accepted) {
+            val pending = descriptorOperations.complete(epoch, descriptor)
+            if (pending?.isActive == true) pending.resume(false)
         }
     }
+
+    @SuppressLint("MissingPermission")
+    @Suppress("UNUSED_PARAMETER")
+    suspend fun enableNotifications(gatt: BluetoothGatt, serviceUuid: UUID, charUuid: UUID, @Suppress("unused") callback: (ByteArray) -> Unit): Boolean =
+        withTimeoutOrNull(OPERATION_TIMEOUT_MS) {
+            suspendCancellableCoroutine { continuation ->
+                connectionOwner.withCurrent { epoch ->
+                    submitSubscription(epoch, gatt, serviceUuid, charUuid, continuation)
+                }
+            }
+        } ?: false
 }

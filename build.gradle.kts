@@ -3,6 +3,7 @@
 plugins {
     id("com.android.application") version "9.0.0" apply false
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.10" apply false
+    id("org.jetbrains.kotlin.jvm") version "2.2.10" apply false
     // Version catalog for subprojects. Applied here as well so `koverXmlReport`
     // (total, all variants) is available from the root; debug-only CI uses the
     // module tasks `:app:koverXmlReportDebug` and `:glass-hud:koverXmlReportDebug`
@@ -13,6 +14,7 @@ plugins {
 dependencies {
     kover(project(":app"))
     kover(project(":glass-hud"))
+    kover(project(":pev-protocol-core"))
 }
 
 kover {

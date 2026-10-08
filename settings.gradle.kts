@@ -31,3 +31,4 @@ dependencyResolutionManagement {
 rootProject.name = "M365BleApp"
 include(":app")
 include(":glass-hud")
+include(":pev-protocol-core")

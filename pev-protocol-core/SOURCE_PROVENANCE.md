@@ -1,0 +1,121 @@
+# Source provenance
+
+Rule: unknown license => do not copy. Protocol *facts* (offsets, units, commands) are re-specified
+neutrally and implemented independently; no GPL class, test, or expressive spec text is
+copied, translated or refactored into this MIT module. Having read a source is not a clean-room claim.
+
+| Source | URL / ref | License | Used for | Redistributable |
+|---|---|---|---|---|
+| M365-Rokid-HUD (this repo) | github.com/zero2005x/M365-Rokid-HUD @ 3d01e6f | MIT | code, fixtures | yes |
+| PEVAppRE findings (local, read-only) | `/home/kali/PEVAppRE` (euc-programme/findings, scooter-apps/) | owner's research notes; vendor-app derived facts | protocol facts only; no vendor code or expressive text copied | vendor code/vendor-owned captures: no; owner M365 derivatives: existing fixture authorization below; A2 redistribution unresolved |
+| RideFlux (local) | isolated `Android/RideFlux-pev-core-consumer`, base `9bd9eaa82e55efaa936afa5d332e7ef2c752b7b8`, consumer commit `eb94187`, validation/license follow-up `c984f52` | GPL | consumer of MIT core; never a code/test/spec source for this module; original owner checkout preserved | n/a |
+| Vendor apps (Begode/Gotway, KingSong, Inmotion, Veteran, Zydtech, Ninebot) | via PEVAppRE | proprietary | facts about wire format only | no |
+
+## Per-fixture log (append rows)
+| Fixture | Origin | Evidence label | Transform / hash | Redistributable |
+|---|---|---|---|---|
+| inline in XiaomiMotorInfoDecoderTest (stationary 0xB0 reply data, 2026-09-20 14:30:39) | owner's own M365 MIScooter8964, PEVAppRE/scooter-apps/hardware-evidence/logcat-spin-raw.txt sha256 E92CF09A2D3A6392367DC1DCBCF243A2174307B96E558BDD11B3F506A3B35B58 | wire-captured | hex copied from decrypted Rx Decrypted line, header 2301B0 and 4-byte pad stripped | yes (owner's data, MIT repo) |
+| inline in same test (0xB0 block with speed bytes 76 EA, 2026-09-20 14:34:02) | same file | wire-captured | MotorInfo raw data (32 bytes) line copied verbatim | yes |
+| inline in XiaomiPduTest (3 20 01 B0 20) | same file, Query 0xb0 line | wire-captured | none | yes |
+
+Open gaps: confirm redistribution rights for any wire capture before committing it as a fixture;
+derive fixtures into `src/test/resources/fixtures/` with source sha256 + transform tool hash recorded above.
+
+## Continuation sources (2026-10-07)
+All implementation is independently written from neutral facts, with no legal clean-room claim.
+MIT App DTOs remain compatibility adapters; vendor decompiler classes and GPL code/tests were not copied.
+
+| Source / pinned artifact | License / rights | Use / limits |
+|---|---|---|
+| HUD `app/.../BmsTelemetryParser.kt` at 0d614823; original SHA256 `1818c4b3e6642fb8dce75ef3fc8b2e189d133062b2dd9c986987f4a72556a966` | repo MIT, independently authored analysis-derived parser | offset/unit facts for BMS; VENDOR_STATIC only, no BMS hardware validation |
+| HUD `doc/reverse-engineering/scootbatt-reports/02-telemetry-parsing.md`, SHA256 `08813b849152d3f1edf755fdca0ec29478c6c5dbf7e590d6de8242fb2f323a98` | owner's MIT research text, proprietary source not copied | neutral register facts, corrected 0x39 minimum five bytes; 0x25 conflicts preserved raw |
+| HUD `ninebot-ble/doc/protocol.md`, SHA256 `687fdc22c44ba7b4eda505bb2dfc0b6e48d4cbc8fcbb97eb870a33adcd1c143c` | repo MIT reference | literal 0x3A sample and trip counters; 0x25 annotation/arithmetic conflict unresolved |
+| Owner M365 `logcat-spin-raw.txt`, SHA256 `e92cf09a2d3a6392367dc1dcbcf243a2174307b96e558bdd11b3f506a3b35b58` | existing owner-fixture authorization recorded above; not vendor-owned code/capture | 152 RX B0 + 3 RX3A + 1 RX25, sanitized; no identifiers/keys/auth/serial data |
+| `scripts/extract-m365-fixtures.py`, SHA256 `c55621ea1108aae994291adbfff70d127a20cdef2140ad74ba2e4b4cfd1a50d0` | new MIT extraction tool | source/phone/output hashes and transformation in `src/test/resources/fixtures/xiaomi/m365/manifest.json`; originals unchanged |
+| Synthetic BMS/ESC/command/Begode tests | newly authored MIT | boundary contracts only; never vehicle-verified |
+
+CAP-A correction chain read as neutral facts only (paths relative to PEVAppRE `euc-programme/findings/`):
+
+| Document | SHA256 |
+|---|---|
+| BEGODE_A2_TRUTH_TABLE.md | `7218be424557526adc135d0e7efa068221a01a7fca48c85fd9b02872480828d8` |
+| CONFIRMED_CORRECT.md (rev3) | `d3e16f9688edfe8c53db309497f2b5a49191395620188aa295363ad619bfcb13` |
+| CAP-B_PREFLIGHT_2026-09-30.md | `68086c0a559970026e7e74d90c6eb772484dee91ea2e5646acda7884a2e35ed8` |
+| CAP-B_TOOLING_FIXES.md | `d03c676c9c1f882752678e17b2607e9f9651968f2941f40f6c5d071a7c27b96c` |
+| POST_CAPB_REMEDIATION_BACKLOG.md | `edf3dc4e2f987197a140cfc10570c9355cbf1a1495416afbf4a02f17ee4e1366` |
+| CAP-B_A2_VENDOR_COMPARISON.md | `b271e5065b5fd1a4183f648d662347b6396d77ae526d56d04e48974e4c24ae46` |
+| BEGODE_A2_RC1_READINESS.md | `cd28ee41a1eee4d7a100384f1a1562b214ff9b8e16754ebee9ed61a0166392ff` |
+
+Raw-only A2 code uses envelope/channel/branch facts, no vendor code or copied research prose.
+CAP-A wire artifact and corrected extractor are used read-only for local replay, never packaged
+or committed as MIT fixtures; concrete capture/tool redistribution rights must be resolved before
+a distributable A2 captured test corpus. This does not block synthetic tests or raw diagnostics.
+
+## Gateway continuation sources (2026-10-08)
+The V1 contract is derived from this MIT repository's committed production producer/parser bytes.
+No external vendor or RideFlux source is used to author the MIT gateway schema.
+
+| Source at HUD commit `51536b5` | SHA256 (Git blob bytes) | Use / redistribution |
+|---|---|---|
+| `app/.../gateway/M365GattServer.kt` | `fc6fcbc88e49faefbacca0e4ffaae22f8472e2ff913e9c2c781b31dc2c1f9ba6` | MIT legacy Double quantization, narrow wrap, layout and CRC facts |
+| `app/.../gateway/wifi/WifiGatewayServer.kt` | `580eea86ebe3bd5c5ef30f3089fb2c7e9599aaf247c41d99bedc074af44e4ad5` | MIT second producer contract and inbound message directions |
+| `glass-hud/.../DataModels.kt` | `54257147b069d17d9a84e04e614cd0dfa5ebf0439fd0de0cd05c3d7775245d5b` | MIT signed/unsigned decode and Float display precision contract |
+| New gateway V1/V2 and consumer tests | independently authored synthetic MIT vectors | Software contracts only; no hardware or vendor validation |
+
+V2 is a new unreleased schema, not a recovered vehicle protocol. MIT core is used in RideFlux as
+a dependency; edits to its GPL consumer remain there. Neither consumer code nor tests flow back
+into this module. No new third-party dependency was introduced.
+
+## Dependencies / module license
+`LICENSE` is the unchanged repository MIT text, SHA256 `e256d9bcab8c7c56971e927f5a78f10c4c6b8c7bf944d369ad2f1938dddb162a`.
+No new external dependency was added. Existing Kotlin standard library is Apache-2.0
+([upstream license](https://github.com/JetBrains/kotlin/blob/master/license/LICENSE.txt));
+JUnit4 4.13.2 is test-only EPL-1.0
+([upstream license](https://github.com/junit-team/junit4/blob/main/LICENSE-junit.txt));
+Kover 0.9.9 is build/test instrumentation, Apache-2.0
+([upstream license](https://github.com/Kotlin/kotlinx-kover/blob/main/LICENSE.TXT)).
+Their licenses remain their own; no dependency is relabeled MIT. No Android/JNI/GPL dependency
+is in the core. Rokid SDK and existing App dependency licensing were not re-audited this round;
+no new SDK inclusion or release approval is claimed.
+
+
+## Inmotion I1 continuation sources (2026-10-08)
+The receive codec and synthetic tests were written independently from neutral framing facts.
+No GPL/vendor class, test, expressive spec text or captured frame was copied into this MIT module.
+No new dependency was introduced. Reading the research is not a legal clean-room claim.
+
+| Read-only source | SHA256 / pinned reference | Rights and use |
+|---|---|---|
+| PEVAppRE `euc-programme/findings/INMOTION_REFERENCE_DIFFERENTIAL.md`, including later correction §8 | `5e0f62a55d8a8b0277160eea0f21d745b3512cc7241ef47ae5cca856d9eb9d1c` | owner's audit of GPL/community/vendor facts; offsets/envelope facts only, no prose or implementation copied |
+| `CROSS_BRAND_COMMAND_REFERENCE.md` | `24533ce99800cd8182c48758db2a1d301c173963a9764fdce6462c72b4a1cab3` | corroborating framing/ambiguity facts only; no settings implemented |
+| `euc-programme/evidence/inmotion_trace_corpus.json` | `3f087c4abd1f048efa65e845fcea49fe73971a3c9fc5b727d0c9cb0d41d5d108` | frozen historical byte-stream identity; read-only, not distributed |
+| [WheelLog primary reference repository](https://github.com/Wheellog/Wheellog.Android/tree/1b3707973e3b4528bd88778f9ebdf7a79817cf3f), `LICENSE` | commit `1b3707973e3b4528bd88778f9ebdf7a79817cf3f`, local LICENSE contains GPLv3 text | never an MIT implementation/test source; external captures replayed locally only, no separate capture redistribution authorization established |
+| `app/src/test/resources/RAW_inmotion_V5F.csv` at that WheelLog commit | `b2acb7e281a8693e6f886b6586abbb3cda7b24184976a7e24273ba663d8adbbd` | historical community reference, no owner hardware acceptance; not packaged/committed as MIT fixture |
+| `RAW_inmotion_V8S.csv` | `1948f6c0b54c4a2dcd9573cb7e593b2a6f62a4715e0cd7f31284d76c442ad1ef` | same local-only replay restriction |
+| `RAW_inmotion_alerts.csv` | `266793e776b86117ea1c910d471ea6ee3ff5aeff3e06b23bb5df6fbdea6e7a78` | same restriction; alert payload semantics remain unknown |
+
+Independent MIT reproduction tools are committed as `scripts/InmotionI1Replay.java`,
+`scripts/prepare-inmotion-i1-replay.py` and `scripts/replay-inmotion-i1-wsl.sh`. Local ignored
+`build/pev-inmotion-i1-replay/` contains compiled runners, derived segments and replay report. Transformation preserves each CSV hex segment and
+concatenated byte stream; source/transform/runner/class/core-JAR hashes are recorded in its report.
+The three segmentation variants agree on 501 frames, eight escaped checksums, two unsupported
+length-code records (44 rejected bytes), no overflow and no physical fields. This establishes
+reference-envelope behavior only. Model-specific field meanings, speed factor/distance units,
+sensor names, alert interpretation, authentication and setting builders remain unimplemented.
+
+
+Final I1 source SHA256 `092a27d41d55a1c18e1dd62fd133f2ed2d2641d805deffb7e728a76248e2c23f`, root Kotlin/JVM JAR `2cc9cefefceba55defa5cfa3ef320ab946d8c54475667e403f2ebb7f0e1089e9`.
+Independent runner source `93ed8724d1b84f769294a1421f02dd08bc3b5afa102c986c0fed5058ddb4e583`, class `0bbb047ad58b60f8be74ee272b9205a20654ba45854aafb891e06b20a837fac1`;
+CSV transform `935876a4993bf1587ff1bcbbe5e77b1bf38ffe545500f79e2ff2203561e24082`. Actual replay report SHA256 `7fede9168857f0d014326b6fe891a67e01a585e44f9b632ed8cf78b61501b76c`.
+The runner used the root Kotlin2.2.10 runtime, SHA256 `9c67cc79efd6b9215b49d2a4308f5f3433537376c7c88e89bdd6729bd096e61a`;
+no capture or GPL implementation is a runtime dependency of the MIT module.
+
+
+Phone session continuation `342a0a5`: ConnectionResources/ConnectionEpoch, ConnectionWriteLane and
+GattOperationSlot plus synthetic resource/callback/concurrency tests were independently authored
+inside the existing MIT HUD App; Android objects/JNI remain outside the pure shared core. Sources
+are the existing MIT repository's connection path and its already-used Kotlin/coroutine/Android APIs;
+no GPL/vendor code, external fixture, new runtime dependency or capture was copied. Slot/helper authored
+by phone_epoch_review, production integration by root; root inspected the slot and ran all tests,
+the reviewer separately inspected root's final integration. Source hashes and actual coverage/build
+witness: `doc/PHONE_SESSION_VERIFICATION.json`. Hardware/Sonar/native registry cleanup remain separate.

@@ -197,8 +197,8 @@ class EscTelemetryParserTest {
     fun `cruise is engaged only for the value one`() {
         assertEquals(true, EscTelemetryParser.cruiseEngaged(byteArrayOf(1)))
         assertEquals(false, EscTelemetryParser.cruiseEngaged(byteArrayOf(0)))
-        // Anything else is "not the engaged encoding", not an error.
-        assertEquals(false, EscTelemetryParser.cruiseEngaged(byteArrayOf(2)))
+        // Undocumented values cannot prove the setting is off.
+        assertNull(EscTelemetryParser.cruiseEngaged(byteArrayOf(2)))
         assertNull(EscTelemetryParser.cruiseEngaged(ByteArray(0)))
     }
 
@@ -282,7 +282,7 @@ class EscTelemetryParserTest {
 
     @Test
     fun `identity builds the plain and dotted forms`() {
-        val payload = byteArrayOf(12, 34, 56, 78)
+        val payload = byteArrayOf(12, 34, 56, 78, 0)
 
         val identity = requireNotNull(EscTelemetryParser.identity(payload))
 
@@ -293,8 +293,9 @@ class EscTelemetryParserTest {
 
     @Test
     fun `identity rejects a short payload`() {
-        // Scootbatt requires at least four bytes for this register.
+        // Corrected static evidence requires five bytes for this register.
         assertNull(EscTelemetryParser.identity(byteArrayOf(12, 34, 56)))
+        assertNull(EscTelemetryParser.identity(byteArrayOf(12, 34, 56, 78)))
     }
 
     // -------------------------------------------------------------- 0xFF

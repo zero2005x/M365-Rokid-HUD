@@ -1,10 +1,17 @@
 package com.m365bleapp.repository
 
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiMotorInfoDecoder
+import io.github.zero2005x.pev.core.telemetry.FieldId
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
  * Decodes the payload supplied to the existing 0xB0 handler.
+ *
+ * Structural and physical telemetry decoding is delegated to [XiaomiMotorInfoDecoder]
+ * from `:pev-protocol-core`. The HUD app's display clamping policy (displaying
+ * small negative speeds / standstill sentinels as 0 km/h) is applied here on top of
+ * the core's signed physical telemetry reading.
  *
  * ## The payload is the ESC's `B0..BB` register block
  *
@@ -50,43 +57,37 @@ internal object MotorInfoParser {
 
     fun parse(data: ByteArray, existing: MotorInfo? = null): MotorInfo? {
         if (data.size < 22) return null
+
+        val snapshot = XiaomiMotorInfoDecoder.decode(data, System.currentTimeMillis())
         val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-        val battery = bb.getShort(8).toInt() and 0xFFFF
+
+        // Core reports signed physical speed in km/h.
+        // App display policy: clamp negative / standstill sentinel speeds to 0.0 km/h.
+        val decodedSpeed = snapshot[FieldId.SPEED_KMH].value ?: 0.0
+        val displaySpeed = if (decodedSpeed < 0.0) 0.0 else decodedSpeed
+
+        val totalDistM = snapshot[FieldId.TOTAL_DISTANCE_M].value ?: 0.0
+        val mileageKm = totalDistM / 1000.0
+
+        val soc = snapshot[FieldId.SOC_PERCENT].value?.toInt()
         val alternateBattery = data[7].toUByte().toInt()
-        // Temperature stays signed: a frame reading below zero is meaningful in
-        // cold weather, so it must not be masked the way speed is.
-        val temperature = if (data.size >= 24) bb.getShort(22).toInt() else 0
+        val battery = if (soc != null && soc in 1..100) soc else alternateBattery
+
+        // Frame temperature from core; default to 0.0 if not provided or size < 24.
+        val temp = snapshot[FieldId.TEMP_FRAME].value ?: 0.0
+
+        // Average speed is not modelled as a physical core field; read unsigned from offset 12.
+        val avgSpeed = ((bb.getShort(12).toInt() and 0xFFFF).toFloat() / 1000.0f).toDouble()
+
         return MotorInfo(
-            speed = decodeSpeed(bb),
-            avgSpeed = ((bb.getShort(12).toInt() and 0xFFFF).toFloat() / 1000.0f).toDouble(),
-            mileage = bb.getInt(14) / 1000.0,
-            battery = if (battery in 1..100) battery else alternateBattery,
-            temp = (temperature.toFloat() / 10.0f).toDouble(),
+            speed = displaySpeed,
+            avgSpeed = avgSpeed,
+            mileage = mileageKm,
+            battery = battery,
+            temp = temp,
             tripSeconds = existing?.tripSeconds ?: 0,
             tripMeters = existing?.tripMeters ?: 0,
             remainingKm = existing?.remainingKm ?: 0.0
         )
-    }
-
-    /**
-     * Decodes B5, which is an **unsigned** speed in m/h.
-     *
-     * It has to be read unsigned. As a `Short`, every genuine reading above
-     * 32.767 km/h comes back negative — which is how a downhill or an over-speed
-     * moment ends up rendering as "-5 km/h" on the HUD. Note that `avgSpeed` a
-     * few lines up always masked this; speed did not.
-     *
-     * Masking alone would then turn the ESC's no-estimate sentinel into
-     * "65 km/h", so the sentinel is folded to zero here as well.
-     *
-     * Known limit: an isolated mid-range spike is *not* filtered. One was
-     * observed at `0xEA76` (60.022 km/h) while the wheel was barely turning;
-     * nothing in the register distinguishes it from a genuine reading on a
-     * modified scooter, so clamping it away would be a guess. Only the
-     * unambiguous sentinel is rejected.
-     */
-    private fun decodeSpeed(bb: ByteBuffer): Double {
-        val raw = bb.getShort(10).toInt() and 0xFFFF
-        return if (raw >= NEGATIVE_SPEED_RAW) 0.0 else raw / 1000.0
     }
 }

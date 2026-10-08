@@ -281,4 +281,23 @@
     <string name="bond_bytes16">Ninebot：必須為 16 位元組（32 個十六進位字元）。</string>
     <string name="bond_manual_invalid">請檢查 MAC、金鑰長度與名稱。名稱最多 64 字，不可含控制字元。</string>
     <string name="bond_replace_question">這台車已有金鑰，是否以剛輸入的金鑰取代？</string>
+    <string name="experimental_title">車輛測試設定</string>
+    <string name="experimental_scope">僅限小米 M365。型號由您自行選擇；韌體範圍未驗證。這些是經原始碼審查的可逆指令，尚未在車輛上驗證。一般設定維持停用。</string>
+    <string name="experimental_connect_required">請先連線並完成小米加密工作階段驗證。</string>
+    <string name="experimental_enable">本次連線啟用</string>
+    <string name="experimental_confirm_model">我有一台小米 M365</string>
+    <string name="experimental_consent">請確認確切型號為 M365（不是 Pro、Pro2、1S、Lite、Mi3 或 Ninebot）。韌體相容性未驗證。同意僅適用於此裝置與此次連線。若原廠 App 顯示不一致請停止；重新連線即撤銷同意。涉及騎乘的設定請保持車輛靜止。</string>
+    <string name="experimental_device">已選 M365 • %1$s • 韌體未知</string>
+    <string name="experimental_order_note">尾燈與單位共用狀態位元。兩個來源對寫入位元組順序說法不一。請明確選擇 BE 或 LE，無預設值。會先重新讀取以保留其他位元，且回讀必須相符。</string>
+    <string name="experimental_light_on">尾燈常亮</string>
+    <string name="experimental_light_off">尾燈正常</string>
+    <string name="experimental_motion_note">KERS 會改變煞車手感；定速巡航可在不加油門時維持速度。兩者都需要新鮮且可信的靜止遙測。速度未知或過期時會被阻擋。</string>
+    <string name="experimental_kers">KERS %1$d</string>
+    <string name="experimental_cruise_on">定速巡航開</string>
+    <string name="experimental_cruise_off">定速巡航關</string>
+    <string name="experimental_disable">停用並中斷連線</string>
+    <string name="experimental_command_confirmation">實驗性指令，尚未在車輛上驗證。請確認這單一操作，不會自動重試。回讀僅回報觀察到的暫存器值，不代表安全或相容。</string>
+    <string name="experimental_send">傳送一次</string>
+    <string name="experimental_readback_confirmed">回讀相符。硬體相容性仍未驗證。</string>
+    <string name="experimental_unconfirmed">未確認</string>
 </resources>

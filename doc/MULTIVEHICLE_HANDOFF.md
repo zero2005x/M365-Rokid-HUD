@@ -85,32 +85,42 @@ Note on JNI build stamp:
    - Remaining: command builders/plans for verified or experimental Begode settings when safe.
 4. **Gateway (G) [PARTIAL]**: share legacy V1 serialization/parser and strict inbound command refusal. Finish per-connection capability/version negotiation, V2 BLE fragmentation + Wi-Fi framing, generation/field freshness, upgrade UI, semantic display and alert deduplication; exercise old/new clients. Existing primitive M365 update APIs still lack field provenance and are not safe multi-vehicle entry points. No new vehicle may enter that legacy path.
 5. **Phone UI + app wiring**: adopt `CommandCoordinator` as the only GATT writer; experimental-mode screen (per device/session opt-in, shows profile/firmware/command/unit/why-unverified); no raw hex console.
-6. **Zydtech (D), Ninebot ESx/G30 (B), Inmotion I1 + KingSong (E), Veteran/NOSFET + Inmotion I2 (F)**: each in its own `codec/<family>/` namespace with fixtures, tests, capability proposals, provenance rows. Unidentified layout ⇒ raw diagnostics only. Never infer family from UUID (FFE0/NUS collide).
-7. **RideFlux integration [PARTIAL]**: isolated `RideFlux-pev-core-consumer`, branch `codex/pev-core-consumer`, local commit `eb94187` on explicit base `9bd9eaa`; configurable thin Gradle included build consumes external MIT core without source copying. M365 read PDUs/SOC/odometer/frame temperature delegated; legacy speed/B9 compatibility still unresolved. Strict domain/protocol/core tests passed 684, M365Codec 100% line / 93.55% branch. Keep newer main privacy/token-log fixes and owner version commit `ee23b875` when integrating; original checkout untouched. Android lint and both debug APK builds also passed; full command/gateway migration remains pending. Follow-up evidence is committed as `c984f52`; see consumer docs for exact results.
+6. **Inmotion I1 (E) [PARTIAL]**: `bd3913d` adds independent MIT bounded receive-only envelopes and immutable raw CAN diagnostics; 16 synthetic tests and 501-frame historical reference replay passed. No physical fields/auth/model/settings or App family selection. Continue profile/semantic evidence separately. **Zydtech (D), Ninebot ESx/G30 (B), KingSong (E), Veteran/NOSFET + Inmotion I2 (F)**: each in its own `codec/<family>/` namespace with fixtures, tests, capability proposals, provenance rows. Unidentified layout ⇒ raw diagnostics only. Never infer family from UUID (FFE0/NUS collide).
+7. **RideFlux integration [PARTIAL]**: isolated `RideFlux-pev-core-consumer`, branch `codex/pev-core-consumer`, local commit `eb94187` on explicit base `9bd9eaa`; configurable thin Gradle included build consumes external MIT core without source copying. M365 read PDUs/SOC/odometer/frame temperature delegated; legacy speed/B9 compatibility still unresolved. Strict domain/protocol/core tests passed 684, M365Codec 100% line / 93.55% branch. Keep newer main privacy/token-log fixes and owner version commit `ee23b875` when integrating; original checkout untouched. Android lint and both debug APK builds also passed; full command/gateway migration remains pending. Latest authoritative core/Android evidence is committed as `68351e3`; see consumer `docs/pev-core-latest-validation.json` for exact results. Historical evidence remains at `c984f52`.
 8. Final: independent review (provenance, A2 corrections, UUID collision, setting gates, gateway unknown handling, M365 regression), owner validation checklist for M365/A2 (list unexecuted items explicitly).
 
 Out of scope this round: Tuya/ThingClips, LEBI, KuKirin, NIU (no empty adapters), calibration/OTA/unlock/shutdown/battery-protection commands.
 
 ## 9. Latest continuation checkpoint — 2026-10-08
-- HUD core fix commit `8d6587c`; production V1/ingress/lifecycle/permission wiring commit `1b1b2d9`.
-- `scripts/verify-hud-wsl.sh` BUILD SUCCESSFUL: core 166 + phone 367 + glasses 12 tests,
-  zero failures/errors/skips; core LINE 836/838 (99.76%), BRANCH 885/937 (94.45%); both lintDebug
+- HUD core fix `8d6587c`; production V1/ingress/lifecycle/permission wiring `1b1b2d9`; BLE fencing `04e141c`; I1 raw envelopes/tools `bd3913d`.
+- `scripts/verify-hud-wsl.sh` BUILD SUCCESSFUL: core 182 + phone 367 + glasses 16 =565 tests,
+  zero failures/errors/skips; core LINE 930/932 (99.79%), BRANCH 959/1013 (94.67%); both lintDebug
   zero errors (phone 98 warnings / 2 hints; glasses 19 warnings), both debugAPKs assembled.
   Use `PEV_GRADLE_ONLINE=1` only if declared dependencies are missing from offline cache.
 - Native libraries used with explicit `-PskipRustBuild`; host fingerprint separator warning remains.
   Rust/native freshness/hardware/Sonar were not newly certified. Prior Rust counts above are historical.
 - Gateway production now shares V1 encoder/parser and rejects glasses vehicle commands. V2 schema
   is core-only and documented in `pev-protocol-core/GATEWAY_SCHEMA.md`; retain PARTIAL status.
-- BLE invalid CRC no longer extends old telemetry freshness; session starts stale and ignores late
-  callbacks from an old GATT object. Atomic check/mutation synchronization is still a follow-up.
+- BLE follow-up `04e141c` now serializes GATT admission and state mutation with connect/disconnect.
+  Scan callbacks have per-attempt ownership; old watchdog/battery/RSSI/discovery jobs retain their
+  captured handle. Delayed reconnect is revision-bound and manual disconnect/disable invalidates it.
+  Freshness uses monotonic elapsed time. Detached handles close synchronously before scope cancellation.
+  Four synthetic session-ownership tests passed; helper Kover LINE 12/12 and BRANCH 2/2. Android stack
+  timing/physical reconnect acceptance remains an owner test, not proven by these JVM tests.
 - Lint fixes: collect lifecycle once from onCreate and switch bound StateFlow clients; permission
   rejection in preference notification is handled; disconnect always releases local/native resources.
 - Independent read-only review completed gateway schema/production paths, lifecycle/permission
   changes and isolated RideFlux consumer. MotorInfo's old signed-i16/median-ratio comment corrected
   to the implemented 0xC000 compatibility threshold and limited replay evidence; no algorithm change.
-- RideFlux owner HEAD is `ee23b875`; remote main advanced from `b7a51ad` to `83ef5a8835345d624bbaec3ad899c89b81b084fc` on recheck. Inspect that new diff before further consumer work; only owner GEMINI
-  remediation prompt untracked. No reset/stash/owner-file edit/push/merge/release/vehicle write.
-- Consumer exact hashes, strict dependency integrity evidence and 684 test results live in its committed
+- Latest read-only recheck: RideFlux owner HEAD `97552efff94907ea50452592f4cffce2ec2010a8`,
+  remote main still `83ef5a8835345d624bbaec3ad899c89b81b084fc`; HUD remote main remains
+  `3d01e6f492141fd2c29aced4b19f98d51cb8364c`. Owner diagnostic-log feature/fixes and settings
+  test commits `66e4e45`, `bb2a793`, `97552ef` are newer than the isolated base. Owner tracked
+  status is clean, with untracked `GEMINI_NOSFET_F18_V11_REMEDIATION_PROMPT.md` preserved.
+  Preserve version 0.1.11/code12, privacy/token-log fixes and these diagnostics on later integration.
+  No reset/stash/owner-file edit/push/merge/release/vehicle write. Isolated consumer documentation
+  now committed at `68351e3e68662f01d35079b284280c9a967f5c6a`, with code unchanged from `eb94187`.
+- Consumer exact hashes, strict dependency integrity evidence and historical 684 test results live in its committed
   `docs/PEV_CORE_CONSUMER.md`, `docs/pev-core-validation.json`, `docs/pev-core-artifact-verification.json`.
 - Consumer Android follow-up `c984f52`: strict offline lint and APK tasks BUILD SUCCESSFUL; phone/HUD
   zero lint errors, 37/13 warnings. Both APKs contain the MIT decoder and no coverage-agent namespace.
@@ -126,6 +136,31 @@ Next implementation priority: finish the Rust/GATT epoch-bound adapter and isola
 through one coordinator; phone per-session experimental-mode UI; negotiated V2 delivery/display;
 then factual, provenance-audited additional family codecs/settings. Use the source/research chains
 and field/command matrices. Physical M365 0x7D order and A2 CAP-B scaling remain owner tests NOT RUN.
+One subagent reported a usage limit; the latest team snapshot shows only root. No follow-up child
+edits were produced. Root completed BLE fencing and the I1 receive-only envelope, final HUD/consumer
+tests and final compiled-core replay. New I1/BLE independent peer review remains pending; earlier
+gateway/consumer reviews do not cover those changes. Stages are idle and may be refreshed sequentially.
 Keep source ownership per namespace, preserve screenshots/owner edits, and append actual commands
 and results before local commits. If interrupted, leave exact active process/staging and file-owner
 state here; do not convert unrun work into DONE.
+
+### Completed verification checkpoint
+No build/replay process or child agent is active. HUD stage `/home/kali/build/pev-core-stage` passed
+final verification (9m36s), then the committed I1 replay tool reran against its final JAR.
+Consumer stages `/home/kali/build/rideflux-pev-consumer-stage` and
+`/home/kali/build/rideflux-pev-core-source` passed strict offline validation (4m27s).
+Every staged core main Kotlin file was byte-compared with authoritative HUD source.
+Final I1 source SHA256 `092a27d41d55a1c18e1dd62fd133f2ed2d2641d805deffb7e728a76248e2c23f`.
+
+Latest consumer: 123 domain +395 protocol +182 core =700 tests; core LINE 930/932, BRANCH 959/1013;
+phone/HUD lint zero errors (37/13 warnings); both APKs define MIT Xiaomi/I1 classes without coverage
+agent class definitions. Packaging I1 does not expose Inmotion telemetry/settings in the consumer.
+See committed `68351e3` / `docs/pev-core-latest-validation.json`, with exact source/JAR/APK/log hashes.
+Final HUD: 565 tests; phone/glasses lint zero errors (98 warnings +2 hints /19 warnings); both APKs.
+See TEST_REPORT.md for exact hashes and run details; copied artifacts remain ignored.
+I1 final replay: 146 V5F +315 V8S +40 alerts =501 frames; CSV segmentation/bytewise/coalesced agree,
+eight escaped checks, two unsupported lengths, zero overflows/physical fields. Historical CSV segments
+are not certified original BLE notification boundaries. External GPL-associated captures stay read-only
+outside the MIT checkout. Reproduction tools/spec and only independent synthetic tests are committed.
+External Sonar, native freshness, hardware reconnect and owner M365/A2 acceptance remain NOT RUN.
+Full requested product scope is PARTIAL; do not mark the phone writer/UI, V2 delivery or other families done.

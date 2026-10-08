@@ -166,3 +166,85 @@ All nine new dependency coordinates declare Apache-2.0; the two agent JARs conta
 classes each with separate BSD-3-Clause attribution. Instrumentation is build/test-only.
 The selected baseline predates newer privacy/token-log fixes and owner version bump. Integrate
 with those commits before release; do not replace the live owner checkout with this older base.
+
+
+### BLE session continuation (`04e141c`)
+The full `scripts/verify-hud-wsl.sh` run passed 166 core / 367 phone / 16 glasses tests (549 total),
+both lintDebug tasks and APK builds. Final scan callback/subscription improvements were then copied
+into the stage and checked with JDK21/offline `:glass-hud:koverXmlReportDebug :glass-hud:lintDebug
+:glass-hud:assembleDebug`: BUILD SUCCESSFUL in 2m 07s, 56 tasks. Glasses lint remains19 warnings/0errors.
+Four new synthetic tests exercise reference identity, disconnect revisions, a concurrent admitted
+callback vs reconnect, and lock release after failure. `BleSessionOwner` Kover LINE 12/12,
+BRANCH 2/2, METHOD 8/8. No exclusion/suppression was added; the existing deprecated notification
+API annotation moved with that API to the extracted helper. Source CRLF retained.
+
+GATT callback admission now covers all state mutation; connect, teardown, old watchdog/battery/RSSI,
+delayed discovery/subscriptions and reconnect use captured ownership. Each scan attempt has its own
+callback object. Manual disconnect or disabling auto-reconnect invalidates delayed work. Freshness
+uses elapsedRealtime. Null connect/subscription submission failure is reported, revoked Bluetooth
+permission is caught, unknown BatteryManager values are not sent as 255%, and detached GATT handles
+close before scope cancellation. Short submission calls run in the serialized section, with no
+coroutine wait under its monitor. Android Binder timing and real reconnection remain NOT EXECUTED.
+
+Final BLE APK before subsequent I1 work SHA256
+`9bded798f802dd1bc9b3a364e672142ce090e8cdbd1e01b050c792b1294c24a2`.
+RideFlux remote diff b7a51ad..83ef5a8 only changes application version lines (two files), while
+the live owner checkout has advanced to 83ef5a8 and has new diagnostic logging edits/untracked files.
+Those files were read for status only and preserved. Isolated consumer remains c984f52 and clean.
+
+
+### Final I1/BLE and shared consumer validation (2026-10-08)
+
+Code revisions: BLE session fencing `04e141c`; independent MIT I1 receive-only envelope `bd3913d`.
+Earlier 545/549/684-test results and artifact hashes above belong to their recorded snapshots.
+
+`wsl -d kali-linux -- bash /mnt/c/Users/liangtinglin/Documents/codebase/Android/M365-Rokid-HUD/scripts/verify-hud-wsl.sh`
+completed BUILD SUCCESSFUL in 9m 36s (120 tasks: 35 executed / 85 up-to-date), JDK21/offline,
+explicit no-native-rebuild policy. Core 182 + phone 367 + glasses 16 = **565 tests** with zero
+failures/errors/skips. Core Kover LINE 930/932 (99.79%), BRANCH 959/1013 (94.67%), METHOD 266/267;
+>=90% line and branch floor passed. New I1 namespace: LINE 94/94, BRANCH 74/76, METHOD 29/29.
+Both lintDebug tasks passed with zero errors: phone 98 warnings + 2 hints; glasses 19 warnings.
+Both debug APKs assembled. Final SHA256:
+phone `2f5c483347bcf475d66cc2ba72e059eb808d6dee120df03ee2caffe03e0bec73`,
+glasses `947cd5db0ab5b3f4d4d351df78f78bd5431fa3deb5e8ef4a2d0740b385bd7e04`.
+Actual copied reports/APKs and summary are in ignored `build/hud-verification/`.
+
+The initial I1 test run failed because a manually frozen synthetic golden packet had a mistyped
+checksum `57`; independent byte addition gives `49`. The fixture was corrected and the strict
+decoder validator retained. All final 16 I1 tests passed, including every split, coalescing,
+reserved-byte/check escaping, raw-check compatibility, unsupported length, bounded extension,
+reset/noise/corruption, immutable diagnostics and shared-magic I2 rejection. Synthetic assertions
+alone do not confer reference or physical verification.
+
+The final compiled MIT JAR was independently replayed using the committed tools:
+
+```sh
+wsl -d kali-linux -- bash /mnt/c/Users/liangtinglin/Documents/codebase/Android/M365-Rokid-HUD/scripts/replay-inmotion-i1-wsl.sh /home/kali/PEVAppRE/euc-programme/upstream/Wheellog.Android/app/src/test/resources
+```
+
+Read-only external historical traces yielded V5F 146 / V8S 315 / alerts 40 = **501 frames**.
+Historical CSV segments, one-byte input and full coalescing produced identical frames/hashes:
+zero overflows, eight escaped CHECKs total, zero physical fields. V8S retained 44 diagnostic bytes
+(two unsupported length codes plus 42 bad-preamble bytes); none were treated as telemetry.
+CSV segmentation is not certified original BLE notification boundaries. Source CSVs associated
+with WheelLog GPL were not redistributed or relabeled MIT; only independently authored synthetic
+tests/tools/spec were committed. Exact source/transform/tool/decoded-stream hashes are in
+SOURCE_PROVENANCE.md and ignored `build/pev-inmotion-i1-replay/replay.json` (report SHA256
+`7fede9168857f0d014326b6fe891a67e01a585e44f9b632ed8cf78b61501b76c`). No model, physical
+units/scales, authentication, alert semantics or command support is inferred from these envelopes.
+
+The isolated RideFlux consumer then refreshed only its external MIT core snapshot to `bd3913d`
+and passed strict offline domain/protocol/core/Kover/JaCoCo + both lint/APK tasks in 4m 27s,
+326 tasks. **123 + 395 + 182 =700 tests**, no failures/errors/skips; identical core line/branch
+counters and M365Codec 24/24 lines / 58/62 branches. Phone/HUD lint zero errors, 37/13 warnings.
+Both APKs define the shared Xiaomi and I1 classes without coverage-agent class definitions:
+phone SHA256 `eb51b2505bda5300f191bd2850bed49c618ca678bc7989f8018a70d2015c131f`,
+HUD `351e3bed6b28cfc6b111ca562cd93974de74f7fa4bfa37bcb2b7362c5c56d6a7`.
+Exact latest evidence is `RideFlux-pev-core-consumer/docs/pev-core-latest-validation.json`.
+
+External Sonar scanner/token, physical BLE timing/reconnect and M365/A2 owner acceptance remain
+NOT RUN. No new independent agent review of the I1/BLE changes was completed: the available team
+ended after a usage-limit report, leaving root only. Earlier independent review is described above.
+Native artifacts were reused; Rust/JNI/hardware were not newly certified. Production sole-writer,
+per-session experimental UI and negotiated V2 delivery/display remain unfinished. All work is local;
+no push, merge, release, original RideFlux checkout modification or automatic vehicle write.

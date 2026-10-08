@@ -6,6 +6,7 @@ import android.bluetooth.le.*
 import android.content.Context
 import android.os.BatteryManager
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,7 +94,11 @@ class BleClient(
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     private val scanner: BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
     
-    @Volatile private var gatt: BluetoothGatt? = null
+    private val connectionOwner = BleSessionOwner<BluetoothGatt>()
+    private var gatt: BluetoothGatt?
+        get() = connectionOwner.current
+        set(value) { connectionOwner.replace(value) }
+    private var closed = false
     private var targetDevice: BluetoothDevice? = null
     
     // State flows for UI observation
@@ -136,6 +141,13 @@ class BleClient(
      * Start scanning for the M365 HUD Gateway
      */
     fun startScan() {
+        connectionOwner.locked { startScanLocked() }
+    }
+
+    private fun startScanLocked() {
+        if (closed || gatt != null) return
+        gatt = null // A new scan supersedes an older timeout/reconnect intent.
+        val scanRevision = connectionOwner.revision
         if (scanner == null) {
             Log.e(TAG, "Bluetooth scanner not available")
             _connectionState.value = ConnectionState.Error("Bluetooth not available")
@@ -148,6 +160,7 @@ class BleClient(
             return
         }
         
+        stopScan()
         // Reset the connection flag only. Do NOT clear failedDevices here:
         // onServicesDiscovered adds a device to that list and restarts the
         // scan, so wiping it on every scan made the very same device get
@@ -169,12 +182,14 @@ class BleClient(
             .build()
         
         try {
-            scanner.startScan(listOf(scanFilter), scanSettings, scanCallback)
+            val callback = createFilteredScanCallback()
+            scanCallback = callback
+            scanner.startScan(listOf(scanFilter), scanSettings, callback)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start scan with filter: ${e.message}")
-            // Try without filter as fallback
+            // Try without filter as fallback.
+            stopScan()
             startScanWithoutFilter()
-            return
         }
         
         // Use coroutine for delayed operations (more efficient than Handler)
@@ -182,10 +197,13 @@ class BleClient(
             // Fallback: Try scanning without UUID filter after 5 seconds if nothing found
             delay(SCAN_RETRY_WITHOUT_FILTER_MS)
             withContext(mainDispatcher) {
-                if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
-                    Log.w(TAG, "No device found with UUID filter, retrying without filter...")
-                    stopScan()
-                    startScanWithoutFilter()
+                connectionOwner.locked {
+                    if (!closed && connectionOwner.revision == scanRevision &&
+                        _connectionState.value == ConnectionState.Scanning && !isConnecting && scanCallback != null) {
+                        Log.w(TAG, "No device found with UUID filter, retrying without filter...")
+                        stopScan()
+                        startScanWithoutFilter()
+                    }
                 }
             }
         }
@@ -194,10 +212,13 @@ class BleClient(
         bleScope.launch {
             delay(SCAN_TIMEOUT_MS)
             withContext(mainDispatcher) {
-                if (_connectionState.value == ConnectionState.Scanning) {
-                    stopScan()
-                    Log.e(TAG, "Scan timeout - Gateway not found after ${SCAN_TIMEOUT_MS}ms")
-                    _connectionState.value = ConnectionState.Error("Gateway not found - make sure HUD Gateway is enabled on phone")
+                connectionOwner.locked {
+                    if (!closed && connectionOwner.revision == scanRevision &&
+                        _connectionState.value == ConnectionState.Scanning) {
+                        stopScan()
+                        Log.e(TAG, "Scan timeout - Gateway not found after ${SCAN_TIMEOUT_MS}ms")
+                        _connectionState.value = ConnectionState.Error("Gateway not found - make sure HUD Gateway is enabled on phone")
+                    }
                 }
             }
         }
@@ -207,7 +228,11 @@ class BleClient(
      * Start scanning without UUID filter (broader scan for debugging)
      */
     private fun startScanWithoutFilter() {
-        if (_connectionState.value != ConnectionState.Scanning) return
+        connectionOwner.locked { startScanWithoutFilterLocked() }
+    }
+
+    private fun startScanWithoutFilterLocked() {
+        if (closed || _connectionState.value != ConnectionState.Scanning) return
         
         Log.i(TAG, "Starting scan WITHOUT UUID filter (will match device name)...")
         
@@ -216,7 +241,9 @@ class BleClient(
             .build()
         
         try {
-            scanner?.startScan(null, scanSettings, scanCallbackNoFilter)
+            val callback = createUnfilteredScanCallback()
+            scanCallbackNoFilter = callback
+            scanner?.startScan(null, scanSettings, callback)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start unfiltered scan: ${e.message}")
             _connectionState.value = ConnectionState.Error("Scan failed: ${e.message}")
@@ -226,10 +253,17 @@ class BleClient(
     /**
      * Scan callback for unfiltered scan (matches by device name or UUID)
      */
-    private val scanCallbackNoFilter = object : ScanCallback() {
+    private var scanCallback: ScanCallback? = null
+    private var scanCallbackNoFilter: ScanCallback? = null
+
+    private fun createUnfilteredScanCallback(): ScanCallback = object : ScanCallback() {
         private val seenDevices = mutableSetOf<String>()
         
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            withCurrentScan(this) { handleScanResult(result) }
+        }
+
+        private fun handleScanResult(result: ScanResult) {
             val deviceName = result.device.name ?: result.scanRecord?.deviceName
             val address = result.device.address
             val serviceUuids = result.scanRecord?.serviceUuids
@@ -255,7 +289,7 @@ class BleClient(
             
             if (hasOurService) {
                 Log.i(TAG, "Found Gateway device (by UUID): $deviceName ($address)")
-                synchronized(this@BleClient) {
+                connectionOwner.locked {
                     if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
                         isConnecting = true
                         stopScan()
@@ -264,7 +298,7 @@ class BleClient(
                 }
             } else if (hasMatchingName) {
                 Log.i(TAG, "Found potential Gateway device (by name): $deviceName ($address) - will attempt connection")
-                synchronized(this@BleClient) {
+                connectionOwner.locked {
                     if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
                         isConnecting = true
                         stopScan()
@@ -275,6 +309,10 @@ class BleClient(
         }
         
         override fun onScanFailed(errorCode: Int) {
+            withCurrentScan(this) { handleScanFailed(errorCode) }
+        }
+
+        private fun handleScanFailed(errorCode: Int) {
             val errorMsg = when (errorCode) {
                 SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
                 SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "App registration failed"
@@ -292,11 +330,17 @@ class BleClient(
      * Stop scanning
      */
     fun stopScan() {
-        try {
-            scanner?.stopScan(scanCallback)
-            scanner?.stopScan(scanCallbackNoFilter)
-        } catch (e: Exception) {
-            Log.w(TAG, "Error stopping scan: ${e.message}")
+        connectionOwner.locked {
+            val filtered = scanCallback
+            val unfiltered = scanCallbackNoFilter
+            scanCallback = null
+            scanCallbackNoFilter = null
+            // Invalidate callbacks before asking the stack to stop. Queued scan results/failures
+            // cannot claim a later scan that happens to have the same UI state.
+            for (callback in listOfNotNull(filtered, unfiltered)) {
+                try { scanner?.stopScan(callback) }
+                catch (error: Exception) { Log.w(TAG, "Error stopping scan: ${error.message}") }
+            }
         }
         Log.i(TAG, "Scan stopped")
     }
@@ -305,62 +349,79 @@ class BleClient(
      * Connect to a discovered Gateway device
      */
     fun connect(device: BluetoothDevice) {
-        stopScan()
-        targetDevice = device
-        _connectionState.value = ConnectionState.Connecting
-        
-        Log.i(TAG, "Connecting to ${device.address}...")
-        // The class-level @SuppressLint("MissingPermission") only silences lint;
-        // on Android 12+ connectGatt still throws SecurityException without
-        // BLUETOOTH_CONNECT, and this runs on a Binder thread, so an unhandled
-        // throw crashes the process.
-        gatt = try {
-            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } catch (e: SecurityException) {
-            Log.e(TAG, "BLUETOOTH_CONNECT permission not granted", e)
-            _connectionState.value = ConnectionState.Error("Bluetooth permission missing")
-            null
+        val previous = connectionOwner.locked {
+            if (closed) return@locked null
+            stopScan()
+            val old = gatt
+            gatt = null // Invalidate admitted callbacks before resetting state.
+            stopWatchdog()
+            stopBatterySending()
+            stopRssiMonitoring()
+            _telemetry.value = TelemetryData()
+            _timeData.value = TimeData()
+            _displayPrefs.value = DisplayPrefs()
+            _rssi.value = 0
+            _signalStrength.value = SignalStrength.Good
+            glassesBatteryCharacteristic = null
+            targetDevice = device
+            isConnecting = true
+            _connectionState.value = ConnectionState.Connecting
+            Log.i(TAG, "Connecting to HUD gateway...")
+            // Submit while transitions are serialized. Binder callbacks cannot publish until
+            // the returned handle has been installed; no coroutine wait occurs under the lock.
+            gatt = try {
+                device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            } catch (error: SecurityException) {
+                Log.e(TAG, "BLUETOOTH_CONNECT permission not granted", error)
+                null
+            }
+            if (gatt == null) {
+                isConnecting = false
+                targetDevice = null
+                _connectionState.value = ConnectionState.Error("Bluetooth connection could not start")
+            }
+            old
         }
+        closeGatt(previous, disconnectFirst = true)
     }
     
     /**
      * Disconnect from the Gateway
      */
     fun disconnect() {
-        isConnecting = false
-        stopScan() // Ensure scan is stopped
-        stopWatchdog() // Stop telemetry monitoring
-        stopBatterySending() // Stop battery sending
-        stopRssiMonitoring() // Stop RSSI monitoring
-        
-        gatt?.let { g ->
-            g.disconnect()
-            // Wait briefly for disconnect to complete before closing (using coroutine)
-            bleScope.launch {
-                delay(100)
-                withContext(mainDispatcher) {
-                    try {
-                        g.close()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Error closing GATT: ${e.message}")
-                    }
-                }
-            }
+        val previous = connectionOwner.locked {
+            val old = gatt
+            gatt = null
+            isConnecting = false
+            stopScan()
+            stopWatchdog()
+            stopBatterySending()
+            stopRssiMonitoring()
+            targetDevice = null
+            glassesBatteryCharacteristic = null
+            _connectionState.value = ConnectionState.Disconnected
+            _telemetry.value = TelemetryData()
+            _timeData.value = TimeData()
+            _displayPrefs.value = DisplayPrefs()
+            _rssi.value = 0
+            _signalStrength.value = SignalStrength.Good
+            old
         }
-        gatt = null
-        targetDevice = null
-        glassesBatteryCharacteristic = null
-        _connectionState.value = ConnectionState.Disconnected
-        _telemetry.value = TelemetryData()
-        _timeData.value = TimeData()
-        _signalStrength.value = SignalStrength.Good  // Reset signal strength
+        // Close the detached object now. A deferred close would be cancelled by close(),
+        // and callbacks from this object can no longer change a new connection's state.
+        closeGatt(previous, disconnectFirst = true)
     }
     
     /**
      * Request RSSI update
      */
     fun readRssi() {
-        gatt?.readRemoteRssi()
+        connectionOwner.locked {
+            gatt?.let { current ->
+                try { current.readRemoteRssi() }
+                catch (error: SecurityException) { Log.w(TAG, "RSSI permission missing", error) }
+            }
+        }
     }
     
     // ========== Callbacks ==========
@@ -385,8 +446,12 @@ class BleClient(
     @Volatile
     private var isConnecting = false
     
-    private val scanCallback = object : ScanCallback() {
+    private fun createFilteredScanCallback(): ScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            withCurrentScan(this) { handleScanResult(result) }
+        }
+
+        private fun handleScanResult(result: ScanResult) {
             val deviceName = result.device.name ?: result.scanRecord?.deviceName ?: "Unknown"
             val address = result.device.address
             
@@ -399,7 +464,7 @@ class BleClient(
             
             // Auto-connect to the first device with our service
             // Use synchronized check to prevent race condition
-            synchronized(this@BleClient) {
+            connectionOwner.locked {
                 if (_connectionState.value == ConnectionState.Scanning && !isConnecting) {
                     isConnecting = true
                     // Stop scan immediately before attempting connection
@@ -410,6 +475,10 @@ class BleClient(
         }
         
         override fun onScanFailed(errorCode: Int) {
+            withCurrentScan(this) { handleScanFailed(errorCode) }
+        }
+
+        private fun handleScanFailed(errorCode: Int) {
             val errorMsg = when (errorCode) {
                 SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
                 SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "App registration failed"
@@ -419,7 +488,8 @@ class BleClient(
             }
             Log.e(TAG, "Filtered scan failed: $errorMsg")
             isConnecting = false
-            // Try without filter as fallback
+            // Try without filter as fallback.
+            stopScan()
             startScanWithoutFilter()
         }
     }
@@ -427,10 +497,13 @@ class BleClient(
     private val gattCallback = object : BluetoothGattCallback() {
         
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            if (this@BleClient.gatt !== gatt) {
-                if (newState == BluetoothProfile.STATE_DISCONNECTED) gatt.close()
-                return
+            val admitted = withCurrentGatt(gatt) {
+                handleConnectionStateChange(gatt, status, newState)
             }
+            if (!admitted && newState == BluetoothProfile.STATE_DISCONNECTED) closeGatt(gatt)
+        }
+
+        private fun handleConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             // Enhanced logging for connection diagnostics
             val statusName = when (status) {
                 BluetoothGatt.GATT_SUCCESS -> "GATT_SUCCESS"
@@ -478,7 +551,10 @@ class BleClient(
                     bleScope.launch {
                         delay(200)
                         withContext(mainDispatcher) {
-                            if (this@BleClient.gatt === gatt) gatt.discoverServices()
+                            connectionOwner.ifCurrent(gatt) {
+                                try { gatt.discoverServices() }
+                                catch (error: SecurityException) { Log.w(TAG, "Discovery permission missing", error) }
+                            }
                         }
                     }
                 }
@@ -522,28 +598,23 @@ class BleClient(
                     stopBatterySending()
                     stopRssiMonitoring()
                     _connectionState.value = ConnectionState.Disconnected
-                    gatt.close()
-                    if (this@BleClient.gatt === gatt) this@BleClient.gatt = null
+                    this@BleClient.gatt = null
+                    targetDevice = null
+                    glassesBatteryCharacteristic = null
+                    closeGatt(gatt)
                     
-                    // Auto-reconnect if enabled and disconnect was unexpected (using coroutine)
                     if (shouldAutoReconnect && autoReconnectEnabled) {
-                        Log.i(TAG, "AUTO-RECONNECT: Will attempt to reconnect in 2 seconds...")
-                        bleScope.launch {
-                            delay(2000)
-                            withContext(mainDispatcher) {
-                                if (_connectionState.value == ConnectionState.Disconnected) {
-                                    Log.i(TAG, "AUTO-RECONNECT: Starting scan...")
-                                    startScan()
-                                }
-                            }
-                        }
+                        scheduleReconnect(connectionOwner.revision)
                     }
                 }
             }
         }
         
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (this@BleClient.gatt !== gatt) return
+            withCurrentGatt(gatt) { handleServicesDiscovered(gatt, status) }
+        }
+
+        private fun handleServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.e(TAG, "Service discovery failed: $status")
                 _connectionState.value = ConnectionState.Error("Service discovery failed")
@@ -572,18 +643,21 @@ class BleClient(
                 Log.i(TAG, "Failed devices (retry after ${FAILED_DEVICE_TTL_MS}ms): $deviceAddress")
                 
                 // Disconnect and clean up
-                gatt.disconnect()
-                gatt.close()
                 this@BleClient.gatt = null
+                closeGatt(gatt, disconnectFirst = true)
                 targetDevice = null
                 isConnecting = false
                 
                 // Resume scanning to find the correct device (using coroutine)
                 _connectionState.value = ConnectionState.Scanning
+                val failedRevision = connectionOwner.revision
                 bleScope.launch {
-                    delay(500) // Brief delay before restarting scan
+                    delay(500)
                     withContext(mainDispatcher) {
-                        startScan()
+                        connectionOwner.locked {
+                            if (!closed && connectionOwner.revision == failedRevision &&
+                                _connectionState.value == ConnectionState.Scanning) startScan()
+                        }
                     }
                 }
                 return
@@ -607,16 +681,21 @@ class BleClient(
                 // that can never receive data.
                 Log.e(TAG, "Telemetry characteristic not found - cannot operate")
                 _connectionState.value = ConnectionState.Error("Telemetry characteristic missing")
-                try {
-                    gatt.disconnect()
-                    gatt.close()
-                } catch (e: SecurityException) {
-                    Log.w(TAG, "Missing BLUETOOTH_CONNECT while tearing down", e)
-                }
+                this@BleClient.gatt = null
+                targetDevice = null
+                glassesBatteryCharacteristic = null
+                isConnecting = false
+                stopWatchdog()
+                stopBatterySending()
+                stopRssiMonitoring()
+                closeGatt(gatt, disconnectFirst = true)
                 return
             }
 
-            enableNotification(gatt, telemetryChar)
+            if (!enableNotification(gatt, telemetryChar)) {
+                rejectConnection(gatt, "Telemetry subscription failed")
+                return
+            }
 
             // Enable time notification after telemetry (queue, using coroutine)
             if (timeChar != null) {
@@ -658,13 +737,13 @@ class BleClient(
             Log.i(TAG, "Successfully connected, cleared failed devices list")
             
             // LATENCY MONITORING: Start watchdog timer
-            startWatchdog()
+            startWatchdog(gatt)
             
             // GLASSES BATTERY: Start sending battery level to phone
-            startBatterySending()
+            startBatterySending(gatt)
             
             // RSSI MONITORING: Start checking signal strength
-            startRssiMonitoring()
+            startRssiMonitoring(gatt)
         }
         
         override fun onCharacteristicChanged(
@@ -672,11 +751,17 @@ class BleClient(
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
-            if (this@BleClient.gatt !== gatt) return
+            withCurrentGatt(gatt) { handleCharacteristicChanged(characteristic, value) }
+        }
+
+        private fun handleCharacteristicChanged(
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
             when (characteristic.uuid) {
                 GattProfile.TELEMETRY_CHAR_UUID -> {
                     // LATENCY MONITORING: Track update timing
-                    val now = System.currentTimeMillis()
+                    val now = SystemClock.elapsedRealtime()
                     telemetryUpdateCount++
                     recordPacketReceived() // Record for session statistics
                     
@@ -727,7 +812,10 @@ class BleClient(
         }
         
         override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
-            if (this@BleClient.gatt !== gatt) return
+            withCurrentGatt(gatt) { handleReadRemoteRssi(rssi, status) }
+        }
+
+        private fun handleReadRemoteRssi(rssi: Int, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 _rssi.value = rssi
                 
@@ -758,9 +846,20 @@ class BleClient(
      * Enable notification for a characteristic
      * Uses deprecated API for compatibility with older Android versions (Rokid glasses)
      */
-    @Suppress("DEPRECATION")
     private fun enableNotification(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic): Boolean {
-        if (this.gatt !== gatt) return false
+        var enabled = false
+        connectionOwner.ifCurrent(gatt) {
+            enabled = try { enableNotificationLocked(gatt, characteristic) }
+            catch (error: SecurityException) {
+                Log.w(TAG, "Notification permission missing", error)
+                false
+            }
+        }
+        return enabled
+    }
+
+    @Suppress("DEPRECATION")
+    private fun enableNotificationLocked(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic): Boolean {
         val success = gatt.setCharacteristicNotification(characteristic, true)
         if (!success) {
             Log.e(TAG, "Failed to set notification for ${characteristic.uuid}")
@@ -770,13 +869,11 @@ class BleClient(
         // Write to CCCD to enable notifications
         // Using deprecated API for compatibility with Android < 13 (Rokid glasses)
         val descriptor = characteristic.getDescriptor(GattProfile.CCCD_UUID)
-        if (descriptor != null) {
-            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            gatt.writeDescriptor(descriptor)
-            Log.i(TAG, "Enabled notification for ${characteristic.uuid}")
-        }
-        
-        return true
+        if (descriptor == null) return false
+        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        val accepted = gatt.writeDescriptor(descriptor)
+        if (accepted) Log.i(TAG, "Submitted notification subscription for ${characteristic.uuid}")
+        return accepted
     }
     
     // ========== CONNECTION HEALTH: Watchdog for stale data detection and auto-reconnect ==========
@@ -790,54 +887,31 @@ class BleClient(
      * After STALE_CHECKS_BEFORE_RECONNECT consecutive stale checks, attempts auto-reconnect.
      * Uses coroutine for better resource management.
      */
-    private fun startWatchdog() {
-        stopWatchdog() // Stop any existing watchdog
-        
-        lastTelemetryUpdateMs = System.currentTimeMillis()
-        lastLogTimeMs = System.currentTimeMillis()
+    private fun startWatchdog(expectedGatt: BluetoothGatt) {
+        stopWatchdog()
+        val now = SystemClock.elapsedRealtime()
+        lastTelemetryUpdateMs = now
+        lastLogTimeMs = now
         telemetryUpdateCount = 0
-        consecutiveStaleChecks = 0
         receivedValidSessionTelemetry = false
         _isTelemetryFresh.value = false
-        
         watchdogJob = bleScope.launch {
             delay(WATCHDOG_CHECK_INTERVAL_MS)
-            
-            while (isActive && _connectionState.value == ConnectionState.Connected) {
-                val now = System.currentTimeMillis()
-                val timeSinceLastUpdate = now - lastTelemetryUpdateMs
-                
-                if (timeSinceLastUpdate > TELEMETRY_STALE_TIMEOUT_MS) {
-                    consecutiveStaleChecks++
-                    recordStaleEvent() // Record for session statistics
-                    
-                    if (_isTelemetryFresh.value) {
-                        Log.w(TAG, "CONNECTION HEALTH: Telemetry stale! No update for ${timeSinceLastUpdate}ms (check $consecutiveStaleChecks/$STALE_CHECKS_BEFORE_RECONNECT)")
-                        _isTelemetryFresh.value = false
-                    }
-                    
-                    // Auto-reconnect if too many stale checks
-                    if (consecutiveStaleChecks >= STALE_CHECKS_BEFORE_RECONNECT && autoReconnectEnabled) {
-                        Log.e(TAG, "CONNECTION HEALTH: Connection appears lost after $consecutiveStaleChecks stale checks. Initiating auto-reconnect...")
-                        withContext(mainDispatcher) {
-                            initiateAutoReconnect()
-                        }
-                        break // Stop this watchdog, new one will start after reconnect
-                    }
-                } else {
-                    // Reset stale counter on fresh data
-                    if (consecutiveStaleChecks > 0) {
-                        Log.i(TAG, "CONNECTION HEALTH: Connection recovered, resetting stale counter")
-                        consecutiveStaleChecks = 0
-                    }
-                    _isTelemetryFresh.value = receivedValidSessionTelemetry
+            while (isActive) {
+                var reconnect = false
+                val admitted = connectionOwner.ifCurrent(expectedGatt) {
+                    reconnect = checkTelemetryFreshness()
                 }
-                
+                if (!admitted) break
+                if (reconnect) {
+                    withContext(mainDispatcher) {
+                        connectionOwner.ifCurrent(expectedGatt) { initiateAutoReconnect() }
+                    }
+                    break
+                }
                 delay(WATCHDOG_CHECK_INTERVAL_MS)
             }
         }
-        
-        Log.d(TAG, "CONNECTION HEALTH: Watchdog started (stale timeout: ${TELEMETRY_STALE_TIMEOUT_MS}ms, reconnect after: ${STALE_CHECKS_BEFORE_RECONNECT} checks)")
     }
     
     /**
@@ -845,37 +919,94 @@ class BleClient(
      * Uses a longer delay to ensure the BLE stack fully resets before reconnecting.
      */
     private fun initiateAutoReconnect() {
+        if (!autoReconnectEnabled) return
         Log.i(TAG, "CONNECTION HEALTH: Initiating auto-reconnect...")
-        
-        // Disable auto-reconnect temporarily to prevent rapid reconnect loops
-        val wasAutoReconnectEnabled = autoReconnectEnabled
-        autoReconnectEnabled = false
-        
-        // Disconnect current connection
         disconnect()
-        
-        // Wait 2 seconds for BLE stack to fully reset before reconnecting (using coroutine)
+        scheduleReconnect(connectionOwner.revision)
+    }
+
+    private fun checkTelemetryFreshness(): Boolean {
+        if (_connectionState.value != ConnectionState.Connected) return false
+        val elapsed = SystemClock.elapsedRealtime() - lastTelemetryUpdateMs
+        if (elapsed > TELEMETRY_STALE_TIMEOUT_MS) {
+            consecutiveStaleChecks++
+            recordStaleEvent()
+            _isTelemetryFresh.value = false
+            return consecutiveStaleChecks >= STALE_CHECKS_BEFORE_RECONNECT && autoReconnectEnabled
+        }
+        consecutiveStaleChecks = 0
+        _isTelemetryFresh.value = receivedValidSessionTelemetry
+        return false
+    }
+
+    private fun scheduleReconnect(expectedRevision: Long) {
         bleScope.launch {
-            delay(2000) // 2 second delay before reconnect
+            delay(2000)
             withContext(mainDispatcher) {
-                // Re-enable auto-reconnect
-                autoReconnectEnabled = wasAutoReconnectEnabled
-                
-                if (_connectionState.value == ConnectionState.Disconnected) {
-                    Log.i(TAG, "CONNECTION HEALTH: Starting new scan for auto-reconnect")
-                    recordReconnect() // Record reconnect for session statistics
-                    startScan()
+                connectionOwner.locked {
+                    if (!closed && autoReconnectEnabled && connectionOwner.revision == expectedRevision &&
+                        _connectionState.value == ConnectionState.Disconnected) {
+                        recordReconnect()
+                        startScan()
+                    }
                 }
             }
         }
     }
-    
+
+    private fun withCurrentScan(callback: ScanCallback, action: () -> Unit) {
+        connectionOwner.locked {
+            if (closed || _connectionState.value != ConnectionState.Scanning ||
+                (scanCallback !== callback && scanCallbackNoFilter !== callback)) return@locked
+            try { action() }
+            catch (error: SecurityException) {
+                isConnecting = false
+                _connectionState.value = ConnectionState.Error("Bluetooth permission missing")
+                Log.w(TAG, "Scan callback permission missing", error)
+            }
+        }
+    }
+
+    private fun withCurrentGatt(handle: BluetoothGatt, action: () -> Unit): Boolean =
+        connectionOwner.ifCurrent(handle) {
+            try { action() }
+            catch (error: SecurityException) {
+                rejectConnection(handle, "Bluetooth permission missing")
+                Log.w(TAG, "GATT callback permission missing", error)
+            }
+        }
+
+    private fun rejectConnection(handle: BluetoothGatt, message: String) {
+        gatt = null
+        targetDevice = null
+        glassesBatteryCharacteristic = null
+        isConnecting = false
+        stopWatchdog()
+        stopBatterySending()
+        stopRssiMonitoring()
+        _connectionState.value = ConnectionState.Error(message)
+        closeGatt(handle, disconnectFirst = true)
+    }
+
+    private fun closeGatt(handle: BluetoothGatt?, disconnectFirst: Boolean = false) {
+        if (handle == null) return
+        if (disconnectFirst) {
+            try { handle.disconnect() }
+            catch (error: SecurityException) { Log.w(TAG, "Disconnect permission missing", error) }
+        }
+        try { handle.close() }
+        catch (error: SecurityException) { Log.w(TAG, "Close permission missing", error) }
+    }
+
     /**
      * Enable or disable auto-reconnect feature.
      */
     fun setAutoReconnectEnabled(enabled: Boolean) {
-        autoReconnectEnabled = enabled
-        Log.i(TAG, "CONNECTION HEALTH: Auto-reconnect ${if (enabled) "enabled" else "disabled"}")
+        connectionOwner.locked {
+            autoReconnectEnabled = enabled
+            if (!enabled) connectionOwner.replace(gatt) // Cancel delayed reconnect intent.
+            Log.i(TAG, "CONNECTION HEALTH: Auto-reconnect ${if (enabled) "enabled" else "disabled"}")
+        }
     }
     
     /**
@@ -906,54 +1037,46 @@ class BleClient(
      * This runs every BATTERY_SEND_INTERVAL_MS (30 seconds).
      * Uses coroutine for better resource management.
      */
-    private fun startBatterySending() {
-        stopBatterySending() // Stop any existing handler
-        
-        val batteryChar = glassesBatteryCharacteristic
-        if (batteryChar == null) {
-            Log.w(TAG, "GLASSES BATTERY: Cannot start - characteristic not available")
-            return
-        }
-        
+    private fun startBatterySending(expectedGatt: BluetoothGatt) {
+        stopBatterySending()
+        if (glassesBatteryCharacteristic == null) return
         batterySendJob = bleScope.launch {
-            // Send immediately
-            withContext(mainDispatcher) {
-                sendGlassesBattery()
-            }
-            
-            // Then periodic sending
-            while (isActive && _connectionState.value == ConnectionState.Connected) {
-                delay(BATTERY_SEND_INTERVAL_MS)
+            while (isActive) {
+                var connected = false
                 withContext(mainDispatcher) {
-                    sendGlassesBattery()
+                    connected = connectionOwner.ifCurrent(expectedGatt) { sendGlassesBattery(expectedGatt) }
                 }
+                if (!connected) break
+                delay(BATTERY_SEND_INTERVAL_MS)
             }
         }
-        
-        Log.i(TAG, "GLASSES BATTERY: Started sending battery level every ${BATTERY_SEND_INTERVAL_MS}ms")
     }
     
     /**
      * Send current glasses battery level to phone via GATT characteristic write.
      */
     @Suppress("DEPRECATION")
-    private fun sendGlassesBattery() {
-        val gattConnection = gatt
+    private fun sendGlassesBattery(gattConnection: BluetoothGatt) {
         val batteryChar = glassesBatteryCharacteristic
         
-        if (gattConnection == null || batteryChar == null) {
+        if (batteryChar == null) {
             Log.w(TAG, "GLASSES BATTERY: Cannot send - not connected or characteristic not available")
             return
         }
         
         val batteryLevel = getGlassesBatteryLevel()
+        if (batteryLevel !in 0..100) return // BatteryManager may return an unknown sentinel.
         val data = byteArrayOf(batteryLevel.toByte())
         
         // Use deprecated API for compatibility with older Android versions
         batteryChar.value = data
         batteryChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
         
-        val success = gattConnection.writeCharacteristic(batteryChar)
+        val success = try { gattConnection.writeCharacteristic(batteryChar) }
+        catch (error: SecurityException) {
+            Log.w(TAG, "Battery feedback permission missing", error)
+            false
+        }
         if (success) {
             Log.d(TAG, "GLASSES BATTERY: Sent battery level $batteryLevel% to phone")
         } else {
@@ -986,28 +1109,23 @@ class BleClient(
      * This helps detect weak signals before the connection drops.
      * Uses coroutine for better resource management.
      */
-    private fun startRssiMonitoring() {
-        stopRssiMonitoring() // Stop any existing handler
-        
-        // Initialize session metrics
+    private fun startRssiMonitoring(expectedGatt: BluetoothGatt) {
+        stopRssiMonitoring()
         sessionStartTimeMs = System.currentTimeMillis()
         totalPacketsReceived = 0
         totalStaleEvents = 0
         rssiSamples.clear()
-        
         rssiMonitorJob = bleScope.launch {
-            delay(RSSI_CHECK_INTERVAL_MS) // Initial delay
-            
-            while (isActive && _connectionState.value == ConnectionState.Connected) {
-                // Request RSSI update from the connected device
+            delay(RSSI_CHECK_INTERVAL_MS)
+            while (isActive) {
+                var connected = false
                 withContext(mainDispatcher) {
-                    gatt?.readRemoteRssi()
+                    connected = connectionOwner.ifCurrent(expectedGatt) { readRssi() }
                 }
+                if (!connected) break
                 delay(RSSI_CHECK_INTERVAL_MS)
             }
         }
-        
-        Log.d(TAG, "RSSI MONITORING: Started checking signal strength every ${RSSI_CHECK_INTERVAL_MS}ms")
     }
     
     /**
@@ -1065,8 +1183,10 @@ class BleClient(
      * Increment reconnect count for session statistics.
      */
     fun recordReconnect() {
-        reconnectCount++
-        Log.d(TAG, "CONNECTION METRICS: Reconnect count = $reconnectCount")
+        connectionOwner.locked {
+            reconnectCount++
+            Log.d(TAG, "CONNECTION METRICS: Reconnect count = $reconnectCount")
+        }
     }
     
     /**
@@ -1074,24 +1194,12 @@ class BleClient(
      * This should be called when the service/activity is destroyed.
      */
     fun close() {
-        Log.i(TAG, "Closing BleClient and releasing resources...")
-
-        // Close the GATT client synchronously first. disconnect() defers
-        // gatt.close() onto bleScope, and cancelling the scope below would
-        // abort that coroutine before it runs ??leaking the BluetoothGatt (and
-        // its BLE stack resources) on every close.
-        try {
-            gatt?.close()
-        } catch (e: SecurityException) {
-            Log.w(TAG, "Missing BLUETOOTH_CONNECT while closing GATT", e)
+        connectionOwner.locked {
+            closed = true
+            autoReconnectEnabled = false
         }
-        gatt = null
-
         disconnect()
-
-        // Cancel all coroutines
         bleScope.cancel()
-
         Log.i(TAG, "BleClient closed")
     }
 }

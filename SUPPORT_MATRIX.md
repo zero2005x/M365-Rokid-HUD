@@ -21,5 +21,13 @@ Presence of a decoder is **not** vehicle verification. Add one row per model/fir
 | Xiaomi scooter | Pro, Pro2, 1S, Lite, Mi3 | — | all | **not scoped** | — | no per-model evidence; commands denied by gate |
 | Others | see doc/MULTIVEHICLE_HANDOFF.md §8 | | | not started | | |
 
-Remaining capability gaps: no public family registry, no Ninebot/Zydtech/I1/KingSong/Veteran/I2 codec,
-no Begode settings, no RideFlux core consumer, and no phone session/UI wiring yet. No aggregate support badge is justified.
+Remaining capability gaps: no public family registry, no Ninebot/Zydtech/I1/KingSong/Veteran/I2 core codec,
+no Begode settings, and no phone session/UI wiring yet. No aggregate support badge is justified.
+
+## Consumer integration (2026-10-08)
+HUD phone delegates M365 register reads to core; phone BLE/Wi-Fi and glasses share core V1 bytes.
+RideFlux's isolated `codex/pev-core-consumer` branch consumes the same authoritative external source
+for M365 read PDUs, SOC, odometer and frame temperature. It retains disputed legacy speed/B9 display
+policies and independent Ninebot diagnostics. This is not full core migration or vehicle acceptance.
+V2 delivery/negotiation and the unique phone writer/experimental UI remain pending in both products.
+See `TEST_REPORT.md` and the isolated consumer's `docs/PEV_CORE_CONSUMER.md` for actual validation.

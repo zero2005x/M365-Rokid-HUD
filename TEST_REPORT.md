@@ -84,3 +84,85 @@ isolate polling/reply ownership and use the one coordinator. Generic plans trust
 the phone must not expose raw hex or arbitrary specs. Existing legacy light/lock methods are not
 yet routed through the new gate. Versioned gateway unknown/freshness handling, RideFlux integration,
 other family implementations and actual M365/A2 acceptance remain in the handoff queue.
+
+## Continuation — 2026-10-08
+Started from HUD `51536b5`, clean except the two owner screenshots. GitHub main still
+`3d01e6f492141fd2c29aced4b19f98d51cb8364c`. The prior gateway draft's green tests did not prove
+its contract: independent review found short-frame crashes/CRC overlap, reversed magic,
+changed V1 quantization/wrap, invented zeros and conflated sensor meanings. Those were repaired
+in local core commit `8d6587c`; `pev-protocol-core/GATEWAY_SCHEMA.md` describes the unreleased V2.
+
+Actual BLE/Wi-Fi V1 producers and glasses V1 parser now consume the same module. Wi-Fi ingress
+and BLE battery feedback apply the command guard. Invalid CRC no longer refreshes previous BLE
+telemetry; reconnect starts unknown/stale until a valid current-session packet. Late old-GATT
+callbacks are ignored. Full atomic callback/session synchronization remains future hardening.
+
+The final semantic run used `scripts/verify-hud-wsl.sh`: JDK21, Gradle offline, core/App/glasses
+Kover, both `lintDebug`, both `assembleDebug`, explicit `-PskipRustBuild`.
+
+| Actual check | Result |
+|---|---|
+| HUD core / phone / glasses JVM tests | 166 / 367 / 12, zero failures/errors/skips |
+| Core Kover and >=90% line/branch floor | LINE 836/838 (99.76%), BRANCH 885/937 (94.45%), methods 237/238; passed |
+| Phone / glasses lintDebug | Passed, zero errors; 98 warnings + 2 hints / 19 warnings remain |
+| Phone / glasses debug APK build | Both assembled successfully |
+| External Sonar | NOT RUN; no scanner/token. Local coverage/lint are not an external Sonar gate pass |
+| Rust/native hardware | NOT rerun; existing Windows artifacts used; no vehicle writes/acceptance |
+
+The first full offline run lacked declared Android test dependencies (`androidx.test.ext:junit`
+1.3.0 and Espresso 3.7.0). One online resolution run populated them. Lint then identified the
+existing glasses `repeatOnLifecycle` registration via `onStart`, and three phone permission
+contracts. Fixed these without suppressing/excluding checks: register one lifecycle observer from
+`onCreate`, switch bound clients with `collectLatest`, catch permission loss when notifying display
+preferences, and permit local/native disconnect cleanup after revocation. The final offline run
+was BUILD SUCCESSFUL. Final phone packaging after whitespace-only cleanup also passed:
+`wsl -d kali-linux --cd /home/kali/build/pev-core-stage -- env JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 bash gradlew --no-daemon --offline -PskipRustBuild :app:assembleDebug`.
+
+Local artifacts and copied reports are under ignored `build/hud-verification/`:
+phone APK SHA256 `7d6a481cb4b64eacc7ea5510a1d400b0bdb90eb463495e541472acfbbc0439ac`,
+glasses APK SHA256 `79de006ba5a74625b8baf676da41e02b6f70c20fdbb1d2ee3dee9a182d1d361e`.
+These are local debug artifacts, with the native limitations below; no install or publication occurred.
+
+Native freshness warning is retained: Windows stamp `e80791fd...` versus Linux `396ba136...` due
+host separators in the fingerprint. Rust sources remain unchanged. The prior agent recorded
+Windows Rust/JNI counts 5/148/56 in the handoff; this continuation did not independently witness
+or rerun them. No new native freshness/runtime acceptance is inferred from Kotlin APK assembly.
+
+Independent read-only review checked V1 producers/reader, V2 bounds/CRC/UTF-8/state/time/source,
+command refusal, lifecycle behavior and permission cleanup. Lone-surrogate provenance encoding
+was fixed. Parsed V1 DTOs preserve Float display behavior and are not lossless forwarding objects.
+V2 negotiation, clock alignment, packet delivery/fragmentation, upgrade UI and semantic alert/display
+wiring remain pending; existing primitive V1 APIs are M365-only and cannot represent provenance.
+
+### RideFlux isolated consumer
+Local commit `eb941870c583bed86072f304cd5e0e2cbddffc1a`, branch `codex/pev-core-consumer`, worktree
+`C:/Users/liangtinglin/Documents/codebase/Android/RideFlux-pev-core-consumer`, based explicitly on
+`9bd9eaa82e55efaa936afa5d332e7ef2c752b7b8`. The owner checkout advanced concurrently to `ee23b875`
+(0.1.11/versionCode12); remote main advanced from `b7a51ad` to `83ef5a8835345d624bbaec3ad899c89b81b084fc` at final recheck. No owner change/reset/stash was performed.
+
+Thin Gradle included build references the authoritative external module source/build script and
+redirects outputs into the consumer. It avoids importing HUD Android/Rust builds. M365 read PDUs,
+SOC, unsigned odometer and frame temperature actually delegate to core. ES2 stays independent;
+legacy signed-magnitude speed and B9 trip policies remain documented compatibility gaps.
+
+Strict offline validation: domain123 + protocol395 + core166 =684 tests, zero failures/errors/skips;
+JVM17 composite substitution verified. M365Codec JaCoCo 24/24 lines, 58/62 branches. Whole protocol
+coverage includes existing unrelated codecs (3122/3789 lines, 1754/2713 branches), not a new overall
+>=90% gate pass. All 16 added public dependency hashes matched fresh primary Maven Central bytes;
+previous trusted hashes retained. GPL consumer code/tests were never copied into MIT HUD.
+
+Exact commands, source/artifact hashes and counts are committed in that worktree's
+`docs/PEV_CORE_CONSUMER.md`, `docs/pev-core-validation.json`, and
+`docs/pev-core-artifact-verification.json`. Separate strict offline Android tasks
+`:app:lintDebug :hud-app:lintDebug :app:assembleDebug :hud-app:assembleDebug` were BUILD SUCCESSFUL
+(314 tasks, 6m46s). Phone/HUD lint: zero errors, 37/13 warnings. APK SHA256:
+phone `562b7b4d1b32167cbaf71b87d180e52b5e46636b33762ff0a75e3f8e68277517`,
+HUD `1c146642561e300e849226a56c59a8c977930e64cea784b448b0c0006b43f0d3`.
+Both DEX files contain the shared decoder without the coverage-agent namespace. Existing native
+SDK alignment/stripping warnings and D8 Play Services warning remain; no hardware or remote CI
+acceptance is claimed. Documentation follow-up commit `c984f52fb7415e8d376b3a4ba45b89dbd86358e3`
+records `docs/pev-core-android-validation.json` and `docs/pev-core-license-audit.json`.
+All nine new dependency coordinates declare Apache-2.0; the two agent JARs contain 64 shaded ASM
+classes each with separate BSD-3-Clause attribution. Instrumentation is build/test-only.
+The selected baseline predates newer privacy/token-log fixes and owner version bump. Integrate
+with those commits before release; do not replace the live owner checkout with this older base.

@@ -8,7 +8,7 @@ copied, translated or refactored into this MIT module. Having read a source is n
 |---|---|---|---|---|
 | M365-Rokid-HUD (this repo) | github.com/zero2005x/M365-Rokid-HUD @ 3d01e6f | MIT | code, fixtures | yes |
 | PEVAppRE findings (local, read-only) | `/home/kali/PEVAppRE` (euc-programme/findings, scooter-apps/) | owner's research notes; vendor-app derived facts | protocol facts only; no vendor code or expressive text copied | vendor code/vendor-owned captures: no; owner M365 derivatives: existing fixture authorization below; A2 redistribution unresolved |
-| RideFlux (local) | `Android/RideFlux` @ 9bd9eaa82e55efaa936afa5d332e7ef2c752b7b8, moving workspace | GPL | NOT a code/test/spec source; future consumer only | n/a |
+| RideFlux (local) | isolated `Android/RideFlux-pev-core-consumer`, base `9bd9eaa82e55efaa936afa5d332e7ef2c752b7b8`, consumer commit `eb94187`, validation/license follow-up `c984f52` | GPL | consumer of MIT core; never a code/test/spec source for this module; original owner checkout preserved | n/a |
 | Vendor apps (Begode/Gotway, KingSong, Inmotion, Veteran, Zydtech, Ninebot) | via PEVAppRE | proprietary | facts about wire format only | no |
 
 ## Per-fixture log (append rows)

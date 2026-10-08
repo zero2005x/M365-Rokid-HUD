@@ -46,6 +46,11 @@ current repository writes are not yet routed through this coordinator.
 `BegodeA2Codec` reuses bounded framing and returns raw branch diagnostics. It emits an empty
 physical snapshot, including for unknown profiles: it cannot grant battery/voltage/SOC/PWM truth.
 
+`InmotionI1Codec` decodes a bounded escaped CAN envelope with additive checksum and trailer.
+It accepts observed length codes 08/FE, separates raw CAN metadata/extension and returns no physical
+fields or settings. AA AA is shared with I2 and cannot select identity/layout or grant writes.
+Synthetic contracts and local historical-reference replay are separate evidence classes.
+
 ## Gateway rollout
 BLE/Wi-Fi phone producers and the glasses V1 parser use the same core wire implementation.
 `GatewayV1Frame` deliberately preserves the legacy Double quantization and narrow integer

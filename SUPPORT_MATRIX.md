@@ -1,6 +1,6 @@
 ﻿# Support matrix (model + firmware + field granularity)
 
-Evidence: S = synthetic, V = vendor-static, W = wire-captured on a real vehicle, H = owner hardware-verified.
+Evidence: S = synthetic, V = vendor-static, W = wire-captured on a real vehicle, R = historical community reference (not owner acceptance), H = owner hardware-verified.
 Presence of a decoder is **not** vehicle verification. Add one row per model/firmware/field; never widen a scope without evidence.
 
 | Family | Model | Firmware | Field | Decoder | Evidence | Notes |
@@ -19,9 +19,11 @@ Presence of a decoder is **not** vehicle verification. Add one row per model/fir
 | Begode | A2 (explicitly selected) | unknown | 24-byte framing, type @18, branch @19, eight raw channels | `BegodeA2Codec` | W layout, S test vectors | four branches; type1 battery layout unresolved; UNKNOWN profile gets uninterpreted diagnostics |
 | Begode | A2 | unknown | voltage / SOC / current / temperatures / physical distances / PWM | absent | — | raw diagnostics only; CAP-B NOT CAPTURED; mode@14 never PWM and two distance words never fused |
 | Xiaomi scooter | Pro, Pro2, 1S, Lite, Mi3 | — | all | **not scoped** | — | no per-model evidence; commands denied by gate |
+| Inmotion I1 | V5F/V8S historical reference filenames; exact in-band identity not implemented | unknown | CAN envelope, raw ID/data/channel/format/type/extension | `InmotionI1Codec` | R structure, S contracts | 501 reference frames; escaped CHECK supported; unsupported length codes rejected; no model inferred from filename or AA AA |
+| Inmotion I1 | all models | unknown | speed / SOC / physical voltage/current/temperature/distances / interpreted alerts / auth / settings | absent | — | empty physical snapshot; model layouts/scales and setting plans remain unimplemented |
 | Others | see doc/MULTIVEHICLE_HANDOFF.md §8 | | | not started | | |
 
-Remaining capability gaps: no public family registry, no Ninebot/Zydtech/I1/KingSong/Veteran/I2 core codec,
+Remaining capability gaps: no public family registry, no Ninebot/Zydtech/KingSong/Veteran/I2 core codec,
 no Begode settings, and no phone session/UI wiring yet. No aggregate support badge is justified.
 
 ## Consumer integration (2026-10-08)

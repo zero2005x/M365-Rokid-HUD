@@ -38,3 +38,20 @@ The Rust transport, unique production writer, phone experimental UI, and version
 are pending. These are owner acceptance steps for a future integrated build, not capabilities
 already available in the current APK. Glasses receive only telemetry/alerts; no vehicle write flow
 may be added there. No checklist item here is passed by a synthetic test or historical replay.
+
+
+## Glasses BLE session acceptance (NOT EXECUTED)
+1. Connect to the phone gateway, receive valid telemetry, and retain the connection/build identifiers.
+2. Reconnect while old telemetry/RSSI/service-discovery callbacks and watchdog/subscription work
+   are queued. Only the new connection may update telemetry, preferences, RSSI or freshness.
+3. Disconnect manually while auto-reconnect is pending; disable then re-enable auto-reconnect.
+   Neither action should resurrect an older delayed connection attempt.
+4. Stop/restart scans while results/failures from an older scan remain queued. They must not
+   connect, mark Error or cancel a new scan. Close/destroy must leave no delayed scan or GATT leak.
+5. Revoke Bluetooth permission, return unknown BatteryManager data, reject telemetry subscription,
+   and feed malformed CRC packets. Expect an explicit error/stale state and no invented freshness.
+6. Record actual Android/Rokid/phone versions, timestamps and old/new GATT session diagnostics.
+   Synthetic JVM ownership tests do not establish Bluetooth stack timing or hardware acceptance.
+
+Inmotion I1 has no owner-testable vehicle in this scope. The 501-frame historical reference replay
+does not pass an owner checklist, validate physical scales or authorize a setting.

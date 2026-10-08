@@ -77,3 +77,35 @@ Kover 0.9.9 is build/test instrumentation, Apache-2.0
 Their licenses remain their own; no dependency is relabeled MIT. No Android/JNI/GPL dependency
 is in the core. Rokid SDK and existing App dependency licensing were not re-audited this round;
 no new SDK inclusion or release approval is claimed.
+
+
+## Inmotion I1 continuation sources (2026-10-08)
+The receive codec and synthetic tests were written independently from neutral framing facts.
+No GPL/vendor class, test, expressive spec text or captured frame was copied into this MIT module.
+No new dependency was introduced. Reading the research is not a legal clean-room claim.
+
+| Read-only source | SHA256 / pinned reference | Rights and use |
+|---|---|---|
+| PEVAppRE `euc-programme/findings/INMOTION_REFERENCE_DIFFERENTIAL.md`, including later correction §8 | `5e0f62a55d8a8b0277160eea0f21d745b3512cc7241ef47ae5cca856d9eb9d1c` | owner's audit of GPL/community/vendor facts; offsets/envelope facts only, no prose or implementation copied |
+| `CROSS_BRAND_COMMAND_REFERENCE.md` | `24533ce99800cd8182c48758db2a1d301c173963a9764fdce6462c72b4a1cab3` | corroborating framing/ambiguity facts only; no settings implemented |
+| `euc-programme/evidence/inmotion_trace_corpus.json` | `3f087c4abd1f048efa65e845fcea49fe73971a3c9fc5b727d0c9cb0d41d5d108` | frozen historical byte-stream identity; read-only, not distributed |
+| [WheelLog primary reference repository](https://github.com/Wheellog/Wheellog.Android/tree/1b3707973e3b4528bd88778f9ebdf7a79817cf3f), `LICENSE` | commit `1b3707973e3b4528bd88778f9ebdf7a79817cf3f`, local LICENSE contains GPLv3 text | never an MIT implementation/test source; external captures replayed locally only, no separate capture redistribution authorization established |
+| `app/src/test/resources/RAW_inmotion_V5F.csv` at that WheelLog commit | `b2acb7e281a8693e6f886b6586abbb3cda7b24184976a7e24273ba663d8adbbd` | historical community reference, no owner hardware acceptance; not packaged/committed as MIT fixture |
+| `RAW_inmotion_V8S.csv` | `1948f6c0b54c4a2dcd9573cb7e593b2a6f62a4715e0cd7f31284d76c442ad1ef` | same local-only replay restriction |
+| `RAW_inmotion_alerts.csv` | `266793e776b86117ea1c910d471ea6ee3ff5aeff3e06b23bb5df6fbdea6e7a78` | same restriction; alert payload semantics remain unknown |
+
+Independent MIT reproduction tools are committed as `scripts/InmotionI1Replay.java`,
+`scripts/prepare-inmotion-i1-replay.py` and `scripts/replay-inmotion-i1-wsl.sh`. Local ignored
+`build/pev-inmotion-i1-replay/` contains compiled runners, derived segments and replay report. Transformation preserves each CSV hex segment and
+concatenated byte stream; source/transform/runner/class/core-JAR hashes are recorded in its report.
+The three segmentation variants agree on 501 frames, eight escaped checksums, two unsupported
+length-code records (44 rejected bytes), no overflow and no physical fields. This establishes
+reference-envelope behavior only. Model-specific field meanings, speed factor/distance units,
+sensor names, alert interpretation, authentication and setting builders remain unimplemented.
+
+
+Final I1 source SHA256 `092a27d41d55a1c18e1dd62fd133f2ed2d2641d805deffb7e728a76248e2c23f`, root Kotlin/JVM JAR `2cc9cefefceba55defa5cfa3ef320ab946d8c54475667e403f2ebb7f0e1089e9`.
+Independent runner source `93ed8724d1b84f769294a1421f02dd08bc3b5afa102c986c0fed5058ddb4e583`, class `0bbb047ad58b60f8be74ee272b9205a20654ba45854aafb891e06b20a837fac1`;
+CSV transform `935876a4993bf1587ff1bcbbe5e77b1bf38ffe545500f79e2ff2203561e24082`. Actual replay report SHA256 `7fede9168857f0d014326b6fe891a67e01a585e44f9b632ed8cf78b61501b76c`.
+The runner used the root Kotlin2.2.10 runtime, SHA256 `9c67cc79efd6b9215b49d2a4308f5f3433537376c7c88e89bdd6729bd096e61a`;
+no capture or GPL implementation is a runtime dependency of the MIT module.

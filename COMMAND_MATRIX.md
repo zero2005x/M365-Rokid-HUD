@@ -22,3 +22,9 @@ They expire after 2 seconds, retain unrelated bits, and require an explicit byte
 Byte-only compatibility builders convey no authorization. Normal mode has no hardware-validated command
 here; App experimental UI and Rust transport hookup remain pending. Existing repository light/lock APIs
 predate this core and have not yet been routed through it; do not claim all production writes are gated.
+
+
+Inmotion I1 receive framing is now implemented; all I1 setting/write capabilities remain closed.
+No TX encoder, auth, model-specific command scope, unit/range or confirmation plan is claimed.
+Reopen each setting only after a pinned source establishes that exact model/firmware, encoding,
+parameters and confirmation behavior; do not infer write access from AA AA or a successful replay.

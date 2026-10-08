@@ -2,7 +2,9 @@
 
 Independent, MIT-licensed, pure Kotlin/JVM protocol core for personal electric vehicles
 (scooters and EUCs). The M365-Rokid-HUD app consumes it. RideFlux composite-build integration
-is planned and has not been implemented; no second codec copy is authorized.
+is implemented in the isolated `RideFlux-pev-core-consumer` worktree via a configurable thin
+included build. M365 reads consume this authoritative source; full command/gateway migration
+remains pending. No second codec copy is authorized.
 
 Hard rules: no Android / Compose / JNI / GPL dependency; no code copied from GPL projects;
 see `SOURCE_PROVENANCE.md` before adding any source, fixture or spec text.

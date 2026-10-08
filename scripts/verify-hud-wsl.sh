@@ -2,7 +2,8 @@
 # Core/phone/glasses verification without writing to the checked-out build outputs.
 set -euo pipefail
 src="$(cd "$(dirname "$0")/.." && pwd)"
-st=/home/kali/build/pev-core-stage
+st="${PEV_VERIFY_STAGE:-/home/kali/build/pev-core-stage}"
+case "$st" in /home/kali/build/pev-*) ;; *) echo "Refusing stage outside /home/kali/build/pev-*" >&2; exit 2 ;; esac
 mkdir -p "$st"
 rsync -a --delete --exclude build --exclude .gradle --exclude .git --exclude target \
   --exclude '*.jks' --exclude '*.bak' --exclude research --exclude docs --exclude .idea "$src/" "$st/"

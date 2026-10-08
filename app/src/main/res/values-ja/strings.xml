@@ -278,4 +278,23 @@
     <string name="bond_bytes16">Ninebot：16 バイト（16 進数 32 桁）。</string>
     <string name="bond_manual_invalid">MAC・キーの長さ・名前を確認してください。名前は 64 文字以内で、制御文字は使えません。</string>
     <string name="bond_replace_question">この車両には保存済みキーがあります。入力したキーに置き換えますか？</string>
+    <string name="experimental_title">車両テスト設定</string>
+    <string name="experimental_scope">Xiaomi M365 専用。モデルはご自身で選択します。ファームウェア範囲は未検証です。ソースレビュー済みの元に戻せるコマンドですが、実車では未検証です。通常の設定は無効のままです。</string>
+    <string name="experimental_connect_required">先に Xiaomi の暗号化セッションに接続して認証してください。</string>
+    <string name="experimental_enable">このセッションで有効にする</string>
+    <string name="experimental_confirm_model">Xiaomi M365 を持っています</string>
+    <string name="experimental_consent">正確なモデルが M365 であること（Pro、Pro2、1S、Lite、Mi3、Ninebot ではない）を確認してください。ファームウェアの互換性は未検証です。同意はこのデバイスとこの接続にのみ適用されます。純正アプリと食い違う場合は中止してください。再接続すると同意は取り消されます。走行に関わる設定では車両を停止させてください。</string>
+    <string name="experimental_device">選択中の M365 • %1$s • ファームウェア不明</string>
+    <string name="experimental_order_note">テールライトと単位はステータスビットを共有します。書き込みのバイト順について情報源の見解が分かれています。BE か LE を明示的に選択してください（既定値なし）。最新の読み取りで他のビットを保持し、読み戻しが一致する必要があります。</string>
+    <string name="experimental_light_on">テールライト常時点灯</string>
+    <string name="experimental_light_off">テールライト通常</string>
+    <string name="experimental_motion_note">KERS はブレーキの感触を変え、クルーズはアクセルなしで速度を維持できます。どちらも最新で信頼できる停止中のテレメトリが必要です。速度が不明または古い場合はブロックされます。</string>
+    <string name="experimental_kers">KERS %1$d</string>
+    <string name="experimental_cruise_on">クルーズ オン</string>
+    <string name="experimental_cruise_off">クルーズ オフ</string>
+    <string name="experimental_disable">無効化して切断</string>
+    <string name="experimental_command_confirmation">実験的コマンドで、実車では未検証です。この1回の操作を確認してください。自動再試行はしません。読み戻しは観測されたレジスタ値を示すだけで、安全性や互換性を保証しません。</string>
+    <string name="experimental_send">1回送信</string>
+    <string name="experimental_readback_confirmed">読み戻しが一致しました。ハードウェア互換性は未検証のままです。</string>
+    <string name="experimental_unconfirmed">未確認</string>
 </resources>

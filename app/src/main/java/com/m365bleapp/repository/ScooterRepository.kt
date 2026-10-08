@@ -19,7 +19,6 @@ import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiEscDecoder
 import io.github.zero2005x.pev.core.telemetry.FieldId
 import com.m365bleapp.protocol.PlaintextRegisterSession
 import com.m365bleapp.protocol.ScooterModelRegistry
-import com.m365bleapp.protocol.WriteRetryPolicy
 import com.m365bleapp.ble.BleManager
 import com.m365bleapp.ffi.M365Native
 import kotlinx.coroutines.*
@@ -31,6 +30,12 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import java.util.UUID
 import java.nio.ByteBuffer
+import android.os.SystemClock
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiPdu
+import io.github.zero2005x.pev.core.codec.xiaomi.XiaomiReply
+import io.github.zero2005x.pev.core.codec.xiaomi.StatusWordWriteOrder
+import io.github.zero2005x.pev.core.command.CommandResult
+import io.github.zero2005x.pev.core.command.CommandOutcome
 
 sealed class ConnectionState {
     object Disconnected : ConnectionState()
@@ -212,6 +217,9 @@ class ScooterRepository private constructor(
 
     // Channel capacity limited to prevent memory leaks if consumer is blocked
     @Volatile private var activeConnection: ConnectionEpoch? = null
+    @Volatile private var phoneSession: XiaomiPhoneSession? = null
+    private val _experimentalSettings = MutableStateFlow(ExperimentalSettingsState())
+    val experimentalSettings = _experimentalSettings.asStateFlow()
     
     /**
      * Durable last-known vehicle state, so the detail page is readable offline.
@@ -746,7 +754,10 @@ class ScooterRepository private constructor(
                         val isDataPlane = uuid != BleManager.AUTH_UPNP &&
                             uuid != BleManager.AUTH_AVDTP
                         val delivered = if (isDataPlane) {
-                            attemptContext.uart.trySend(data).isSuccess
+                            if (phoneSession?.transport?.connectionId == attempt.toString()) {
+                            phoneSession?.transport?.accept(data)
+                            true
+                        } else attemptContext.uart.trySend(data).isSuccess
                         } else {
                             attemptContext.control.trySend(data).isSuccess
                         }
@@ -889,7 +900,7 @@ class ScooterRepository private constructor(
                 Log.d("ScooterRepo", "Enabling UART RX...")
                 check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { "UART subscription failed" }
                 Log.d("ScooterRepo", "UART RX subscribed")
-                
+                installPhoneSession(attemptContext, gatt)
                 connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Ready }
                 // Beep to confirm connection (Optional but nice)
                 beep()
@@ -1350,10 +1361,6 @@ class ScooterRepository private constructor(
         connectionResources.ifCurrent(expectedEpoch) { logger.startSession() }
         Log.d("ScooterRepo", "Starting Telemetry Loop")
         
-        // NOTE: The Rust ninebot-ble library ALWAYS uses counter=0 for every message!
-        // See: mi_session.rs -> encrypt_uart(&self.keys.app, &cmd.as_bytes(), 0, None)
-        // The scooter apparently doesn't track/require incrementing counters.
-        val counter = 0L  // Always use counter=0
         var tick = 0
         var consecutiveFailures = 0
         
@@ -1397,42 +1404,16 @@ class ScooterRepository private constructor(
                     else -> 0xB0 to byteArrayOf(0x20) // Motor info (speed): 32 bytes - DEFAULT
                 }
                 
-                val packet = buildPacket(
-                    dest = 0x20.toByte(),    // D: master to scooter
-                    rw = 0x01.toByte(),      // T: read
-                    attr = attribute.toByte(),
-                    payload = payload
-                )
-                
-                Log.d("ScooterRepo", "Loop: Query 0x${attribute.toString(16)}: ${packet.toHex()}")
-                
-                val encrypted = connectionResources.useNative(expectedEpoch) { native.encryptSafe(it, packet, counter) }
-                    ?: throw CancellationException("native session retired")
-                Log.d("ScooterRepo", "Encrypted (${encrypted.size} bytes): ${encrypted.toHex()}")
-                
-                // Write Encrypted to UART TX
-                writeUartEncrypted(encrypted, expectedEpoch)
-                
-                val frame = readEncryptedFrame()
-                if (frame.isNotEmpty()) {
-                    Log.d("ScooterRepo", "Rx Encrypted (${frame.size} bytes): ${frame.toHex()}")
-                    val decrypted = connectionResources.useNative(expectedEpoch) { native.decryptSafe(it, frame) }
-                        ?: throw CancellationException("native session retired")
-                    if (decrypted.isNotEmpty()) {
-                         Log.d("ScooterRepo", "Rx Decrypted: ${decrypted.toHex()}")
-                         connectionResources.ifCurrent(expectedEpoch) { parseTelemetry(decrypted) }
-                         consecutiveFailures = 0 // Reset on success
-                         // Update last known speed for dynamic polling
-                         _motorInfo.value?.let { lastSpeed = it.speed }
-                    } else {
-                         Log.w("ScooterRepo", "Decryption failed")
-                         consecutiveFailures++
-                    }
-                } else {
-                    Log.w("ScooterRepo", "No response for attribute 0x${attribute.toString(16)} (failures: $consecutiveFailures)")
-                    consecutiveFailures++
+                val session = phoneSession?.takeIf { it.transport.connectionId == expectedEpoch.toString() }
+                    ?: throw CancellationException("phone transaction session retired")
+                val reply = runInterruptible(ioDispatcher) {
+                    session.authority.read(attribute, payload[0].toInt() and 0xFF)
                 }
-                
+                if (reply != null) {
+                    consecutiveFailures = 0
+                    _motorInfo.value?.let { lastSpeed = it.speed }
+                } else consecutiveFailures++
+
                 // === Tiered Retry Strategy ===
                 // Handle failures with progressive backoff
                 val retryStrategy = RetryStrategy.fromFailureCount(consecutiveFailures)
@@ -1503,330 +1484,81 @@ class ScooterRepository private constructor(
         }
     }
 
-    private fun buildPacket(dest: Byte, rw: Byte, attr: Byte, payload: ByteArray): ByteArray {
-        // For ENCRYPTED UART communication (after login), the format is DIFFERENT
-        // from raw M365 serial frames!
-        //
-        // The encrypt_uart function expects:
-        // - msg[0] = size byte (L = payload.len + 2)
-        // - msg[1] = direction (0x20 = master to motor)
-        // - msg[2] = read/write (0x01 = read)
-        // - msg[3] = attribute (e.g., 0xB0)
-        // - msg[4..] = payload parameters
-        //
-        // NO 55 AA header and NO checksum! The encryption function adds its own
-        // 55 AB header and CRC to the encrypted output.
-        //
-        // Reference: ninebot-ble/src/session/commands.rs ScooterCommand::as_bytes()
-        
-        val payloadLen = payload.size
-        // Size = payload + 2 (direction + read_write bytes, counting attr in payload)
-        // Actually: size = payloadLen + 2 where the "+2" accounts for D and T
-        val size = (payloadLen + 2).toByte()
-        
-        // Build the command bytes: [size, direction, rw, attr, payload...]
-        val commandSize = 1 + 1 + 1 + 1 + payloadLen // size + D + T + attr + payload
-        val commandBytes = ByteArray(commandSize)
-        
-        commandBytes[0] = size      // Size byte (for encrypt_uart msg[0])
-        commandBytes[1] = dest      // D: 0x20 = master to motor
-        commandBytes[2] = rw        // T: 0x01 = read, 0x03 = write
-        commandBytes[3] = attr      // Attribute (e.g., 0xB0, 0x3A, 0x25)
-        
-        if (payloadLen > 0) {
-            System.arraycopy(payload, 0, commandBytes, 4, payloadLen)
-        }
+    // Legacy raw lock/light writes had neither audited authorization nor readback.
+    // The phone offers only the typed reversible settings through its session coordinator.
+    suspend fun lock(): Result<Unit> = unsupportedLegacySetting()
+    suspend fun unlock(): Result<Unit> = unsupportedLegacySetting()
+    suspend fun setLock(locked: Boolean): Result<Unit> = if (locked) lock() else unlock()
+    suspend fun lightOn(): Result<Unit> = unsupportedLegacySetting()
+    suspend fun lightOff(): Result<Unit> = unsupportedLegacySetting()
+    suspend fun setLight(on: Boolean): Result<Unit> = if (on) lightOn() else lightOff()
 
-        return commandBytes
-    }
-    
-    // NOSONAR kotlin:S3776 — MTU-chunked encrypted write with per-chunk retry/
-    // give-up policy; the loop, the WriteRetryPolicy decision and its logging are
-    // one unit. Only 2 over the threshold; kept whole to avoid splitting the
-    // accepted/rejected/give-up handling of an untestable BLE write path.
-    private suspend fun writeUartEncrypted(data: ByteArray, expectedEpoch: Long) = uartWriteLane.write(expectedEpoch) { gatt ->
-        // Chunk by the MTU the scooter actually granted, not a guess. `write()`
-        // asks for MTU 512, but a peripheral may grant as little as the 23-byte
-        // minimum, and a write larger than ATT_MTU - 3 is dropped by the peer
-        // with no error at all ??indistinguishable from the command being
-        // refused. bleManager.negotiatedMtu tracks what came back.
-        val chunks = MtuFragmenter.fragment(data, bleManager.negotiatedMtu)
+    private fun unsupportedLegacySetting(): Result<Unit> = Result.failure(
+        IllegalStateException("Unverified legacy command disabled; use session experimental settings"))
 
-        for ((index, chunk) in chunks.withIndex()) {
-            // Retry this chunk only. The previous code discarded the boolean
-            // returned by write() entirely, so a rejected write was silently
-            // treated as delivered and the caller then waited out its full
-            // read timeout for a reply that could never come.
-            var attemptsMade = 0
-
-            while (true) {
-                attemptsMade++
-                expectedConnectionEpoch()
-                check(connectionResources.boundHandle(expectedEpoch) === gatt) { "connection changed during write" }
-                val accepted = bleManager.write(gatt, uartService, uartTx, chunk, true)
-
-                val outcome = if (accepted) {
-                    WriteRetryPolicy.Outcome.ACCEPTED
-                } else {
-                    WriteRetryPolicy.Outcome.REJECTED
-                }
-
-                when (val decision = WriteRetryPolicy.decide(outcome, attemptsMade)) {
-                    is WriteRetryPolicy.Decision.Retry -> {
-                        Log.w(
-                            "ScooterRepo",
-                            "Chunk ${index + 1}/${chunks.size} rejected; retrying in " +
-                                "${decision.delayMs}ms (attempt ${decision.attempt}/" +
-                                "${WriteRetryPolicy.maxAttempts()})"
-                        )
-                        delay(decision.delayMs)
-                    }
-
-                    is WriteRetryPolicy.Decision.GiveUp -> {
-                        if (!accepted) {
-                            // Report rather than absorb. A persistent write
-                            // failure used to look like an idle scooter,
-                            // because the telemetry loop counted it as a
-                            // missing reply and simply tried again.
-                            throw IllegalStateException("UART chunk rejected: ${decision.reason}")
-                        } else {
-                            Log.d(
-                                "ScooterRepo",
-                                "Chunk ${index + 1}/${chunks.size} written " +
-                                    "(${chunk.size} bytes, mtu ${bleManager.negotiatedMtu})"
-                            )
-                        }
-                        break
-                    }
-                }
-            }
-
-            // Small pacing delay between chunks; the scooter's UART bridge needs
-            // a gap to drain each ATT write before the next arrives.
-            if (index < chunks.lastIndex) {
-                delay(5)
-            }
-        }
-    }
-    
-    // ========== Lock/Unlock Control ==========
-    
-    /**
-     * Lock the scooter motor
-     * When locked, the motor is disabled and throttle input is ignored.
-     * 
-     * Protocol: Write 0x0001 to address 0x70
-     * Direction: Master to Motor (0x20), Command: Write (0x03)
-     */
-    suspend fun lock(): Result<Unit> = withContext(ioDispatcher + entryConnection()) {
-        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
-            return@withContext Result.failure(Exception("No active session"))
-        }
-        try {
-            Log.d("ScooterRepo", "Locking scooter motor")
-            val packet = buildPacket(
-                dest = 0x20.toByte(),    // Master to Motor
-                rw = 0x03.toByte(),      // Write
-                attr = 0x70.toByte(),    // Lock address
-                payload = byteArrayOf(0x01, 0x00)  // Value 0x0001 (little-endian: LSB first)
-            )
-            sendCommand(packet, "Lock Motor")
-            Result.success(Unit)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("ScooterRepo", "Lock failed: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-    
-    /**
-     * Unlock the scooter motor
-     * Re-enables the motor after being locked.
-     * 
-     * Protocol: Write 0x0001 to address 0x71
-     * Direction: Master to Motor (0x20), Command: Write (0x03)
-     */
-    suspend fun unlock(): Result<Unit> = withContext(ioDispatcher + entryConnection()) {
-        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
-            return@withContext Result.failure(Exception("No active session"))
-        }
-        try {
-            Log.d("ScooterRepo", "Unlocking scooter motor")
-            val packet = buildPacket(
-                dest = 0x20.toByte(),    // Master to Motor
-                rw = 0x03.toByte(),      // Write
-                attr = 0x71.toByte(),    // Unlock address
-                payload = byteArrayOf(0x01, 0x00)  // Value 0x0001 (little-endian: LSB first)
-            )
-            sendCommand(packet, "Unlock Motor")
-            Result.success(Unit)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("ScooterRepo", "Unlock failed: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-    
-    /**
-     * Set scooter lock state
-     * @param locked true to lock, false to unlock
-     */
-    suspend fun setLock(locked: Boolean): Result<Unit> {
-        return if (locked) lock() else unlock()
-    }
-    
-    // ========== Tail Light Control ==========
-    
-    /**
-     * Turn on the tail light (Always On mode)
-     * 
-     * Protocol: Write 0x0002 to address 0x7D
-     * Direction: Master to Motor (0x20), Command: Write (0x03)
-     */
-    suspend fun lightOn(): Result<Unit> = withContext(ioDispatcher + entryConnection()) {
-        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
-            return@withContext Result.failure(Exception("No active session"))
-        }
-        try {
-            Log.d("ScooterRepo", "Turning tail light on (0x7D = 0x0002)")
-            val packet = buildPacket(
-                dest = 0x20.toByte(),    // Master to Motor
-                rw = 0x03.toByte(),      // Write
-                attr = 0x7D.toByte(),    // TailLight address
-                payload = byteArrayOf(0x02, 0x00)  // Value 0x0002 (little-endian: LSB first)
-            )
-            Log.d("ScooterRepo", "Tail light packet: ${packet.toHex()}")
-            sendCommand(packet, "Tail Light On")
-            
-            // Wait for scooter to process the command
-            delay(200)
-            
-            // Read back the state to confirm
-            Log.d("ScooterRepo", "Reading tail light state to confirm...")
-            readLightState()
-            
-            Result.success(Unit)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("ScooterRepo", "Light on failed: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-    
-    /**
-     * Turn off the tail light
-     * 
-     * Protocol: Write 0x0000 to address 0x7D
-     * Direction: Master to Motor (0x20), Command: Write (0x03)
-     */
-    suspend fun lightOff(): Result<Unit> = withContext(ioDispatcher + entryConnection()) {
-        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
-            return@withContext Result.failure(Exception("No active session"))
-        }
-        try {
-            Log.d("ScooterRepo", "Turning tail light off (0x7D = 0x0000)")
-            val packet = buildPacket(
-                dest = 0x20.toByte(),    // Master to Motor
-                rw = 0x03.toByte(),      // Write
-                attr = 0x7D.toByte(),    // TailLight address
-                payload = byteArrayOf(0x00, 0x00)  // Value 0x0000 = Off
-            )
-            Log.d("ScooterRepo", "Tail light packet: ${packet.toHex()}")
-            sendCommand(packet, "Tail Light Off")
-            
-            // Wait for scooter to process the command
-            delay(200)
-            
-            // Read back the state to confirm
-            Log.d("ScooterRepo", "Reading tail light state to confirm...")
-            readLightState()
-            
-            Result.success(Unit)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("ScooterRepo", "Light off failed: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-    
-    /**
-     * Set tail light state
-     * @param on true to turn on, false to turn off
-     */
-    suspend fun setLight(on: Boolean): Result<Unit> {
-        return if (on) lightOn() else lightOff()
-    }
-    
-    /**
-     * Read the current tail light state from the scooter
-     * 
-     * Protocol: Read address 0x7D with param 0x02
-     * Direction: Master to Motor (0x20), Command: Read (0x01)
-     * Response: 0x0000=off, 0x0001=on brake, 0x0002=always on
-     */
     suspend fun readLightState(): Result<Boolean> = withContext(ioDispatcher + entryConnection()) {
-        if (!connectionResources.hasNative || _connectionState.value != ConnectionState.Ready) {
-            return@withContext Result.failure(Exception("No active session"))
-        }
-        try {
-            Log.d("ScooterRepo", "Reading tail light state")
-            val packet = buildPacket(
-                dest = 0x20.toByte(),    // Master to Motor
-                rw = 0x01.toByte(),      // Read
-                attr = 0x7D.toByte(),    // TailLight address
-                payload = byteArrayOf(0x02)  // Param: read 2 bytes
-            )
-            sendCommand(packet, "Read Tail Light")
-            // Response will be parsed in parseTelemetryPacket
-            Result.success(_isLightOn.value)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("ScooterRepo", "Read light state failed: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-    
-    /**
-     * Read the initial states (light, lock) after connection
-     * Call this after the scooter is connected and ready
-     */
-    suspend fun readInitialStates() {
-        try {
-            Log.d("ScooterRepo", "Reading initial scooter states...")
-            readLightState()
-            // Add short delay between commands
-            kotlinx.coroutines.delay(100)
-            // Note: Lock state cannot be read directly from M365
-            // The scooter doesn't expose a "read lock state" command
-            // We'll assume unlocked by default (safer assumption)
-        } catch (e: Exception) {
-            Log.e("ScooterRepo", "Failed to read initial states: ${e.message}", e)
-        }
-    }
-    
-    /**
-     * Send a command packet to the scooter
-     * Encrypts the packet and sends it via UART
-     */
-    private suspend fun sendCommand(packet: ByteArray, commandName: String = "Command") {
-        val counter = 0L  // Always use counter=0 (scooter doesn't track)
         val epoch = expectedConnectionEpoch()
-        val encrypted = connectionResources.useNative(epoch) { native.encryptSafe(it, packet, counter) }
-            ?: throw CancellationException("native session retired")
-        Log.d("ScooterRepo", "Command Encrypted (${encrypted.size} bytes): ${encrypted.toHex()}")
-        
-        // Log the command to CSV
-        logger.logCommand(commandName, packet)
-        logger.logUartTx(encrypted, "$commandName (encrypted)")
-        
-        writeUartEncrypted(encrypted, epoch)
+        val session = phoneSession?.takeIf { it.transport.connectionId == epoch.toString() }
+            ?: return@withContext Result.failure(IllegalStateException("No encrypted Xiaomi session"))
+        val raw = runInterruptible(ioDispatcher) { session.authority.read(XiaomiPdu.REG_STATUS_WORD, 2) }
+            ?: return@withContext Result.failure(IllegalStateException("Status read unconfirmed"))
+        val reply = XiaomiReply.parse(raw)
+            ?: return@withContext Result.failure(IllegalStateException("Invalid status reply"))
+        Result.success(XiaomiEscDecoder.statusWord(reply.data, SystemClock.elapsedRealtime()).value?.tailLightAlwaysOn == true)
     }
-    
+
+    suspend fun readInitialStates() { readLightState() }
+
+    private fun installPhoneSession(connection: ConnectionEpoch, gatt: BluetoothGatt) {
+        val epoch = connection.value
+        connectionResources.ifCurrent(epoch) {
+            lateinit var installed: XiaomiPhoneSession
+            val transport = XiaomiEncryptedTransport(connection.deviceId, epoch.toString(),
+                live = { connectionResources.isCurrent(epoch) && connectionResources.handle === gatt && connectionResources.hasNative },
+                currentMtu = { bleManager.negotiatedMtu },
+                encrypt = { bytes -> connectionResources.useNative(epoch) { native.encryptSafe(it, bytes, 0L) } },
+                submit = { encrypted -> runBlocking(connection) { submitEncryptedOnce(encrypted, epoch) } },
+                decrypt = { bytes -> connectionResources.useNative(epoch) { native.decryptSafe(it, bytes) } },
+                onReply = { raw, at -> connectionResources.ifCurrent(epoch) { installed.observe(raw, at); parseTelemetry(raw) }; Unit },
+                onPoison = { scope.launch(ioDispatcher + connection) {
+                    val retired = releaseConnection(expectedEpoch = epoch)
+                    if (retired != null) connectionResources.ifCurrent(retired) {
+                        _connectionState.value = ConnectionState.Error("Transaction unconfirmed; reconnect required")
+                    }
+                }; Unit },
+                nowMs = SystemClock::elapsedRealtime)
+            installed = XiaomiPhoneSession(transport, SystemClock::elapsedRealtime)
+            phoneSession = installed
+            _experimentalSettings.value = ExperimentalSettingsState(available = true, deviceId = connection.deviceId, connectionId = epoch.toString())
+        }
+    }
+
+    private suspend fun submitEncryptedOnce(data: ByteArray, epoch: Long): Boolean = uartWriteLane.write(epoch) { gatt ->
+        val chunks = MtuFragmenter.fragment(data, bleManager.negotiatedMtu)
+        for ((index, chunk) in chunks.withIndex()) {
+            expectedConnectionEpoch()
+            if (connectionResources.boundHandle(epoch) !== gatt || !bleManager.write(gatt, uartService, uartTx, chunk)) return@write false
+            if (index < chunks.lastIndex) delay(5)
+        }
+        true
+    }
+
+    /** Explicit user-selected M365 profile and consent apply to this encrypted session only. */
+    fun enableM365Experimental(expectedConnectionId: String?): Boolean = connectionResources.withCurrent { epoch ->
+        val session = phoneSession?.takeIf { it.transport.connectionId == epoch.toString() && it.transport.connectionId == expectedConnectionId && it.transport.connected }
+            ?: return@withCurrent false
+        session.enableM365Experimental()
+        _experimentalSettings.value = _experimentalSettings.value.copy(enabled = true)
+        true
+    }
+
+    internal suspend fun executeXiaomiSetting(setting: XiaomiSetting, expectedConnectionId: String?): CommandResult = withContext(ioDispatcher + entryConnection()) {
+        val epoch = expectedConnectionEpoch()
+        val session = phoneSession?.takeIf { it.transport.connectionId == epoch.toString() && it.transport.connectionId == expectedConnectionId }
+            ?: return@withContext CommandResult(CommandOutcome.DISCONNECTED, "No encrypted Xiaomi session")
+        runInterruptible(ioDispatcher) { session.execute(setting) }
+    }
+
     // Beep command
     suspend fun beep() {
         if (!connectionResources.hasNative) return
@@ -1883,7 +1615,7 @@ class ScooterRepository private constructor(
     
     // Write Raw Chunks (NbParcel)
     private suspend fun writeNbParcel(service: UUID, char: UUID, data: ByteArray) {
-        // Same MTU-3 rule as writeUartEncrypted: this used a hard-coded 20 as
+        // Same MTU-3 rule as submitEncryptedOnce: this used a hard-coded 20 as
         // well, so a larger granted MTU was never taken advantage of.
         for (chunk in MtuFragmenter.fragment(data, bleManager.negotiatedMtu)) {
             writeChar(service, char, chunk)
@@ -1963,13 +1695,6 @@ class ScooterRepository private constructor(
         }
     }
 
-    private suspend fun waitForData(timeoutMs: Long = 5000): ByteArray {
-        // Shorter timeout for UART telemetry responses
-        return withTimeout(timeoutMs) {
-            capturedConnection().uart.receive()
-        }
-    }
-
     private suspend fun waitForCmd(expectedHex: String, timeoutMs: Long = 5000): ByteArray {
         return withTimeout(timeoutMs) {
             while (true) {
@@ -1986,48 +1711,6 @@ class ScooterRepository private constructor(
         }
     }
     
-    private suspend fun readEncryptedFrame(): ByteArray {
-        Log.d("ScooterRepo", "Waiting for Encrypted Frame...")
-        
-        val chunk1: ByteArray
-        try {
-            chunk1 = waitForData(5000) // 5 second timeout for initial response
-        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            Log.w("ScooterRepo", "Timeout waiting for encrypted frame")
-            return ByteArray(0)
-        }
-        
-        Log.d("ScooterRepo", "Received Chunk1: ${chunk1.toHex()}")
-        
-        if (chunk1.size < 3 || chunk1[0] != 0x55.toByte()) {
-            Log.w("ScooterRepo", "Invalid frame start: ${chunk1.toHex()}")
-            return chunk1
-        }
-        
-        val buffer = java.io.ByteArrayOutputStream()
-        buffer.write(chunk1, 0, chunk1.size)
-        
-        // If the chunk is maxed out for typical MTU (23->20 or 256->244), wait for more
-        if (chunk1.size >= 20) {
-            while (true) {
-                try {
-                    // Short timeout for fragments
-                    val next = withTimeout(500) { capturedConnection().uart.receive() }
-                    Log.d("ScooterRepo", "Received Fragment: ${next.toHex()}")
-                    buffer.write(next, 0, next.size)
-                    if (next.size < 20) break // Last packet is usually smaller
-                } catch (e: TimeoutCancellationException) {
-                    break // Timeout means no more fragments
-                }
-            }
-        }
-        
-        val fullData = buffer.toByteArray()
-        Log.d("ScooterRepo", "Full Encrypted Frame: ${fullData.toHex()}")
-        return fullData
-    }
-
-
     /**
      * Parses one decrypted reply and dispatches it to the register parser.
      *
@@ -2115,7 +1798,7 @@ class ScooterRepository private constructor(
             0x0002 -> "ALWAYS ON"
             else -> "UNKNOWN ($value)"
         }
-        val isOn = value > 0  // 0x0001 or 0x0002 means light is on
+        val isOn = value and XiaomiEscDecoder.TAIL_LIGHT_BIT != 0
         Log.i("ScooterRepo", "Tail light state: 0x${value.toString(16)} = $stateDesc, isOn=$isOn")
         _isLightOn.value = isOn
     }
@@ -2252,6 +1935,9 @@ class ScooterRepository private constructor(
             connectionJob?.cancel()
             connectionJob = null
             bleManager.clearOnDisconnectCallback()
+            phoneSession?.close()
+            phoneSession = null
+            _experimentalSettings.value = ExperimentalSettingsState()
             val gatt = bleManager.retireConnection()
             plaintextSession = null
             activeConnection?.closeMailboxes()
@@ -2288,6 +1974,9 @@ class ScooterRepository private constructor(
                 plaintextJob = null
                 connectionJob?.cancel()
                 connectionJob = null
+                phoneSession?.close()
+                phoneSession = null
+                _experimentalSettings.value = ExperimentalSettingsState()
                 plaintextSession = null
                 activeConnection?.closeMailboxes()
                 activeConnection = null

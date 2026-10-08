@@ -278,4 +278,23 @@
     <string name="bond_bytes16">Ninebot : exactement 16 octets (32 chiffres hexadécimaux).</string>
     <string name="bond_manual_invalid">Vérifiez la MAC, la longueur de la clé et le nom. Le nom doit contenir au plus 64 caractères, sans caractères de contrôle.</string>
     <string name="bond_replace_question">Une clé est déjà enregistrée pour ce véhicule. La remplacer par la clé saisie ?</string>
+    <string name="experimental_title">Réglages de test du véhicule</string>
+    <string name="experimental_scope">Xiaomi M365 uniquement. Le modèle exact est choisi par vous ; la portée du firmware n\'est pas vérifiée. Commandes réversibles relues dans le code, non vérifiées sur un véhicule. Les réglages normaux restent désactivés.</string>
+    <string name="experimental_connect_required">Connectez-vous d\'abord et authentifiez une session chiffrée Xiaomi.</string>
+    <string name="experimental_enable">Activer pour cette session</string>
+    <string name="experimental_confirm_model">J\'ai un Xiaomi M365</string>
+    <string name="experimental_consent">Confirmez le modèle exact M365 (pas Pro, Pro2, 1S, Lite, Mi3 ni Ninebot). La compatibilité du firmware n\'est pas vérifiée. Le consentement ne vaut que pour cet appareil et cette connexion. Arrêtez-vous si l\'application d\'origine diffère ; reconnectez-vous pour révoquer. Gardez le véhicule à l\'arrêt pour les réglages de conduite.</string>
+    <string name="experimental_device">M365 sélectionné • %1$s • firmware inconnu</string>
+    <string name="experimental_order_note">Le feu arrière et les unités partagent des bits d\'état. Deux sources divergent sur l\'ordre des octets d\'écriture. Choisissez BE ou LE explicitement ; aucune valeur par défaut. Une lecture récente préserve les autres bits et la relecture doit correspondre.</string>
+    <string name="experimental_light_on">Feu arrière toujours allumé</string>
+    <string name="experimental_light_off">Feu arrière normal</string>
+    <string name="experimental_motion_note">KERS modifie la sensation de freinage ; le régulateur peut maintenir la vitesse sans accélérer. Les deux exigent une télémétrie récente, fiable et à l\'arrêt. Une vitesse inconnue ou périmée les bloque.</string>
+    <string name="experimental_kers">KERS %1$d</string>
+    <string name="experimental_cruise_on">Régulateur activé</string>
+    <string name="experimental_cruise_off">Régulateur désactivé</string>
+    <string name="experimental_disable">Désactiver et déconnecter</string>
+    <string name="experimental_command_confirmation">Commande expérimentale, non vérifiée sur un véhicule. Confirmez cette seule opération. Elle ne sera pas relancée automatiquement. La relecture indique la valeur observée du registre ; elle ne certifie ni la sécurité ni la compatibilité.</string>
+    <string name="experimental_send">Envoyer une fois</string>
+    <string name="experimental_readback_confirmed">La relecture correspond. La compatibilité matérielle reste non vérifiée.</string>
+    <string name="experimental_unconfirmed">Non confirmé</string>
 </resources>

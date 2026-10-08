@@ -278,4 +278,23 @@
     <string name="bond_bytes16">Ninebot: esattamente 16 byte (32 cifre esadecimali).</string>
     <string name="bond_manual_invalid">Controlla il MAC, la lunghezza della chiave e il nome. Il nome deve avere al massimo 64 caratteri e nessun carattere di controllo.</string>
     <string name="bond_replace_question">Questo veicolo ha già una chiave. Sostituirla con quella inserita?</string>
+    <string name="experimental_title">Impostazioni di test del veicolo</string>
+    <string name="experimental_scope">Solo Xiaomi M365. Il modello esatto lo scegli tu; l\'ambito del firmware non è verificato. Comandi reversibili rivisti nel codice, non verificati su un veicolo. Le impostazioni normali restano disattivate.</string>
+    <string name="experimental_connect_required">Connettiti prima e autentica una sessione cifrata Xiaomi.</string>
+    <string name="experimental_enable">Attiva per questa sessione</string>
+    <string name="experimental_confirm_model">Ho uno Xiaomi M365</string>
+    <string name="experimental_consent">Conferma il modello esatto M365 (non Pro, Pro2, 1S, Lite, Mi3 né Ninebot). La compatibilità del firmware non è verificata. Il consenso vale solo per questo dispositivo e questa connessione. Fermati se l\'app originale non concorda; riconnettiti per revocarlo. Tieni il veicolo fermo per le impostazioni di guida.</string>
+    <string name="experimental_device">M365 selezionato • %1$s • firmware sconosciuto</string>
+    <string name="experimental_order_note">Luce posteriore e unità condividono bit di stato. Due fonti non concordano sull\'ordine dei byte di scrittura. Scegli BE o LE esplicitamente; nessun valore predefinito. Una lettura recente preserva gli altri bit e la rilettura deve coincidere.</string>
+    <string name="experimental_light_on">Luce posteriore sempre accesa</string>
+    <string name="experimental_light_off">Luce posteriore normale</string>
+    <string name="experimental_motion_note">KERS cambia la sensazione di frenata; il cruise può mantenere la velocità senza acceleratore. Entrambi richiedono telemetria recente, affidabile e da fermo. Una velocità sconosciuta o obsoleta li blocca.</string>
+    <string name="experimental_kers">KERS %1$d</string>
+    <string name="experimental_cruise_on">Cruise attivo</string>
+    <string name="experimental_cruise_off">Cruise disattivo</string>
+    <string name="experimental_disable">Disattiva e disconnetti</string>
+    <string name="experimental_command_confirmation">Comando sperimentale, non verificato su un veicolo. Conferma questa singola operazione. Non verrà ritentata automaticamente. La rilettura riporta il valore osservato del registro; non certifica sicurezza o compatibilità.</string>
+    <string name="experimental_send">Invia una volta</string>
+    <string name="experimental_readback_confirmed">La rilettura coincide. La compatibilità hardware resta non verificata.</string>
+    <string name="experimental_unconfirmed">Non confermato</string>
 </resources>

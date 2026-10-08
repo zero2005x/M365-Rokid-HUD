@@ -278,4 +278,23 @@
     <string name="bond_bytes16">Ninebot: ‏16 بايت بالضبط (32 رقمًا ست عشريًا).</string>
     <string name="bond_manual_invalid">تحقق من عنوان MAC وطول المفتاح والاسم. يجب ألا يتجاوز الاسم 64 محرفًا وألا يحتوي على محارف تحكم.</string>
     <string name="bond_replace_question">لهذا السكوتر مفتاح محفوظ بالفعل. هل تريد استبداله بالمفتاح الذي أدخلته؟</string>
+    <string name="experimental_title">إعدادات اختبار المركبة</string>
+    <string name="experimental_scope">Xiaomi M365 فقط. أنت من يختار الطراز بدقة؛ ونطاق البرنامج الثابت غير موثّق. أوامر قابلة للتراجع روجعت من الشيفرة المصدرية ولم تُختبر على مركبة فعلية. تبقى الإعدادات العادية معطّلة.</string>
+    <string name="experimental_connect_required">اتصل أولاً وأكمل مصادقة جلسة Xiaomi المشفرة.</string>
+    <string name="experimental_enable">تفعيل لهذه الجلسة</string>
+    <string name="experimental_confirm_model">لدي Xiaomi M365</string>
+    <string name="experimental_consent">أكّد أن الطراز بالضبط هو M365 (وليس Pro أو Pro2 أو 1S أو Lite أو Mi3 أو Ninebot). توافق البرنامج الثابت غير موثّق. تنطبق الموافقة على هذا الجهاز وهذا الاتصال فقط. توقف إذا اختلف التطبيق الأصلي؛ أعد الاتصال لإلغاء الموافقة. أبقِ المركبة ثابتة عند تغيير إعدادات القيادة.</string>
+    <string name="experimental_device">تم اختيار M365 • %1$s • البرنامج الثابت غير معروف</string>
+    <string name="experimental_order_note">يشترك الضوء الخلفي والوحدات في بتات الحالة. يختلف مصدران حول ترتيب بايتات الكتابة. اختر BE أو LE صراحةً؛ لا توجد قيمة افتراضية. تحافظ قراءة جديدة على البتات الأخرى ويجب أن تتطابق القراءة الراجعة.</string>
+    <string name="experimental_light_on">الضوء الخلفي مضاء دائماً</string>
+    <string name="experimental_light_off">الضوء الخلفي عادي</string>
+    <string name="experimental_motion_note">يغيّر KERS إحساس الفرملة؛ ويمكن لمثبّت السرعة الحفاظ على السرعة دون دواسة. كلاهما يتطلب قياسات حديثة وموثوقة والمركبة ثابتة. السرعة المجهولة أو القديمة تحجبهما.</string>
+    <string name="experimental_kers">KERS %1$d</string>
+    <string name="experimental_cruise_on">مثبّت السرعة يعمل</string>
+    <string name="experimental_cruise_off">مثبّت السرعة متوقف</string>
+    <string name="experimental_disable">تعطيل وقطع الاتصال</string>
+    <string name="experimental_command_confirmation">أمر تجريبي لم يُختبر على مركبة. أكّد هذه العملية الواحدة. لن تُعاد المحاولة تلقائياً. تُبلغ القراءة الراجعة عن قيمة السجل المرصودة؛ ولا تضمن السلامة أو التوافق.</string>
+    <string name="experimental_send">إرسال مرة واحدة</string>
+    <string name="experimental_readback_confirmed">تطابقت القراءة الراجعة. لا يزال توافق العتاد غير موثّق.</string>
+    <string name="experimental_unconfirmed">غير مؤكَّد</string>
 </resources>

@@ -85,21 +85,29 @@ internal class XiaomiEncryptedTransport(
         // No buffer monitor is held while invoking native code, application state or retirement.
         for ((first, frame) in frames) {
             if (!connected) return
-            val raw = decrypt(frame) ?: continue
-            if (raw.size != (frame[2].toInt() and 0xFF) + 5 || XiaomiReply.parse(raw) == null) continue
-            val notification = TransportNotification(first.sequence, connectionId, raw)
-            val admitted = synchronized(monitor) {
-                if (closed) return
-                if (replies.size >= maxReplies || replyBytes + raw.size > maxReplyBytes) false
-                else {
-                    replies.addLast(Reply(notification, first.atMs))
-                    replyBytes += raw.size
-                    monitor.notifyAll()
-                    true
-                }
-            }
-            if (!admitted) { poison(); return }
+            val raw = decryptValid(frame) ?: continue
+            if (!admit(Reply(TransportNotification(first.sequence, connectionId, raw), first.atMs))) { poison(); return }
+            if (closed) return
             onReply(raw.copyOf(), first.atMs)
+        }
+    }
+
+    private fun decryptValid(frame: ByteArray): ByteArray? {
+        val raw = decrypt(frame) ?: return null
+        return raw.takeIf { it.size == (frame[2].toInt() and 0xFF) + 5 && XiaomiReply.parse(it) != null }
+    }
+
+    private fun admit(reply: Reply): Boolean = synchronized(monitor) {
+        val size = reply.notification.bytes.size
+        when {
+            closed -> true
+            replies.size >= maxReplies || replyBytes + size > maxReplyBytes -> false
+            else -> {
+                replies.addLast(reply)
+                replyBytes += size
+                monitor.notifyAll()
+                true
+            }
         }
     }
 

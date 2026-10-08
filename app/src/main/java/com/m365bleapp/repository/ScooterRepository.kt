@@ -125,6 +125,8 @@ class ScooterRepository private constructor(
 ) {
     
     companion object {
+        private const val UART_SUBSCRIPTION_FAILED = "UART subscription failed"
+
         @Volatile
         private var INSTANCE: ScooterRepository? = null
         
@@ -816,7 +818,7 @@ class ScooterRepository private constructor(
                     rememberProtocol(com.m365bleapp.protocol.ScooterProtocol.NINEBOT_PLAIN)
 
                     Log.d("ScooterRepo", "Enabling UART RX for plaintext telemetry")
-                    check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { "UART subscription failed" }
+                    check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { UART_SUBSCRIPTION_FAILED }
 
                     connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Ready }
                     startPlaintextTelemetryLoop(session, gatt, attemptContext)
@@ -835,16 +837,14 @@ class ScooterRepository private constructor(
                     val name = runCatching {
                         gatt.device?.name?.toByteArray(Charsets.ISO_8859_1)
                     }.getOrNull()
-                    if (name == null || name.isEmpty()) {
-                        // The session key is derived from the advertised name, so
-                        // without it no frame can ever be decrypted.
-                        throw IllegalStateException("NinebotCrypto needs the advertised name")
-                    }
+                    // The session key is derived from the advertised name, so
+                    // without it no frame can ever be decrypted.
+                    check(name != null && name.isNotEmpty()) { "NinebotCrypto needs the advertised name" }
 
                     connectionResources.ifCurrent(attempt) {
                         _connectionState.value = ConnectionState.Handshaking(getString(R.string.connecting))
                     }
-                    check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { "UART subscription failed" }
+                    check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { UART_SUBSCRIPTION_FAILED }
                     val paired = runNinebotHandshake(gatt, name)
                     check(paired) { "Ninebot pairing failed" }
                     connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Ready }
@@ -898,7 +898,7 @@ class ScooterRepository private constructor(
                 }
                 
                 Log.d("ScooterRepo", "Enabling UART RX...")
-                check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { "UART subscription failed" }
+                check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { UART_SUBSCRIPTION_FAILED }
                 Log.d("ScooterRepo", "UART RX subscribed")
                 installPhoneSession(attemptContext, gatt)
                 connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Ready }

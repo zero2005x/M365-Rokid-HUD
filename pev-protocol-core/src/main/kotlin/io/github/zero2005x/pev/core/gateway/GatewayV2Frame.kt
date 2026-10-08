@@ -7,6 +7,8 @@ import java.nio.ByteOrder
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 
+private const val INVALID_FRESHNESS_WINDOW = "invalid freshness window"
+
 /**
  * Unreleased V2 complete snapshot, including distinct current and temperature sources.
  * Header: PEVG, version, vehicle, connection, zero, u16 length, u32 sequence,
@@ -39,7 +41,7 @@ class GatewayV2Frame(
     operator fun get(field: GatewayField): Reading = fieldSnapshot[field] ?: Reading.NOT_PROVIDED
 
     fun activeAlerts(nowMs: Long, maxAgeMs: Long = GatewayProtocol.DEFAULT_MAX_AGE_MS): Set<GatewayAlertKind> {
-        require(nowMs >= 0 && maxAgeMs >= 0) { "invalid freshness window" }
+        require(nowMs >= 0 && maxAgeMs >= 0) { INVALID_FRESHNESS_WINDOW }
         return alertSnapshot.filterValues {
             GatewayReadingRules.normalize(it, nowMs, maxAgeMs) { v -> v == 0.0 || v == 1.0 }
                 .let { r -> r.state == FieldState.VALID && r.value == 1.0 }
@@ -63,7 +65,7 @@ class GatewayV2Frame(
     companion object {
         /** Clocks must share the phone's epoch basis; caller supplies age, never receipt-as-observation. */
         fun fromBytes(bytes: ByteArray, nowMs: Long, maxAgeMs: Long = GatewayProtocol.DEFAULT_MAX_AGE_MS): GatewayV2Frame? {
-            require(nowMs >= 0 && maxAgeMs >= 0) { "invalid freshness window" }
+            require(nowMs >= 0 && maxAgeMs >= 0) { INVALID_FRESHNESS_WINDOW }
             if (!validEnvelope(bytes)) return null
             val b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
             val generatedAt = b.getLong(14)
@@ -164,7 +166,7 @@ class GatewayAlertTracker {
     fun reset() { lastSequence = null; active = emptyMap() }
 
     fun update(frame: GatewayV2Frame, nowMs: Long, maxAgeMs: Long = GatewayProtocol.DEFAULT_MAX_AGE_MS): Set<GatewayAlertKind> {
-        require(nowMs >= 0 && maxAgeMs >= 0) { "invalid freshness window" }
+        require(nowMs >= 0 && maxAgeMs >= 0) { INVALID_FRESHNESS_WINDOW }
         active = active.filterValues { r ->
             GatewayReadingRules.normalize(r, nowMs, maxAgeMs) { it == 0.0 || it == 1.0 }.state == FieldState.VALID
         }

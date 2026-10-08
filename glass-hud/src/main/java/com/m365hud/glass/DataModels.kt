@@ -1,5 +1,6 @@
 package com.m365hud.glass
 
+import io.github.zero2005x.pev.core.gateway.GatewayV1Frame
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -158,69 +159,19 @@ data class TelemetryData(
          * Byte 18-19: CRC16
          */
         fun fromBytes(bytes: ByteArray): TelemetryData {
-            if (bytes.size < 20) {
-                return TelemetryData(isValid = false)
-            }
-            
-            val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-            
-            // Parse fields
-            val speedRaw = buffer.getShort(0).toInt()
-            val batteryRaw = bytes[2].toInt() and 0xFF
-            val tempRaw = buffer.getShort(3).toInt()
-            val mileageRaw = buffer.getInt(5).toLong() and 0xFFFFFFFFL
-            val avgSpeedRaw = buffer.getShort(9).toInt() and 0xFFFF
-            val rangeRaw = buffer.getShort(11).toInt() and 0xFFFF
-            val connectionState = bytes[13].toInt() and 0xFF
-            val tripMeters = buffer.getShort(14).toInt() and 0xFFFF
-            val tripSeconds = buffer.getShort(16).toInt() and 0xFFFF
-            val receivedCrc = buffer.getShort(18).toInt() and 0xFFFF
-            
-            // Validate CRC over bytes 0..17 (no copy: this runs on the hot BLE
-            // notification path, and copyOfRange allocated on every frame).
-            val calculatedCrc = calculateCrc16(bytes, 18)
-            if (calculatedCrc != receivedCrc) {
-                // Return a zeroed record so a corrupt frame cannot leak bogus
-                // speed/battery values to a caller that forgets to check isValid.
-                return TelemetryData(isValid = false)
-            }
-
+            val frame = GatewayV1Frame.fromBytes(bytes) ?: return TelemetryData(isValid = false)
             return TelemetryData(
-                speedKmh = speedRaw / 100f,
-                scooterBattery = batteryRaw,
-                temperatureC = tempRaw / 10f,
-                totalMileageM = mileageRaw,
-                avgSpeedKmh = avgSpeedRaw / 100f,
-                remainingRangeKm = rangeRaw / 10f,
-                connectionState = connectionState,
-                tripMeters = tripMeters,
-                tripSeconds = tripSeconds,
-                isValid = true
+                speedKmh = frame.speedKmh.toFloat(),
+                scooterBattery = frame.batteryPercent,
+                temperatureC = frame.temperatureC.toFloat(),
+                totalMileageM = frame.totalDistanceMeters,
+                avgSpeedKmh = frame.avgSpeedKmh.toFloat(),
+                remainingRangeKm = frame.remainingRangeKm.toFloat(),
+                connectionState = frame.connectionState,
+                tripMeters = frame.tripMeters,
+                tripSeconds = frame.tripSeconds,
+                isValid = true,
             )
-        }
-        
-        /**
-         * CRC-16/MODBUS, matching the gateway's `M365HudGattProfile.CRC16_SPEC`.
-         *
-         * Parameters: width 16, polynomial 0xA001 (reflected 0x8005),
-         * init 0xFFFF, input and output reflected, no final xor. The result is
-         * carried in the frame as a little-endian u16.
-         *
-         * This used to be CRC-16/CCITT-FALSE (poly 0x1021, non-reflected),
-         * which never matched the gateway's checksum, so `isValid` was false
-         * for every packet and all telemetry was silently discarded.
-         *
-         * @param length number of leading bytes covered (bytes 0..length-1)
-         */
-        private fun calculateCrc16(data: ByteArray, length: Int = data.size): Int {
-            var crc = 0xFFFF
-            for (i in 0 until length) {
-                crc = crc xor (data[i].toInt() and 0xFF)
-                for (j in 0 until 8) {
-                    crc = if ((crc and 1) != 0) (crc ushr 1) xor 0xA001 else crc ushr 1
-                }
-            }
-            return crc and 0xFFFF
         }
     }
     

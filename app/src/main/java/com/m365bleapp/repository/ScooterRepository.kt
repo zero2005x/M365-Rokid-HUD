@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.util.Log
-import androidx.annotation.RequiresPermission
 import androidx.core.app.ActivityCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -2238,7 +2237,6 @@ class ScooterRepository private constructor(
         }
     }
 
-    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun disconnect() {
         // Stopping the demo here means the UI's existing "disconnect" action also
         // ends a demo ride, so there is no separate control to discover.
@@ -2247,13 +2245,7 @@ class ScooterRepository private constructor(
         bleManager.clearOnDisconnectCallback()
         
         logger.stopSession()
-        if (ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.BLUETOOTH_CONNECT
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
+        // releaseConnection handles permission rejection while still freeing local/native resources.
         
         // Track if we had an actual connection
         val hadConnection = activeGatt != null

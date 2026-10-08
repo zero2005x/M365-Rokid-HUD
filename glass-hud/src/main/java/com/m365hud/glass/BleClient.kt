@@ -93,7 +93,7 @@ class BleClient(
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     private val scanner: BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
     
-    private var gatt: BluetoothGatt? = null
+    @Volatile private var gatt: BluetoothGatt? = null
     private var targetDevice: BluetoothDevice? = null
     
     // State flows for UI observation
@@ -124,6 +124,7 @@ class BleClient(
     
     // LATENCY MONITORING: Track last telemetry update time
     @Volatile private var lastTelemetryUpdateMs: Long = 0
+    @Volatile private var receivedValidSessionTelemetry = false
     @Volatile private var telemetryUpdateCount: Int = 0
     @Volatile private var lastLogTimeMs: Long = 0
     
@@ -426,6 +427,10 @@ class BleClient(
     private val gattCallback = object : BluetoothGattCallback() {
         
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (this@BleClient.gatt !== gatt) {
+                if (newState == BluetoothProfile.STATE_DISCONNECTED) gatt.close()
+                return
+            }
             // Enhanced logging for connection diagnostics
             val statusName = when (status) {
                 BluetoothGatt.GATT_SUCCESS -> "GATT_SUCCESS"
@@ -473,7 +478,7 @@ class BleClient(
                     bleScope.launch {
                         delay(200)
                         withContext(mainDispatcher) {
-                            gatt.discoverServices()
+                            if (this@BleClient.gatt === gatt) gatt.discoverServices()
                         }
                     }
                 }
@@ -517,8 +522,8 @@ class BleClient(
                     stopBatterySending()
                     stopRssiMonitoring()
                     _connectionState.value = ConnectionState.Disconnected
-                    this@BleClient.gatt?.close()
-                    this@BleClient.gatt = null
+                    gatt.close()
+                    if (this@BleClient.gatt === gatt) this@BleClient.gatt = null
                     
                     // Auto-reconnect if enabled and disconnect was unexpected (using coroutine)
                     if (shouldAutoReconnect && autoReconnectEnabled) {
@@ -538,6 +543,7 @@ class BleClient(
         }
         
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (this@BleClient.gatt !== gatt) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.e(TAG, "Service discovery failed: $status")
                 _connectionState.value = ConnectionState.Error("Service discovery failed")
@@ -666,6 +672,7 @@ class BleClient(
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
+            if (this@BleClient.gatt !== gatt) return
             when (characteristic.uuid) {
                 GattProfile.TELEMETRY_CHAR_UUID -> {
                     // LATENCY MONITORING: Track update timing
@@ -682,9 +689,6 @@ class BleClient(
                         telemetryUpdateCount = 0
                         lastLogTimeMs = now
                     }
-                    lastTelemetryUpdateMs = now
-                    _isTelemetryFresh.value = true
-                    
                     val data = TelemetryData.fromBytes(value)
                     if (!data.isValid) {
                         // Corrupt or malformed frame: keep the previous reading
@@ -694,6 +698,9 @@ class BleClient(
                     }
                     Log.d(TAG, "Telemetry: speed=${data.speedKmh}, battery=${data.scooterBattery}%")
                     _telemetry.value = data
+                    lastTelemetryUpdateMs = now
+                    receivedValidSessionTelemetry = true
+                    _isTelemetryFresh.value = true
                 }
                 GattProfile.TIME_CHAR_UUID -> {
                     val data = TimeData.fromBytes(value)
@@ -720,6 +727,7 @@ class BleClient(
         }
         
         override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
+            if (this@BleClient.gatt !== gatt) return
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 _rssi.value = rssi
                 
@@ -752,6 +760,7 @@ class BleClient(
      */
     @Suppress("DEPRECATION")
     private fun enableNotification(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic): Boolean {
+        if (this.gatt !== gatt) return false
         val success = gatt.setCharacteristicNotification(characteristic, true)
         if (!success) {
             Log.e(TAG, "Failed to set notification for ${characteristic.uuid}")
@@ -788,7 +797,8 @@ class BleClient(
         lastLogTimeMs = System.currentTimeMillis()
         telemetryUpdateCount = 0
         consecutiveStaleChecks = 0
-        _isTelemetryFresh.value = true
+        receivedValidSessionTelemetry = false
+        _isTelemetryFresh.value = false
         
         watchdogJob = bleScope.launch {
             delay(WATCHDOG_CHECK_INTERVAL_MS)
@@ -820,7 +830,7 @@ class BleClient(
                         Log.i(TAG, "CONNECTION HEALTH: Connection recovered, resetting stale counter")
                         consecutiveStaleChecks = 0
                     }
-                    _isTelemetryFresh.value = true
+                    _isTelemetryFresh.value = receivedValidSessionTelemetry
                 }
                 
                 delay(WATCHDOG_CHECK_INTERVAL_MS)

@@ -15,6 +15,8 @@ import java.io.DataOutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import io.github.zero2005x.pev.core.gateway.GatewayV1Frame
+import io.github.zero2005x.pev.core.gateway.GatewayCommandGuard
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
@@ -291,6 +293,11 @@ class WifiGatewayServer(private val context: Context) {
      * Process incoming message from client
      */
     private fun processMessage(connection: ClientConnection, type: Byte, payload: ByteArray) {
+        val inspection = GatewayCommandGuard.inspect(type, payload)
+        if (inspection is GatewayCommandGuard.InspectionResult.Rejected) {
+            Log.w(TAG, "Rejected glasses message: ${inspection.reason}")
+            return
+        }
         when (type) {
             MSG_TYPE_HEARTBEAT -> {
                 // Client heartbeat - respond immediately
@@ -303,10 +310,6 @@ class WifiGatewayServer(private val context: Context) {
                     _glassesBatteryLevel.value = batteryLevel
                     Log.d(TAG, "Glasses battery: $batteryLevel%")
                 }
-            }
-            MSG_TYPE_COMMAND -> {
-                // Command from glasses (future use)
-                Log.d(TAG, "Command received: ${payload.contentToString()}")
             }
             else -> {
                 Log.w(TAG, "Unknown message type: $type")
@@ -340,46 +343,22 @@ class WifiGatewayServer(private val context: Context) {
         }
         if (lastTelemetryUpdateMs == 0L) lastTelemetryUpdateMs = now
         
-        // Build telemetry packet (same format as BLE)
-        val buffer = ByteBuffer.allocate(TELEMETRY_DATA_SIZE)
-            .order(ByteOrder.LITTLE_ENDIAN)
-        
-        buffer.putShort((speedKmh * 100).toInt().toShort())           // 0-1
-        buffer.put(scooterBattery.coerceIn(0, 100).toByte())          // 2
-        buffer.putShort((tempC * 10).toInt().toShort())               // 3-4
-        buffer.putInt(totalMileageM.toInt())                          // 5-8
-        buffer.putShort((avgSpeedKmh * 100).toInt().toShort())        // 9-10
-        buffer.putShort((remainingKm * 10).toInt().toShort())         // 11-12
-        buffer.put(connectionState.toByte())                          // 13
-        buffer.putShort(tripMeters.toShort())                         // 14-15
-        buffer.putShort(tripSeconds.toShort())                        // 16-17
-        
-        val telemetryData = buffer.array()
-
-        // Real CRC over bytes 0..17, matching M365HudGattProfile.CRC16_SPEC.
-        // A hardcoded 0 meant a client that validates the checksum rejected
-        // every frame, and one that does not silently accepted corrupt frames.
-        buffer.putShort(18, calculateCrc16(telemetryData, M365HudGattProfile.TELEMETRY_CRC_COVERED_BYTES))
+        val telemetryData = GatewayV1Frame(
+            speedKmh = speedKmh,
+            batteryPercent = scooterBattery,
+            temperatureC = tempC,
+            totalDistanceMeters = totalMileageM,
+            avgSpeedKmh = avgSpeedKmh,
+            remainingRangeKm = remainingKm,
+            connectionState = connectionState,
+            tripMeters = tripMeters,
+            tripSeconds = tripSeconds,
+        ).toBytes()
 
         // Send to all connected clients
         sendToAll(MSG_TYPE_TELEMETRY, telemetryData)
     }
 
-    /**
-     * CRC-16/MODBUS over the first [length] bytes.
-     * See [M365HudGattProfile.CRC16_SPEC] for the authoritative parameters.
-     */
-    private fun calculateCrc16(data: ByteArray, length: Int): Short {
-        var crc = 0xFFFF
-        for (i in 0 until length) {
-            crc = crc xor (data[i].toInt() and 0xFF)
-            for (j in 0 until 8) {
-                crc = if (crc and 1 != 0) (crc ushr 1) xor 0xA001 else crc ushr 1
-            }
-        }
-        return (crc and 0xFFFF).toShort()
-    }
-    
     /**
      * Send time data to all connected clients
      */

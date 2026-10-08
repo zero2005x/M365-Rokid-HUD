@@ -11,14 +11,15 @@ import io.github.zero2005x.pev.core.telemetry.TelemetrySnapshot
  * | offset | field | encoding |
  * |---:|---|---|
  * | 8 | state of charge | u16, percent |
- * | 10 | speed | **signed** i16, m/h (÷1000 = km/h) |
+ * | 10 | speed | u16; 0xC000..0xFFFF subtract 0x10000, then ÷1000 km/h |
  * | 14 | total distance | u32, metres |
  * | 22 | frame temperature | signed i16, ÷10 °C |
  *
- * Layout and scales were derived from a real M365 capture (SOC, odometer and temperature
- * simultaneously plausible; speed matched odometer rate with median ratio 1.023).
- * Speed is reported **as decoded, signed**: small negative values occur on a stationary
- * wheel. Whether to show them as 0 is a display policy of the app, not a codec decision.
+ * Historical M365 payloads pin the layout and provide regression values, not independent
+ * physical-scale acceptance. The available 152-payload replay does not reproduce the previously
+ * claimed moving-window odometer/speed ratio. The threshold above preserves HUD compatibility;
+ * its forward/wrap interpretation still needs separate evidence across the full raw-word range.
+ * Negative readings are retained; clamping or magnitude is an App display policy.
  * Offsets 12 (average speed) and 18/20 are intentionally not decoded: their meaning is unresolved.
  */
 object XiaomiMotorInfoDecoder {

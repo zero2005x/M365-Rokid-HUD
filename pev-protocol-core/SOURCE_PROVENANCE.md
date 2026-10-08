@@ -51,6 +51,21 @@ CAP-A wire artifact and corrected extractor are used read-only for local replay,
 or committed as MIT fixtures; concrete capture/tool redistribution rights must be resolved before
 a distributable A2 captured test corpus. This does not block synthetic tests or raw diagnostics.
 
+## Gateway continuation sources (2026-10-08)
+The V1 contract is derived from this MIT repository's committed production producer/parser bytes.
+No external vendor or RideFlux source is used to author the MIT gateway schema.
+
+| Source at HUD commit `51536b5` | SHA256 (Git blob bytes) | Use / redistribution |
+|---|---|---|
+| `app/.../gateway/M365GattServer.kt` | `fc6fcbc88e49faefbacca0e4ffaae22f8472e2ff913e9c2c781b31dc2c1f9ba6` | MIT legacy Double quantization, narrow wrap, layout and CRC facts |
+| `app/.../gateway/wifi/WifiGatewayServer.kt` | `580eea86ebe3bd5c5ef30f3089fb2c7e9599aaf247c41d99bedc074af44e4ad5` | MIT second producer contract and inbound message directions |
+| `glass-hud/.../DataModels.kt` | `54257147b069d17d9a84e04e614cd0dfa5ebf0439fd0de0cd05c3d7775245d5b` | MIT signed/unsigned decode and Float display precision contract |
+| New gateway V1/V2 and consumer tests | independently authored synthetic MIT vectors | Software contracts only; no hardware or vendor validation |
+
+V2 is a new unreleased schema, not a recovered vehicle protocol. MIT core is used in RideFlux as
+a dependency; edits to its GPL consumer remain there. Neither consumer code nor tests flow back
+into this module. No new third-party dependency was introduced.
+
 ## Dependencies / module license
 `LICENSE` is the unchanged repository MIT text, SHA256 `e256d9bcab8c7c56971e927f5a78f10c4c6b8c7bf944d369ad2f1938dddb162a`.
 No new external dependency was added. Existing Kotlin standard library is Apache-2.0

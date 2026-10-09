@@ -482,17 +482,7 @@ class M365GattServer(
      */
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     @Synchronized
-    fun updateTelemetry(
-        speedKmh: Double,
-        scooterBattery: Int,
-        tempC: Double,
-        totalMileageM: Long,
-        avgSpeedKmh: Double,
-        remainingKm: Double,
-        connectionState: Int,
-        tripMeters: Int,
-        tripSeconds: Int
-    ) {
+    fun updateTelemetry(frame: GatewayV1Frame) {
         // telemetryCharacteristic is lateinit and only assigned in start(); a
         // call before start() (or after stop(), on a closed server) would throw.
         if (!isRunning) return
@@ -510,24 +500,14 @@ class M365GattServer(
         }
         
         // LATENCY MONITORING: Log significant speed changes for debugging
-        if (kotlin.math.abs(speedKmh - lastSpeedValue) >= 0.5) {
+        if (kotlin.math.abs(frame.speedKmh - lastSpeedValue) >= 0.5) {
             val delta = now - lastTelemetryUpdateMs
-            Log.d(TAG, "Speed changed: ${String.format("%.1f", lastSpeedValue)} -> ${String.format("%.1f", speedKmh)} km/h (delta: ${delta}ms)")
-            lastSpeedValue = speedKmh
+            Log.d(TAG, "Speed changed: ${String.format("%.1f", lastSpeedValue)} -> ${String.format("%.1f", frame.speedKmh)} km/h (delta: ${delta}ms)")
+            lastSpeedValue = frame.speedKmh
         }
         lastTelemetryUpdateMs = now
         
-        currentTelemetry = GatewayV1Frame(
-            speedKmh = speedKmh,
-            batteryPercent = scooterBattery,
-            temperatureC = tempC,
-            totalDistanceMeters = totalMileageM,
-            avgSpeedKmh = avgSpeedKmh,
-            remainingRangeKm = remainingKm,
-            connectionState = connectionState,
-            tripMeters = tripMeters,
-            tripSeconds = tripSeconds,
-        ).toBytes()
+        currentTelemetry = frame.toBytes()
 
         // LATENCY OPTIMIZATION: Immediately notify all subscribed devices
         // The notifyCharacteristicChanged with confirm=false (3rd param) uses 

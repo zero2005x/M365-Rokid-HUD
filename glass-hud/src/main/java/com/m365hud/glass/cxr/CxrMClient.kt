@@ -27,6 +27,7 @@ import java.nio.ByteOrder
 class CxrMClient(private val context: Context) {
     
     companion object {
+        private const val SDK_CLIENT_CLASS = "com.rokid.cxr.CxrClient"
         private const val TAG = "CxrMClient"
         
         // Data channel message types (same as WiFi Gateway)
@@ -112,7 +113,7 @@ class CxrMClient(private val context: Context) {
     private fun checkSdkAvailability(): Boolean {
         return try {
             // Check for main SDK class
-            Class.forName("com.rokid.cxr.CxrClient")
+            Class.forName(SDK_CLIENT_CLASS)
             true
         } catch (e: ClassNotFoundException) {
             Log.d(TAG, "CXR-M SDK classes not found")
@@ -126,7 +127,7 @@ class CxrMClient(private val context: Context) {
     private fun initializeSdk(): Boolean {
         return try {
             // Use reflection to initialize SDK to avoid compile-time dependency issues
-            val cxrClientClass = Class.forName("com.rokid.cxr.CxrClient")
+            val cxrClientClass = Class.forName(SDK_CLIENT_CLASS)
             val initMethod = cxrClientClass.getMethod("initialize", Context::class.java)
             initMethod.invoke(null, context)
             
@@ -146,11 +147,9 @@ class CxrMClient(private val context: Context) {
      * @param token Authentication token (if required)
      */
     suspend fun connect(channelId: String, token: String? = null): Boolean {
-        if (!isInitialized) {
-            if (!initialize()) {
-                _connectionState.value = ConnectionState.Error("SDK not initialized")
-                return false
-            }
+        if (!isInitialized && !initialize()) {
+            _connectionState.value = ConnectionState.Error("SDK not initialized")
+            return false
         }
         
         _connectionState.value = ConnectionState.Connecting(channelId)
@@ -181,7 +180,7 @@ class CxrMClient(private val context: Context) {
     private suspend fun joinChannel(channelId: String, token: String?): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val cxrClientClass = Class.forName("com.rokid.cxr.CxrClient")
+                val cxrClientClass = Class.forName(SDK_CLIENT_CLASS)
                 val getInstance = cxrClientClass.getMethod("getInstance")
                 val client = getInstance.invoke(null)
                 
@@ -207,7 +206,7 @@ class CxrMClient(private val context: Context) {
     private fun startDataListener() {
         scope.launch {
             try {
-                val cxrClientClass = Class.forName("com.rokid.cxr.CxrClient")
+                val cxrClientClass = Class.forName(SDK_CLIENT_CLASS)
                 val client = artcClient ?: return@launch
                 
                 // Set up data callback using reflection
@@ -375,7 +374,7 @@ class CxrMClient(private val context: Context) {
     private suspend fun sendData(data: ByteArray) {
         withContext(Dispatchers.IO) {
             try {
-                val cxrClientClass = Class.forName("com.rokid.cxr.CxrClient")
+                val cxrClientClass = Class.forName(SDK_CLIENT_CLASS)
                 val client = artcClient ?: return@withContext
                 
                 val sendMethod = cxrClientClass.getMethod("sendData", ByteArray::class.java)
@@ -403,7 +402,7 @@ class CxrMClient(private val context: Context) {
     private suspend fun leaveChannel() = withContext(Dispatchers.IO) {
         try {
             artcClient?.let { client ->
-                val cxrClientClass = Class.forName("com.rokid.cxr.CxrClient")
+                val cxrClientClass = Class.forName(SDK_CLIENT_CLASS)
                 val leaveMethod = cxrClientClass.getMethod("leaveChannel")
                 leaveMethod.invoke(client)
             }

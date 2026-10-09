@@ -33,6 +33,12 @@ object GatewayCommandGuard {
     }
 }
 
+/** Additional V2 readings and alerts, separate from the core snapshot. */
+data class GatewayV2Supplement(
+    val extras: Map<GatewayField, Reading> = emptyMap(),
+    val alerts: Map<GatewayAlertKind, Reading> = emptyMap(),
+)
+
 object GatewayCodec {
     /** V1 has no per-field unknown/stale representation, so an unsafe downgrade requires upgraded glasses. */
     fun encodeV1(snapshot: TelemetrySnapshot, vehicleType: Int, connectionState: Int, nowMs: Long,
@@ -67,15 +73,15 @@ object GatewayCodec {
 
     /** Complete snapshot. Extras are explicitly typed average/range only, not alternate sensor substitutions. */
     fun encodeV2(snapshot: TelemetrySnapshot, vehicleType: Int, connectionState: Int, sequence: Long, nowMs: Long,
-        extras: Map<GatewayField, Reading> = emptyMap(), alerts: Map<GatewayAlertKind, Reading> = emptyMap(),
+        supplement: GatewayV2Supplement = GatewayV2Supplement(),
         maxAgeMs: Long = GatewayProtocol.DEFAULT_MAX_AGE_MS): GatewayV2Frame {
         require(nowMs >= 0 && maxAgeMs >= 0) { "invalid freshness window" }
-        require(extras.keys.all { it.coreId == null }) { "extras cannot override core measurements" }
+        require(supplement.extras.keys.all { it.coreId == null }) { "extras cannot override core measurements" }
         val fields = GatewayField.entries.associateWith { id ->
-            val reading = id.coreId?.let { snapshot[it] } ?: (extras[id] ?: Reading.NOT_PROVIDED)
+            val reading = id.coreId?.let { snapshot[it] } ?: (supplement.extras[id] ?: Reading.NOT_PROVIDED)
             GatewayReadingRules.normalize(reading, nowMs, maxAgeMs, id::accepts)
         }
         return GatewayV2Frame(vehicleType, connectionState, sequence, nowMs, fields,
-            alerts.mapValues { (_, r) -> GatewayReadingRules.normalize(r, nowMs, maxAgeMs) { it == 0.0 || it == 1.0 } })
+            supplement.alerts.mapValues { (_, r) -> GatewayReadingRules.normalize(r, nowMs, maxAgeMs) { it == 0.0 || it == 1.0 } })
     }
 }

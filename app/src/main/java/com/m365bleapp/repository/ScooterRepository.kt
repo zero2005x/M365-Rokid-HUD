@@ -1180,8 +1180,6 @@ class ScooterRepository private constructor(
         }
     }
     
-    // ... startTelemetryLoop uses writeNbParcel (raw) which is correct for UART ...
-
     // ------------------------------------------------------------- plaintext
     // Stage C1: scooters that speak plain `5A A5` framing never run the crypto
     // handshake. Everything below is that path. It is deliberately separate from
@@ -1356,132 +1354,120 @@ class ScooterRepository private constructor(
         logger.log(updated)
     }
 
+    /** Mutable polling progress belongs to one connection's telemetry loop. */
+    private class TelemetryPollState {
+        var tick = 0
+        var consecutiveFailures = 0
+        var lastSpeed = 0.0
+        private var lastTripQueryTick = 0
+        private var lastRangeQueryTick = 0
+
+        fun nextQuery(): Pair<Int, Int> = when {
+            tick - lastTripQueryTick >= TRIP_QUERY_INTERVAL_TICKS -> {
+                lastTripQueryTick = tick
+                0x3A to 0x04 // Trip info: 4 bytes
+            }
+            tick - lastRangeQueryTick >= RANGE_QUERY_INTERVAL_TICKS -> {
+                lastRangeQueryTick = tick
+                0x25 to 0x02 // Remaining range: 2 bytes
+            }
+            else -> 0xB0 to 0x20 // Motor info (speed): 32 bytes
+        }
+
+        fun pollIntervalMs(): Long = if (lastSpeed > SPEED_THRESHOLD_KMH) {
+            POLL_INTERVAL_MOVING_MS
+        } else {
+            POLL_INTERVAL_IDLE_MS
+        }
+    }
+
     private suspend fun startTelemetryLoop() {
         val expectedEpoch = expectedConnectionEpoch()
         connectionResources.ifCurrent(expectedEpoch) { logger.startSession() }
         Log.d("ScooterRepo", "Starting Telemetry Loop")
-        
-        var tick = 0
-        var consecutiveFailures = 0
-        
-        // === Dynamic Polling: Track last speed for adaptive interval ===
-        var lastSpeed = 0.0
-        
-        // === Tiered Query Strategy ===
-        // Different data types have different update frequency requirements
-        // Speed (0xB0) is queried most frequently for real-time HUD display
-        var lastTripQueryTick = 0
-        var lastRangeQueryTick = 0
-        
+        val progress = TelemetryPollState()
+
         while (currentCoroutineContext().isActive && connectionResources.isCurrent(expectedEpoch) && activeGatt != null) {
             try {
                 if (!connectionResources.hasNative) {
-                     delay(1000)
-                     continue
+                    delay(1000)
+                    continue
                 }
-                
-                // M365 Protocol Commands (from CamiAlfa M365-BLE-PROTOCOL):
-                // 0xB0: Motor Info - battery%, speed, avg speed, total km, temp (param=0x20, read 32 bytes)
-                // 0x3A: Trip Info - seconds this trip, meters this trip (param=0x04)
-                // 0x25: Remaining km (param=0x02)
-                // 
-                // === Tiered Query Strategy ===
-                // - Query Motor Info (speed) most frequently for real-time HUD
-                // - Query Trip Info less frequently (doesn't change as fast)
-                // - Query Remaining KM even less frequently (changes slowly)
-                
-                val (attribute, payload) = when {
-                    // Query trip info at defined interval
-                    tick - lastTripQueryTick >= TRIP_QUERY_INTERVAL_TICKS -> {
-                        lastTripQueryTick = tick
-                        0x3A to byteArrayOf(0x04) // Trip info: 4 bytes
-                    }
-                    // Query remaining km at defined interval
-                    tick - lastRangeQueryTick >= RANGE_QUERY_INTERVAL_TICKS -> {
-                        lastRangeQueryTick = tick
-                        0x25 to byteArrayOf(0x02) // Remaining km: 2 bytes
-                    }
-                    else -> 0xB0 to byteArrayOf(0x20) // Motor info (speed): 32 bytes - DEFAULT
-                }
-                
-                val session = phoneSession?.takeIf { it.transport.connectionId == expectedEpoch.toString() }
-                    ?: throw CancellationException("phone transaction session retired")
-                val reply = runInterruptible(ioDispatcher) {
-                    session.authority.read(attribute, payload[0].toInt() and 0xFF)
-                }
-                if (reply != null) {
-                    consecutiveFailures = 0
-                    _motorInfo.value?.let { lastSpeed = it.speed }
-                } else consecutiveFailures++
-
-                // === Tiered Retry Strategy ===
-                // Handle failures with progressive backoff
-                val retryStrategy = RetryStrategy.fromFailureCount(consecutiveFailures)
-                when (retryStrategy) {
-                    is RetryStrategy.Reconnect -> {
-                        // Previously this only set Error and broke out, leaving
-                        // the GATT link open and the native session allocated,
-                        // so the next connect() leaked both.
-                        Log.e("ScooterRepo", "CONNECTION HEALTH: Too many failures ($consecutiveFailures), tearing down connection")
-                        val retired = releaseConnection(expectedEpoch = expectedEpoch)
-                        if (retired != null) connectionResources.ifCurrent(retired) {
-                            _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
-                        }
-                        break
-                    }
-                    is RetryStrategy.LongDelay -> {
-                        Log.w("ScooterRepo", "CONNECTION HEALTH: Multiple failures ($consecutiveFailures), waiting ${retryStrategy.delayMs}ms before retry")
-                        delay(retryStrategy.delayMs)
-                    }
-                    is RetryStrategy.ShortDelay -> {
-                        Log.w("ScooterRepo", "CONNECTION HEALTH: Some failures ($consecutiveFailures), waiting ${retryStrategy.delayMs}ms before retry")
-                        delay(retryStrategy.delayMs)
-                    }
-                    is RetryStrategy.Immediate -> {
-                        // Continue with normal polling interval
-                    }
-                }
-                
-                tick++
+                pollTelemetry(expectedEpoch, progress)
+                if (!applyTelemetryRetry(progress.consecutiveFailures, expectedEpoch)) break
+                progress.tick++
             } catch (e: CancellationException) {
                 throw e
-            } catch(e: Exception) {
-                if (!connectionResources.isCurrent(expectedEpoch)) break
-                Log.e("ScooterRepo", "Loop error: ${e.message}", e)
-                consecutiveFailures++
-                
-                // Check if the error indicates a disconnection
-                if (e.message?.contains("disconnect", ignoreCase = true) == true ||
-                    e.message?.contains("closed", ignoreCase = true) == true) {
-                    Log.e("ScooterRepo", "CONNECTION HEALTH: Connection error detected in telemetry loop")
-                    val retired = releaseConnection(expectedEpoch = expectedEpoch)
-                    if (retired != null) connectionResources.ifCurrent(retired) {
-                        _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
-                    }
-                    break
-                }
-                
-                // Apply retry strategy even for exceptions
-                val retryStrategy = RetryStrategy.fromFailureCount(consecutiveFailures)
-                if (retryStrategy is RetryStrategy.LongDelay || retryStrategy is RetryStrategy.ShortDelay) {
-                    val delayMs = when (retryStrategy) {
-                        is RetryStrategy.LongDelay -> retryStrategy.delayMs
-                        is RetryStrategy.ShortDelay -> retryStrategy.delayMs
-                        else -> 0L
-                    }
-                    delay(delayMs)
-                }
+            } catch (e: Exception) {
+                if (!handleTelemetryLoopError(e, expectedEpoch, progress)) break
             }
-            
-            // === Dynamic Polling Interval ===
-            // Shorter interval while moving for real-time HUD, longer when idle to save power
-            val pollInterval = if (lastSpeed > SPEED_THRESHOLD_KMH) {
-                POLL_INTERVAL_MOVING_MS
-            } else {
-                POLL_INTERVAL_IDLE_MS
-            }
-            delay(pollInterval)
+
+            // Poll faster while moving for HUD responsiveness, slower when idle.
+            delay(progress.pollIntervalMs())
         }
+    }
+
+    private suspend fun pollTelemetry(expectedEpoch: Long, progress: TelemetryPollState) {
+        val (attribute, size) = progress.nextQuery()
+        val session = phoneSession?.takeIf { it.transport.connectionId == expectedEpoch.toString() }
+            ?: throw CancellationException("phone transaction session retired")
+        val reply = runInterruptible(ioDispatcher) { session.authority.read(attribute, size) }
+        if (reply != null) {
+            progress.consecutiveFailures = 0
+            _motorInfo.value?.let { progress.lastSpeed = it.speed }
+        } else {
+            progress.consecutiveFailures++
+        }
+    }
+
+    private fun retireFailedTelemetryConnection(expectedEpoch: Long) {
+        val retired = releaseConnection(expectedEpoch = expectedEpoch)
+        if (retired != null) connectionResources.ifCurrent(retired) {
+            _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+        }
+    }
+
+    private suspend fun applyTelemetryRetry(failures: Int, expectedEpoch: Long): Boolean {
+        when (val strategy = RetryStrategy.fromFailureCount(failures)) {
+            is RetryStrategy.Reconnect -> {
+                Log.e("ScooterRepo", "CONNECTION HEALTH: Too many failures ($failures), tearing down connection")
+                retireFailedTelemetryConnection(expectedEpoch)
+                return false
+            }
+            is RetryStrategy.LongDelay -> {
+                Log.w("ScooterRepo", "CONNECTION HEALTH: Multiple failures ($failures), waiting ${strategy.delayMs}ms before retry")
+                delay(strategy.delayMs)
+            }
+            is RetryStrategy.ShortDelay -> {
+                Log.w("ScooterRepo", "CONNECTION HEALTH: Some failures ($failures), waiting ${strategy.delayMs}ms before retry")
+                delay(strategy.delayMs)
+            }
+            is RetryStrategy.Immediate -> Unit
+        }
+        return true
+    }
+
+    private suspend fun handleTelemetryLoopError(
+        error: Exception,
+        expectedEpoch: Long,
+        progress: TelemetryPollState
+    ): Boolean {
+        if (!connectionResources.isCurrent(expectedEpoch)) return false
+        Log.e("ScooterRepo", "Loop error: ${error.message}", error)
+        progress.consecutiveFailures++
+        if (error.message?.contains("disconnect", ignoreCase = true) == true ||
+            error.message?.contains("closed", ignoreCase = true) == true) {
+            Log.e("ScooterRepo", "CONNECTION HEALTH: Connection error detected in telemetry loop")
+            retireFailedTelemetryConnection(expectedEpoch)
+            return false
+        }
+        // Preserve the exception path's backoff: only short/long retries delay here.
+        when (val strategy = RetryStrategy.fromFailureCount(progress.consecutiveFailures)) {
+            is RetryStrategy.LongDelay -> delay(strategy.delayMs)
+            is RetryStrategy.ShortDelay -> delay(strategy.delayMs)
+            else -> Unit
+        }
+        return true
     }
 
     // Legacy raw lock/light writes had neither audited authorization nor readback.
@@ -1562,10 +1548,7 @@ class ScooterRepository private constructor(
     // Beep command
     suspend fun beep() {
         if (!connectionResources.hasNative) return
-        try {
-            // Beep logic not verified, using a known safe query (get version) or silence usually.
-            // Let's rely on Connect sound for now if we can't confirm CMD_BEEP.
-        } catch (e: Exception) {}
+        // No verified beep command is available; retain the public no-op API.
     }
 
     // NOTE (stage A3): a `tryLegacyParse` fallback used to live here. It scanned
@@ -1611,16 +1594,6 @@ class ScooterRepository private constructor(
             check(bleManager.write(gatt, service, char, data, waitForResponse)) { "GATT write rejected" }
         }
         delay(20) // Normal pacing delay
-    }
-    
-    // Write Raw Chunks (NbParcel)
-    private suspend fun writeNbParcel(service: UUID, char: UUID, data: ByteArray) {
-        // Same MTU-3 rule as submitEncryptedOnce: this used a hard-coded 20 as
-        // well, so a larger granted MTU was never taken advantage of.
-        for (chunk in MtuFragmenter.fragment(data, bleManager.negotiatedMtu)) {
-            writeChar(service, char, chunk)
-            delay(20)
-        }
     }
     
     // Write Mi Protocol Chunks (Index + 0x00 + payload)
@@ -1675,15 +1648,6 @@ class ScooterRepository private constructor(
         // Ack (RCV_OK)
         writeChar(AUTH_SERVICE, AUTH_AVDTP, byteArrayOf(0x00, 0x00, 0x01, 0x00))
         
-        return buffer.toByteArray()
-    }
-    
-    private suspend fun readNbParcel(frames: Int): ByteArray {
-        val buffer = java.io.ByteArrayOutputStream()
-        repeat(frames) {
-            val chunk = waitForControlData()
-            buffer.write(chunk, 0, chunk.size)
-        }
         return buffer.toByteArray()
     }
     

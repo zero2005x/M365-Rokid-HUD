@@ -155,7 +155,9 @@ class BleManager internal constructor(
     val usableChunkSize: Int
         get() = MtuFragmenter.chunkSizeFor(negotiatedMtu)
 
-    private fun gattCallback(expectedEpoch: Long) = object : BluetoothGattCallback() {
+    private fun gattCallback(expectedEpoch: Long) = ConnectionCallback(expectedEpoch)
+
+    private inner class ConnectionCallback(private val expectedEpoch: Long) : BluetoothGattCallback() {
         /**
          * Records the MTU the peripheral agreed to.
          *

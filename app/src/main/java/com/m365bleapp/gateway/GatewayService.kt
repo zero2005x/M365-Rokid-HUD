@@ -18,6 +18,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.m365bleapp.R
 import com.m365bleapp.repository.ConnectionState
+import com.m365bleapp.repository.MotorInfo
 import com.m365bleapp.repository.ScooterRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
@@ -195,10 +196,8 @@ class GatewayService : Service() {
      * The caller should start this intent from an Activity.
      */
     fun createBatteryOptimizationIntent(): Intent? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!isIgnoringBatteryOptimizations()) {
-                return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !isIgnoringBatteryOptimizations()) {
+            return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
         }
         return null
     }
@@ -286,73 +285,54 @@ class GatewayService : Service() {
         Log.i(TAG, "Starting telemetry observer, scooter connected: ${repository?.connectionState?.value is ConnectionState.Ready}")
         
         // Observe motor info and push to BLE
+        observeMotorInfo()
+        startHeartbeat()
+        observeConnectionState()
+    }
+
+    private fun observeMotorInfo() {
         scope.launch {
             Log.i(TAG, "Telemetry observer coroutine started, collecting motorInfo...")
-            repository?.motorInfo?.collectLatest { info ->
-                if (info != null) {
-                    Log.d(TAG, "MotorInfo received: speed=${info.speed}, battery=${info.battery}, subscribers=${gattServer?.getConnectedDeviceCount() ?: 0}")
-                    val connState = when (repository?.connectionState?.value) {
-                        is ConnectionState.Disconnected -> M365HudGattProfile.STATE_DISCONNECTED
-                        is ConnectionState.Connecting, is ConnectionState.Handshaking -> M365HudGattProfile.STATE_CONNECTING
-                        is ConnectionState.Ready -> M365HudGattProfile.STATE_READY
-                        is ConnectionState.Error -> M365HudGattProfile.STATE_DISCONNECTED
-                        else -> M365HudGattProfile.STATE_DISCONNECTED
-                    }
-                    
-                    try {
-                        // BLUETOOTH_CONNECT is granted before the gateway is
-                        // allowed to start; suppressing keeps the call inside
-                        // the telemetry collector readable.
-                        @SuppressLint("MissingPermission")
-                        gattServer?.updateTelemetry(
-                            speedKmh = info.speed,
-                            scooterBattery = info.battery,
-                            tempC = info.temp,
-                            totalMileageM = (info.mileage * 1000).toLong(),
-                            avgSpeedKmh = info.avgSpeed,
-                            remainingKm = info.remainingKm,
-                            connectionState = connState,
-                            tripMeters = info.tripMeters,
-                            tripSeconds = info.tripSeconds
-                        )
-                        
-                        val glassesStatus = if (gattServer?.isDeviceConnected() == true) "🔗" else "⏳"
-                        val scooterStatus = if (connState == M365HudGattProfile.STATE_READY) "🛴" else "⚠️"
-                        updateNotification("$glassesStatus $scooterStatus ${info.speed.toInt()} km/h | 🔋${info.battery}%")
-                    } catch (e: Exception) {
-                        // Catch broadly: anything escaping here would cancel this
-                        // collector and silently stop all telemetry forwarding,
-                        // while the SupervisorJob keeps the service looking alive.
-                        Log.e(TAG, "Failed to update telemetry", e)
-                    }
-                } else {
-                    // Send "disconnected" state telemetry so glasses know gateway is alive
-                    // but scooter is not connected. This prevents glasses from detecting
-                    // "stale data" and constantly reconnecting.
-                    Log.d(TAG, "MotorInfo is null - sending disconnected state to glasses")
-                    try {
-                        gattServer?.updateTelemetry(
-                            speedKmh = 0.0,
-                            scooterBattery = 0,
-                            tempC = 0.0,
-                            totalMileageM = 0L,
-                            avgSpeedKmh = 0.0,
-                            remainingKm = 0.0,
-                            connectionState = M365HudGattProfile.STATE_DISCONNECTED,
-                            tripMeters = 0,
-                            tripSeconds = 0
-                        )
-                    } catch (e: SecurityException) {
-                        Log.e(TAG, "Security exception sending disconnected state", e)
-                    }
-                }
+            repository?.motorInfo?.collectLatest { info -> forwardMotorInfo(info) }
+        }
+    }
+
+    private fun forwardMotorInfo(info: MotorInfo?) {
+        if (info != null) {
+            Log.d(TAG, "MotorInfo received: speed=${info.speed}, battery=${info.battery}, subscribers=${gattServer?.getConnectedDeviceCount() ?: 0}")
+            val connState = repository?.connectionState?.value.toGatewayState()
+
+            try {
+                // BLUETOOTH_CONNECT is granted before the gateway is
+                // allowed to start; suppressing keeps the call inside
+                // the telemetry collector readable.
+                @SuppressLint("MissingPermission")
+                gattServer?.updateTelemetry(info.toGatewayFrame(connState))
+
+                val glassesStatus = if (gattServer?.isDeviceConnected() == true) "🔗" else "⏳"
+                val scooterStatus = if (connState == M365HudGattProfile.STATE_READY) "🛴" else "⚠️"
+                updateNotification("$glassesStatus $scooterStatus ${info.speed.toInt()} km/h | 🔋${info.battery}%")
+            } catch (e: Exception) {
+                // Catch broadly: anything escaping here would cancel this
+                // collector and silently stop all telemetry forwarding,
+                // while the SupervisorJob keeps the service looking alive.
+                Log.e(TAG, "Failed to update telemetry", e)
+            }
+        } else {
+            // Send "disconnected" state telemetry so glasses know gateway is alive
+            // but scooter is not connected. This prevents glasses from detecting
+            // "stale data" and constantly reconnecting.
+            Log.d(TAG, "MotorInfo is null - sending disconnected state to glasses")
+            try {
+                gattServer?.updateTelemetry(null.toGatewayFrame(M365HudGattProfile.STATE_DISCONNECTED))
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Security exception sending disconnected state", e)
             }
         }
-        
-        // === HEARTBEAT: Keep glasses connection alive ===
-        // StateFlow only emits on value CHANGE, so when scooter is idle (speed=0 steady),
-        // no updates are emitted. This heartbeat ensures glasses receive regular updates
-        // to prevent "stale data" detection and reconnection loops.
+    }
+
+    /** StateFlow emits only changes; keep an idle scooter from appearing stale to the glasses. */
+    private fun startHeartbeat() {
         scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(1000L) // Send every 1 second
@@ -363,42 +343,16 @@ class GatewayService : Service() {
                 }
                 
                 val info = repository?.motorInfo?.value
-                val connState = when (repository?.connectionState?.value) {
-                    is ConnectionState.Disconnected -> M365HudGattProfile.STATE_DISCONNECTED
-                    is ConnectionState.Connecting, is ConnectionState.Handshaking -> M365HudGattProfile.STATE_CONNECTING
-                    is ConnectionState.Ready -> M365HudGattProfile.STATE_READY
-                    is ConnectionState.Error -> M365HudGattProfile.STATE_DISCONNECTED
-                    else -> M365HudGattProfile.STATE_DISCONNECTED
-                }
+                val connState = repository?.connectionState?.value.toGatewayState()
                 
                 try {
                     if (info != null) {
                         // Scooter connected: send current telemetry as heartbeat
-                        gattServer?.updateTelemetry(
-                            speedKmh = info.speed,
-                            scooterBattery = info.battery,
-                            tempC = info.temp,
-                            totalMileageM = (info.mileage * 1000).toLong(),
-                            avgSpeedKmh = info.avgSpeed,
-                            remainingKm = info.remainingKm,
-                            connectionState = connState,
-                            tripMeters = info.tripMeters,
-                            tripSeconds = info.tripSeconds
-                        )
+                        gattServer?.updateTelemetry(info.toGatewayFrame(connState))
                         Log.d(TAG, "Heartbeat: speed=${info.speed}, battery=${info.battery}")
                     } else {
                         // Scooter not connected: send disconnected state
-                        gattServer?.updateTelemetry(
-                            speedKmh = 0.0,
-                            scooterBattery = 0,
-                            tempC = 0.0,
-                            totalMileageM = 0L,
-                            avgSpeedKmh = 0.0,
-                            remainingKm = 0.0,
-                            connectionState = connState,
-                            tripMeters = 0,
-                            tripSeconds = 0
-                        )
+                        gattServer?.updateTelemetry(null.toGatewayFrame(connState))
                         Log.d(TAG, "Heartbeat: scooter disconnected (state: $connState)")
                     }
                 } catch (e: SecurityException) {
@@ -406,8 +360,9 @@ class GatewayService : Service() {
                 }
             }
         }
-        
-        // Observe connection state changes
+    }
+
+    private fun observeConnectionState() {
         scope.launch {
             repository?.connectionState?.collectLatest { state ->
                 val stateText = when (state) {

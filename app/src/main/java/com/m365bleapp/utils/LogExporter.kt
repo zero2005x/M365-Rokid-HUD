@@ -29,6 +29,7 @@ import java.util.zip.ZipOutputStream
 class LogExporter(private val context: Context) {
     
     companion object {
+        private const val DISPLAY_DATE_PATTERN = "yyyy-MM-dd HH:mm:ss"
         private const val TAG = "LogExporter"
         private const val BUFFER_SIZE = 2048
         private const val LOGCAT_LINES = 2000 // Number of logcat lines to capture
@@ -78,17 +79,13 @@ class LogExporter(private val context: Context) {
             var totalSize = 0L
             
             ZipOutputStream(BufferedOutputStream(FileOutputStream(zipFile))).use { zos ->
-                // Add all log files from the logs directory
-                if (logsDir.exists() && logsDir.isDirectory) {
-                    logsDir.listFiles()?.forEach { file ->
-                        if (file.isFile) {
-                            addFileToZip(zos, file, "logs/${file.name}")
-                            fileCount++
-                            totalSize += file.length()
-                        }
-                    }
+                val logFiles = logsDir.listFiles()?.filter { it.isFile }.orEmpty()
+                logFiles.forEach { file ->
+                    addFileToZip(zos, file, "logs/${file.name}")
+                    fileCount++
+                    totalSize += file.length()
                 }
-                
+
                 // Add logcat output if requested
                 if (includeLogcat) {
                     val logcatContent = captureLogcat()
@@ -259,7 +256,7 @@ class LogExporter(private val context: Context) {
         val sb = StringBuilder()
         
         sb.appendLine("===== M365 HUD - Device Information =====")
-        sb.appendLine("Generated: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}")
+        sb.appendLine("Generated: ${SimpleDateFormat(DISPLAY_DATE_PATTERN, Locale.US).format(Date())}")
         sb.appendLine()
         
         // App Info
@@ -312,7 +309,7 @@ class LogExporter(private val context: Context) {
         // Log Files List
         sb.appendLine("=== Log Files ===")
         logsDir.listFiles()?.sortedByDescending { it.lastModified() }?.forEach { file ->
-            val modDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(file.lastModified()))
+            val modDate = SimpleDateFormat(DISPLAY_DATE_PATTERN, Locale.US).format(Date(file.lastModified()))
             sb.appendLine("${file.name} | ${formatFileSize(file.length())} | $modDate")
         }
         
@@ -335,7 +332,7 @@ class LogExporter(private val context: Context) {
             - Logcat output
             - Device information
             
-            Generated: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}
+            Generated: ${SimpleDateFormat(DISPLAY_DATE_PATTERN, Locale.US).format(Date())}
         """.trimIndent()
     }
     

@@ -1,5 +1,6 @@
 package com.m365bleapp.ui
 
+import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.clickable
@@ -196,31 +197,13 @@ fun LogViewerScreen(
                             Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete))
                         }
                     } else {
-                        // Export All button
-                        IconButton(
-                            onClick = { showExportDialog = true },
-                            enabled = logFiles.isNotEmpty() && !isExporting
-                        ) {
-                            if (isExporting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Icon(
-                                    Icons.Default.CloudUpload,
-                                    contentDescription = stringResource(R.string.export_logs)
-                                )
-                            }
-                        }
-                        IconButton(onClick = { refreshFiles() }) {
-                            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh))
-                        }
-                        if (logFiles.isNotEmpty()) {
-                            IconButton(onClick = { showDeleteAllDialog = true }) {
-                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.log_delete_all))
-                            }
-                        }
+                        LogListActions(
+                            hasLogs = logFiles.isNotEmpty(),
+                            isExporting = isExporting,
+                            onExport = { showExportDialog = true },
+                            onRefresh = { refreshFiles() },
+                            onDeleteAll = { showDeleteAllDialog = true }
+                        )
                     }
                 }
             )
@@ -327,37 +310,7 @@ fun LogViewerScreen(
                             // exists) skipped `isExporting = false`, crashed the
                             // coroutine, and left the top-bar spinner stuck.
                             try {
-                                val result = withContext(Dispatchers.IO) {
-                                    logExporter.createLogArchive(
-                                        includeLogcat = true,
-                                        includeDeviceInfo = true
-                                    )
-                                }
-
-                                if (result.success && result.zipFile != null) {
-                                    // Create and launch share intent
-                                    val shareIntent = logExporter.createShareIntent(result.zipFile)
-                                    if (shareIntent != null) {
-                                        context.startActivity(
-                                            Intent.createChooser(
-                                                shareIntent,
-                                                shareLogsToTitle
-                                            )
-                                        )
-                                    } else {
-                                        Toast.makeText(
-                                            context,
-                                            R.string.export_share_failed,
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                } else {
-                                    Toast.makeText(
-                                        context,
-                                        exportFailedMessage(result.errorMessage ?: "Unknown error"),
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                }
+                                exportLogArchive(context, logExporter, shareLogsToTitle, exportFailedTemplate)
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
@@ -381,6 +334,80 @@ fun LogViewerScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun LogListActions(
+    hasLogs: Boolean,
+    isExporting: Boolean,
+    onExport: () -> Unit,
+    onRefresh: () -> Unit,
+    onDeleteAll: () -> Unit
+) {
+    // Export All button
+    IconButton(
+        onClick = onExport,
+        enabled = hasLogs && !isExporting
+    ) {
+        if (isExporting) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                strokeWidth = 2.dp
+            )
+        } else {
+            Icon(
+                Icons.Default.CloudUpload,
+                contentDescription = stringResource(R.string.export_logs)
+            )
+        }
+    }
+    IconButton(onClick = onRefresh) {
+        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh))
+    }
+    if (hasLogs) {
+        IconButton(onClick = onDeleteAll) {
+            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.log_delete_all))
+        }
+    }
+}
+
+private suspend fun exportLogArchive(
+    context: Context,
+    logExporter: LogExporter,
+    shareLogsToTitle: String,
+    exportFailedTemplate: String
+) {
+    val result = withContext(Dispatchers.IO) {
+        logExporter.createLogArchive(
+            includeLogcat = true,
+            includeDeviceInfo = true
+        )
+    }
+
+    if (result.success && result.zipFile != null) {
+        // Create and launch share intent
+        val shareIntent = logExporter.createShareIntent(result.zipFile)
+        if (shareIntent != null) {
+            context.startActivity(
+                Intent.createChooser(
+                    shareIntent,
+                    shareLogsToTitle
+                )
+            )
+        } else {
+            Toast.makeText(
+                context,
+                R.string.export_share_failed,
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    } else {
+        Toast.makeText(
+            context,
+            exportFailedTemplate.format(result.errorMessage ?: "Unknown error"),
+            Toast.LENGTH_LONG
+        ).show()
     }
 }
 

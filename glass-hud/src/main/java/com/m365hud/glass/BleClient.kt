@@ -256,7 +256,9 @@ class BleClient(
     private var scanCallback: ScanCallback? = null
     private var scanCallbackNoFilter: ScanCallback? = null
 
-    private fun createUnfilteredScanCallback(): ScanCallback = object : ScanCallback() {
+    private fun createUnfilteredScanCallback(): ScanCallback = UnfilteredScanCallback()
+
+    private inner class UnfilteredScanCallback : ScanCallback() {
         private val seenDevices = mutableSetOf<String>()
         
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -524,92 +526,96 @@ class BleClient(
             Log.i(TAG, "onConnectionStateChange: status=$statusName, newState=$stateName")
             
             when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    Log.i(TAG, "Connected to GATT server")
-                    _connectionState.value = ConnectionState.Connecting
-                    
-                    // LATENCY OPTIMIZATION: Request high connection priority for faster updates
-                    // This reduces the BLE connection interval from default (~30-50ms) to minimum (~7.5-15ms)
-                    try {
-                        gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-                        Log.d(TAG, "Requested HIGH connection priority for low latency")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to request connection priority: ${e.message}")
-                    }
-                    
-                    // Refresh GATT cache to avoid stale service data
-                    // This is critical when the phone's GATT server has been restarted
-                    try {
-                        val refreshMethod = gatt.javaClass.getMethod("refresh")
-                        val refreshResult = refreshMethod.invoke(gatt) as Boolean
-                        Log.i(TAG, "GATT cache refresh result: $refreshResult")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to refresh GATT cache: ${e.message}")
-                    }
-                    
-                    // Small delay after refresh before discovering services (using coroutine)
-                    bleScope.launch {
-                        delay(200)
-                        withContext(mainDispatcher) {
-                            connectionOwner.ifCurrent(gatt) {
-                                try { gatt.discoverServices() }
-                                catch (error: SecurityException) { Log.w(TAG, "Discovery permission missing", error) }
-                            }
-                        }
-                    }
-                }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.i(TAG, "Disconnected from GATT server (status=$statusName)")
-                    
-                    // Log disconnect reason for diagnostics
-                    val shouldAutoReconnect = when (status) {
-                        8 -> {
-                            Log.w(TAG, "DISCONNECT REASON: Connection timeout - phone may be out of range")
-                            true // Auto-reconnect on timeout
-                        }
-                        19 -> {
-                            Log.w(TAG, "DISCONNECT REASON: Remote device terminated connection")
-                            true // Auto-reconnect when remote disconnected
-                        }
-                        22 -> {
-                            Log.w(TAG, "DISCONNECT REASON: Local device terminated connection")
-                            false // Don't auto-reconnect on intentional local disconnect
-                        }
-                        34 -> {
-                            Log.w(TAG, "DISCONNECT REASON: LMP response timeout")
-                            true // Auto-reconnect on LMP timeout
-                        }
-                        133 -> {
-                            Log.e(TAG, "DISCONNECT REASON: GATT_ERROR - stack issue, may need device restart")
-                            true // Try to recover from GATT error
-                        }
-                        0 -> {
-                            Log.d(TAG, "DISCONNECT REASON: Graceful disconnect")
-                            false // Don't auto-reconnect on graceful disconnect
-                        }
-                        else -> {
-                            Log.w(TAG, "DISCONNECT REASON: Unknown status $status")
-                            true // Try to recover from unknown errors
-                        }
-                    }
-                    
-                    isConnecting = false
-                    stopWatchdog()
-                    stopBatterySending()
-                    stopRssiMonitoring()
-                    _connectionState.value = ConnectionState.Disconnected
-                    this@BleClient.gatt = null
-                    targetDevice = null
-                    glassesBatteryCharacteristic = null
-                    closeGatt(gatt)
-                    
-                    if (shouldAutoReconnect && autoReconnectEnabled) {
-                        scheduleReconnect(connectionOwner.revision)
+                BluetoothProfile.STATE_CONNECTED -> handleConnected(gatt)
+                BluetoothProfile.STATE_DISCONNECTED -> handleDisconnected(gatt, status, statusName)
+            }
+        }
+
+        private fun handleConnected(gatt: BluetoothGatt) {
+            Log.i(TAG, "Connected to GATT server")
+            _connectionState.value = ConnectionState.Connecting
+
+            // LATENCY OPTIMIZATION: Request high connection priority for faster updates
+            // This reduces the BLE connection interval from default (~30-50ms) to minimum (~7.5-15ms)
+            try {
+                gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+                Log.d(TAG, "Requested HIGH connection priority for low latency")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to request connection priority: ${e.message}")
+            }
+
+            // Refresh GATT cache to avoid stale service data
+            // This is critical when the phone's GATT server has been restarted
+            try {
+                val refreshMethod = gatt.javaClass.getMethod("refresh")
+                val refreshResult = refreshMethod.invoke(gatt) as Boolean
+                Log.i(TAG, "GATT cache refresh result: $refreshResult")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to refresh GATT cache: ${e.message}")
+            }
+
+            // Small delay after refresh before discovering services (using coroutine)
+            bleScope.launch {
+                delay(200)
+                withContext(mainDispatcher) {
+                    connectionOwner.ifCurrent(gatt) {
+                        try { gatt.discoverServices() }
+                        catch (error: SecurityException) { Log.w(TAG, "Discovery permission missing", error) }
                     }
                 }
             }
         }
-        
+
+        private fun handleDisconnected(gatt: BluetoothGatt, status: Int, statusName: String) {
+            Log.i(TAG, "Disconnected from GATT server (status=$statusName)")
+
+            // Log disconnect reason for diagnostics
+            val shouldAutoReconnect = when (status) {
+                8 -> {
+                    Log.w(TAG, "DISCONNECT REASON: Connection timeout - phone may be out of range")
+                    true // Auto-reconnect on timeout
+                }
+                19 -> {
+                    Log.w(TAG, "DISCONNECT REASON: Remote device terminated connection")
+                    true // Auto-reconnect when remote disconnected
+                }
+                22 -> {
+                    Log.w(TAG, "DISCONNECT REASON: Local device terminated connection")
+                    false // Don't auto-reconnect on intentional local disconnect
+                }
+                34 -> {
+                    Log.w(TAG, "DISCONNECT REASON: LMP response timeout")
+                    true // Auto-reconnect on LMP timeout
+                }
+                133 -> {
+                    Log.e(TAG, "DISCONNECT REASON: GATT_ERROR - stack issue, may need device restart")
+                    true // Try to recover from GATT error
+                }
+                0 -> {
+                    Log.d(TAG, "DISCONNECT REASON: Graceful disconnect")
+                    false // Don't auto-reconnect on graceful disconnect
+                }
+                else -> {
+                    Log.w(TAG, "DISCONNECT REASON: Unknown status $status")
+                    true // Try to recover from unknown errors
+                }
+            }
+
+            isConnecting = false
+            stopWatchdog()
+            stopBatterySending()
+            stopRssiMonitoring()
+            _connectionState.value = ConnectionState.Disconnected
+            this@BleClient.gatt = null
+            targetDevice = null
+            glassesBatteryCharacteristic = null
+            closeGatt(gatt)
+
+            if (shouldAutoReconnect && autoReconnectEnabled) {
+                scheduleReconnect(connectionOwner.revision)
+            }
+        }
+
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             withCurrentGatt(gatt) { handleServicesDiscovered(gatt, status) }
         }

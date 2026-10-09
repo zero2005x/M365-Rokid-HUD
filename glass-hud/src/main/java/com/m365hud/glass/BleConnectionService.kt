@@ -29,6 +29,7 @@ import com.m365hud.glass.wifi.UnifiedConnectionManager
 class BleConnectionService : Service() {
     
     companion object {
+        private const val CONNECTING_MESSAGE = "Connecting..."
         private const val TAG = "BleConnectionService"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "ble_connection_channel"
@@ -96,11 +97,11 @@ class BleConnectionService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     NOTIFICATION_ID,
-                    createNotification("Connecting..."),
+                    createNotification(CONNECTING_MESSAGE),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                 )
             } else {
-                startForeground(NOTIFICATION_ID, createNotification("Connecting..."))
+                startForeground(NOTIFICATION_ID, createNotification(CONNECTING_MESSAGE))
             }
         } catch (e: Exception) {
             // Covers SecurityException (permission revoked between the check
@@ -252,7 +253,7 @@ class BleConnectionService : Service() {
                 val status = when (val state = snapshot.connection) {
                     is BleClient.ConnectionState.Disconnected -> "Disconnected"
                     is BleClient.ConnectionState.Scanning -> "Searching for phone..."
-                    is BleClient.ConnectionState.Connecting -> "Connecting..."
+                    is BleClient.ConnectionState.Connecting -> CONNECTING_MESSAGE
                     is BleClient.ConnectionState.Connected -> "Connected via ${snapshot.transport}"
                     is BleClient.ConnectionState.Error -> "Error: ${state.message}"
                 }

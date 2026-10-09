@@ -95,15 +95,13 @@ class M365Native {
         // loadLibrarySync() blocks on a monitor and may run System.loadLibrary
         // itself. Doing either on the main thread risks visible jank or an ANR,
         // so require the caller to have pre-loaded via loadLibraryAsync().
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            throw IllegalStateException(
-                "Native library is not loaded yet. Call M365Native.loadLibraryAsync() " +
-                    "before using this API from the main thread."
-            )
+        check(Looper.myLooper() != Looper.getMainLooper()) {
+            "Native library is not loaded yet. Call M365Native.loadLibraryAsync() " +
+                "before using this API from the main thread."
         }
 
-        if (!loadLibrarySync()) {
-            throw IllegalStateException("Native library not loaded: ${loadError?.message}")
+        check(loadLibrarySync()) {
+            "Native library not loaded: ${loadError?.message}"
         }
     }
 

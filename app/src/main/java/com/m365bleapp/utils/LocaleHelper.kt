@@ -163,16 +163,16 @@ object LocaleHelper {
         
         val config = Configuration(context.resources.configuration)
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             config.setLocale(locale)
             config.setLocales(LocaleList(locale))
-            return context.createConfigurationContext(config)
+            context.createConfigurationContext(config)
         } else {
             @Suppress("DEPRECATION")
             config.locale = locale
             @Suppress("DEPRECATION")
             context.resources.updateConfiguration(config, context.resources.displayMetrics)
-            return context
+            context
         }
     }
     

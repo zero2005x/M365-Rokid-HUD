@@ -39,7 +39,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.m365bleapp.R
-import com.m365bleapp.ble.BleManager
 import com.m365bleapp.gateway.GatewayService
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.protocol.Identification
@@ -55,9 +54,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retry
-import kotlinx.coroutines.launch
 
 /**
  * Check if the app is exempt from battery optimization (Doze mode).
@@ -77,7 +74,7 @@ private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
  * policies by allowing the user to voluntarily whitelist the app without
  * declaring the restricted REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission in the manifest.
  */
-private fun createBatteryOptimizationIntent(context: Context): Intent {
+private fun createBatteryOptimizationIntent(): Intent {
     return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
 }
 
@@ -92,7 +89,7 @@ private fun requestBatteryOptimizationExemption(
     launcher: ManagedActivityResultLauncher<Intent, ActivityResult>
 ) {
     try {
-        launcher.launch(createBatteryOptimizationIntent(context))
+        launcher.launch(createBatteryOptimizationIntent())
     } catch (e: Exception) {
         Log.w("ScanScreen", "Battery optimization settings intent failed, falling back to app details", e)
         try {
@@ -325,37 +322,7 @@ fun ScanScreen(
         Log.d("ScanScreen", "Starting BLE scan...")
         
         try {
-            repository.scan()
-                .retry(3) { cause ->
-                    // Retry on scan failures (common on MIUI first launch)
-                    Log.w("ScanScreen", "Scan failed, retrying: ${cause.message}")
-                    delay(1000)
-                    true
-                }
-                .catch { e ->
-                    Log.e("ScanScreen", "Scan error after retries: ${e.message}")
-                    scanError = e.message
-                }
-                .collect { res ->
-                    val mac = res.device.address
-                    val isReg = repository.isRegistered(mac)
-                    // Get advertised name from scan record (more reliable)
-                    val advertisedName = res.scanRecord?.deviceName ?: res.device.name
-                    
-                    // Only update if device is new or RSSI changed significantly (>5 dBm)
-                    // This reduces unnecessary recompositions
-                    val existing = devicesMap[mac]
-                    if (existing == null || 
-                        kotlin.math.abs(existing.rssi - res.rssi) > 5 ||
-                        existing.name != advertisedName) {
-                        val scannedDevice = ScannedDevice(res, isReg)
-                        // Log scooter discovery
-                        if (scannedDevice.looksLikeScooter) {
-                            Log.i("ScanScreen", "Found scooter: $advertisedName ($mac)")
-                        }
-                        devicesMap[mac] = scannedDevice
-                    }
-                }
+            collectScanResults(repository, devicesMap, onError = { scanError = it })
         } catch (e: CancellationException) {
             // Normal cancellation when navigating away from scan screen - not an error
             Log.d("ScanScreen", "Scan cancelled (navigating away)")
@@ -438,294 +405,33 @@ fun ScanScreen(
 
     Scaffold(
         topBar = { 
-            TopAppBar(
-                title = { Text(stringResource(R.string.scan_title)) },
-                actions = {
-                    // One labelled entry point instead of four unlabelled icons.
-                    //
-                    // The bar used to carry glasses-display, logs and language
-                    // as three equal-weight glyphs next to the title. Three
-                    // icons is already a guessing game, and it put diagnostics
-                    // on the same footing as riding controls. Everything now
-                    // lives in Settings, grouped and labelled.
-                    IconButton(onClick = { overridePickerOpen = true }) {
-                        Icon(
-                            imageVector = Icons.Default.Tune,
-                            // Tinted when an override is active, so an
-                            // overridden identification is visible at a glance
-                            // rather than silently changing what the app reads.
-                            tint = if (modelOverride != null) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                LocalContentColor.current
-                            },
-                            contentDescription = stringResource(R.string.model_override_title)
-                        )
-                    }
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = stringResource(R.string.settings_title)
-                        )
-                    }
-                }
+            ScanTopBar(
+                modelOverrideActive = modelOverride != null,
+                onOverride = { overridePickerOpen = true },
+                onSettings = onNavigateToSettings
             )
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            if (showPermissionError) {
-                Text(stringResource(R.string.scan_bluetooth_permission_required), color = MaterialTheme.colorScheme.error)
-            }
-            
-            // Show Bluetooth disabled banner with enable button
-            if (!isBluetoothEnabled && permissionsGranted) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { 
-                            enableBluetoothLauncher.launch(BluetoothHelper.createEnableBluetoothIntent())
-                        }
-                        .padding(8.dp),
-                    color = MaterialTheme.colorScheme.errorContainer
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = stringResource(R.string.bluetooth_disabled),
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Button(
-                            onClick = { 
-                                enableBluetoothLauncher.launch(BluetoothHelper.createEnableBluetoothIntent())
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            )
-                        ) {
-                            Text(stringResource(R.string.bluetooth_enable))
-                        }
-                    }
+            ScanStatus(
+                permissionDenied = showPermissionError,
+                bluetoothDisabled = !isBluetoothEnabled && permissionsGranted,
+                scanError = scanError,
+                connState = connState,
+                isScanning = devicesMap.isEmpty() && scanError == null && permissionsGranted,
+                onEnableBluetooth = { enableBluetoothLauncher.launch(BluetoothHelper.createEnableBluetoothIntent()) },
+                onRetry = {
+                    scanError = null
+                    devicesMap.clear()
+                    scanTrigger++
                 }
-            }
-            
-            // Show scan error with retry option
-            if (scanError != null) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { 
-                            scanError = null
-                            devicesMap.clear()
-                            scanTrigger++ // Trigger scan restart
-                        }
-                        .padding(8.dp),
-                    color = MaterialTheme.colorScheme.errorContainer
-                ) {
-                    Text(
-                        text = stringResource(R.string.scan_failed_tap_retry, scanError ?: ""),
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.padding(12.dp)
-                    )
-                }
-            }
-            
-            if (connState is ConnectionState.Connecting || connState is ConnectionState.Handshaking) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                val statusMsg = if (connState is ConnectionState.Handshaking) {
-                    (connState as ConnectionState.Handshaking).status
-                } else {
-                    stringResource(R.string.connecting)
-                }
-                Text(statusMsg, modifier = Modifier.align(Alignment.CenterHorizontally))
-            }
-            
-            if (connState is ConnectionState.Error) {
-                Text(
-                    text = "${stringResource(R.string.error)}: ${(connState as ConnectionState.Error).message}",
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(8.dp)
-                )
-            }
-            
-            // Show scanning indicator when no devices found yet
-            if (devicesMap.isEmpty() && scanError == null && permissionsGranted) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(stringResource(R.string.scan_scanning))
-                    }
-                }
-            }
+            )
 
             // Use rememberLazyListState for better scroll performance
             val listState = rememberLazyListState()
             
-            // ========== Glasses Connection Section ==========
-            // Gateway state for glasses connection
-            var gatewayEnabled by remember { mutableStateOf(GatewayService.isRunning()) }
-            var glassesConnected by remember { mutableStateOf(false) }
-            
-            // Refresh glasses connection status periodically
-            LaunchedEffect(gatewayEnabled) {
-                while (gatewayEnabled) {
-                    glassesConnected = GatewayService.isGlassesConnected()
-                    delay(2000L)
-                }
-                glassesConnected = false
-            }
-            
-            // Permission launcher for BLE Advertise (for Gateway)
-            val advertisePermissionLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.RequestMultiplePermissions()
-            ) { permissions ->
-                val allGranted = permissions.values.all { it }
-                if (allGranted) {
-                    gatewayEnabled = true
-                    GatewayService.start(context)
-                }
-            }
-            
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = when {
-                        glassesConnected -> MaterialTheme.colorScheme.primaryContainer
-                        gatewayEnabled -> MaterialTheme.colorScheme.secondaryContainer
-                        else -> MaterialTheme.colorScheme.surfaceVariant
-                    }
-                )
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "👓 " + stringResource(R.string.gateway_hud),
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = when {
-                                glassesConnected -> stringResource(R.string.glasses_connected)
-                                gatewayEnabled -> stringResource(R.string.gateway_broadcasting)
-                                else -> stringResource(R.string.glasses_connect_hint)
-                            },
-                            fontSize = MaterialTheme.typography.bodySmall.fontSize,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = gatewayEnabled,
-                        onCheckedChange = { enabled ->
-                            if (enabled) {
-                                // Check if Bluetooth is enabled first
-                                if (!BluetoothHelper.isBluetoothEnabled(context)) {
-                                    showBluetoothDisabledDialog = true
-                                    return@Switch
-                                }
-                                
-                                // Check BLE permissions for Android 12+
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                    val hasConnect = ContextCompat.checkSelfPermission(
-                                        context, Manifest.permission.BLUETOOTH_CONNECT
-                                    ) == PackageManager.PERMISSION_GRANTED
-                                    val hasAdvertise = ContextCompat.checkSelfPermission(
-                                        context, Manifest.permission.BLUETOOTH_ADVERTISE
-                                    ) == PackageManager.PERMISSION_GRANTED
-                                    
-                                    if (!hasConnect || !hasAdvertise) {
-                                        advertisePermissionLauncher.launch(
-                                            arrayOf(
-                                                Manifest.permission.BLUETOOTH_CONNECT,
-                                                Manifest.permission.BLUETOOTH_ADVERTISE
-                                            )
-                                        )
-                                        return@Switch
-                                    }
-                                }
-                                
-                                // Start Gateway
-                                gatewayEnabled = true
-                                GatewayService.start(context)
-                            } else {
-                                gatewayEnabled = false
-                                GatewayService.stop(context)
-                            }
-                        }
-                    )
-                }
-            }
-            
-            // ========== Battery Optimization Warning ==========
-            // Check if battery optimization is enabled (can cause app to be killed)
-            var isBatteryOptimized by remember { 
-                mutableStateOf(!isIgnoringBatteryOptimizations(context)) 
-            }
-            
-            // Launcher for battery optimization settings
-            val batteryOptLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.StartActivityForResult()
-            ) { _ ->
-                // Refresh battery optimization status after returning from settings
-                isBatteryOptimized = !isIgnoringBatteryOptimizations(context)
-            }
-            
-            // Show warning banner if battery optimization is ON and gateway is enabled
-            if (isBatteryOptimized && gatewayEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            requestBatteryOptimizationExemption(context, batteryOptLauncher)
-                        }
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.tertiaryContainer,
-                    shape = MaterialTheme.shapes.small
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.battery_optimization_warning),
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
-                            Text(
-                                text = stringResource(R.string.battery_optimization_message),
-                                fontSize = MaterialTheme.typography.bodySmall.fontSize,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
-                            )
-                        }
-                        Button(
-                            onClick = { 
-                                requestBatteryOptimizationExemption(context, batteryOptLauncher)
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.tertiary
-                            )
-                        ) {
-                            Text(stringResource(R.string.battery_optimization_exempt))
-                        }
-                    }
-                }
-            }
-            
+            GlassesGatewaySection(onBluetoothDisabled = { showBluetoothDisabledDialog = true })
+
             // Divider before device list
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             
@@ -744,69 +450,424 @@ fun ScanScreen(
                     key = { it.address },
                     contentType = { "device" }  // Help Compose reuse item compositions
                 ) { scannedDevice ->
-                    // Use cached properties from ScannedDevice for better performance
-                    val displayName = scannedDevice.name ?: stringResource(R.string.unknown)
-                    val isReg = scannedDevice.isRegistered
-                    val identification = scannedDevice.identification
-                    val isScooter = scannedDevice.looksLikeScooter
-                    val address = scannedDevice.address
-                    val rssi = scannedDevice.rssi
-                    
-                    // Animate background and scale for registered devices
-                    val backgroundColor by animateColorAsState(
-                        targetValue = if (isReg) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                      else MaterialTheme.colorScheme.surface,
-                        animationSpec = tween(durationMillis = 500),
-                        label = "registeredBgColor"
-                    )
-                    val scaleValue by animateFloatAsState(
-                        targetValue = if (isReg) 1.02f else 1f,
-                        animationSpec = tween(durationMillis = 300),
-                        label = "registeredScale"
-                    )
-                    
-                    ListItem(
-                        modifier = Modifier
-                            .scale(scaleValue)
-                            .background(backgroundColor)
-                            .clickable { selectedDevice = scannedDevice },
-                        headlineContent = { 
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (isScooter) {
-                                    Text("🛴 ", style = MaterialTheme.typography.bodyLarge)
-                                }
-                                Text(displayName)
-                                // Model + confidence badge.
-                                //
-                                // The confidence is part of the badge on purpose:
-                                // a name prefix identifies a family, not a
-                                // protocol, so presenting the model alone would
-                                // claim more than the scan can know.
-                                if (isScooter) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    ModelBadge(identification)
-                                }
-                                if (isReg) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        shape = MaterialTheme.shapes.extraSmall
-                                    ) {
-                                        Text(
-                                            stringResource(R.string.registered),
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                    }
-                                }
-                            }
-                        },
-                        supportingContent = { Text("$address (${stringResource(R.string.scan_rssi, rssi)})") }
-                    )
-                    HorizontalDivider()
+                    ScannedDeviceItem(scannedDevice, onSelect = { selectedDevice = it })
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScanTopBar(modelOverrideActive: Boolean, onOverride: () -> Unit, onSettings: () -> Unit) {
+    TopAppBar(
+        title = { Text(stringResource(R.string.scan_title)) },
+        actions = {
+            // One labelled entry point instead of four unlabelled icons.
+            //
+            // The bar used to carry glasses-display, logs and language
+            // as three equal-weight glyphs next to the title. Three
+            // icons is already a guessing game, and it put diagnostics
+            // on the same footing as riding controls. Everything now
+            // lives in Settings, grouped and labelled.
+            IconButton(onClick = onOverride) {
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    // Tinted when an override is active, so an
+                    // overridden identification is visible at a glance
+                    // rather than silently changing what the app reads.
+                    tint = if (modelOverrideActive) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        LocalContentColor.current
+                    },
+                    contentDescription = stringResource(R.string.model_override_title)
+                )
+            }
+            IconButton(onClick = onSettings) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = stringResource(R.string.settings_title)
+                )
+            }
+        }
+    )
+}
+
+@Composable
+private fun GlassesGatewaySection(onBluetoothDisabled: () -> Unit) {
+    val context = LocalContext.current
+    // ========== Glasses Connection Section ==========
+    // Gateway state for glasses connection
+    var gatewayEnabled by remember { mutableStateOf(GatewayService.isRunning()) }
+    var glassesConnected by remember { mutableStateOf(false) }
+
+    // Refresh glasses connection status periodically
+    LaunchedEffect(gatewayEnabled) {
+        while (gatewayEnabled) {
+            glassesConnected = GatewayService.isGlassesConnected()
+            delay(2000L)
+        }
+        glassesConnected = false
+    }
+
+    // Permission launcher for BLE Advertise (for Gateway)
+    val advertisePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        if (allGranted) {
+            gatewayEnabled = true
+            GatewayService.start(context)
+        }
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                glassesConnected -> MaterialTheme.colorScheme.primaryContainer
+                gatewayEnabled -> MaterialTheme.colorScheme.secondaryContainer
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "👓 " + stringResource(R.string.gateway_hud),
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = when {
+                        glassesConnected -> stringResource(R.string.glasses_connected)
+                        gatewayEnabled -> stringResource(R.string.gateway_broadcasting)
+                        else -> stringResource(R.string.glasses_connect_hint)
+                    },
+                    fontSize = MaterialTheme.typography.bodySmall.fontSize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = gatewayEnabled,
+                onCheckedChange = { enabled ->
+                    if (enabled) {
+                        if (!prepareGlassesGateway(context, onBluetoothDisabled, advertisePermissionLauncher)) {
+                            return@Switch
+                        }
+
+                        // Start Gateway
+                        gatewayEnabled = true
+                        GatewayService.start(context)
+                    } else {
+                        gatewayEnabled = false
+                        GatewayService.stop(context)
+                    }
+                }
+            )
+        }
+    }
+
+    // ========== Battery Optimization Warning ==========
+    // Check if battery optimization is enabled (can cause app to be killed)
+    var isBatteryOptimized by remember {
+        mutableStateOf(!isIgnoringBatteryOptimizations(context))
+    }
+
+    // Launcher for battery optimization settings
+    val batteryOptLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // Refresh battery optimization status after returning from settings
+        isBatteryOptimized = !isIgnoringBatteryOptimizations(context)
+    }
+
+    // Show warning banner if battery optimization is ON and gateway is enabled
+    if (isBatteryOptimized && gatewayEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    requestBatteryOptimizationExemption(context, batteryOptLauncher)
+                }
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            color = MaterialTheme.colorScheme.tertiaryContainer,
+            shape = MaterialTheme.shapes.small
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.battery_optimization_warning),
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Text(
+                        text = stringResource(R.string.battery_optimization_message),
+                        fontSize = MaterialTheme.typography.bodySmall.fontSize,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
+                    )
+                }
+                Button(
+                    onClick = {
+                        requestBatteryOptimizationExemption(context, batteryOptLauncher)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.tertiary
+                    )
+                ) {
+                    Text(stringResource(R.string.battery_optimization_exempt))
+                }
+            }
+        }
+    }
+
+
+}
+
+private fun prepareGlassesGateway(
+    context: Context,
+    onBluetoothDisabled: () -> Unit,
+    permissionLauncher: ManagedActivityResultLauncher<Array<String>, Map<String, Boolean>>
+): Boolean {
+    if (!BluetoothHelper.isBluetoothEnabled(context)) {
+        onBluetoothDisabled()
+        return false
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val permissions = arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE)
+        val granted = permissions.all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (!granted) {
+            permissionLauncher.launch(permissions)
+            return false
+        }
+    }
+    return true
+}
+
+@Composable
+private fun ScannedDeviceItem(scannedDevice: ScannedDevice, onSelect: (ScannedDevice) -> Unit) {
+    // Use cached properties from ScannedDevice for better performance
+    val displayName = scannedDevice.name ?: stringResource(R.string.unknown)
+    val isReg = scannedDevice.isRegistered
+    val identification = scannedDevice.identification
+    val isScooter = scannedDevice.looksLikeScooter
+    val address = scannedDevice.address
+    val rssi = scannedDevice.rssi
+
+    // Animate background and scale for registered devices
+    val backgroundColor by animateColorAsState(
+        targetValue = if (isReg) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                      else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(durationMillis = 500),
+        label = "registeredBgColor"
+    )
+    val scaleValue by animateFloatAsState(
+        targetValue = if (isReg) 1.02f else 1f,
+        animationSpec = tween(durationMillis = 300),
+        label = "registeredScale"
+    )
+
+    ListItem(
+        modifier = Modifier
+            .scale(scaleValue)
+            .background(backgroundColor)
+            .clickable { onSelect(scannedDevice) },
+        headlineContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isScooter) {
+                    Text("🛴 ", style = MaterialTheme.typography.bodyLarge)
+                }
+                Text(displayName)
+                // Model + confidence badge.
+                //
+                // The confidence is part of the badge on purpose:
+                // a name prefix identifies a family, not a
+                // protocol, so presenting the model alone would
+                // claim more than the scan can know.
+                if (isScooter) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    ModelBadge(identification)
+                }
+                if (isReg) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = MaterialTheme.shapes.extraSmall
+                    ) {
+                        Text(
+                            stringResource(R.string.registered),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+            }
+        },
+        supportingContent = { Text("$address (${stringResource(R.string.scan_rssi, rssi)})") }
+    )
+    HorizontalDivider()
+}
+
+@Composable
+private fun ColumnScope.ScanStatus(
+    permissionDenied: Boolean,
+    bluetoothDisabled: Boolean,
+    scanError: String?,
+    connState: ConnectionState,
+    isScanning: Boolean,
+    onEnableBluetooth: () -> Unit,
+    onRetry: () -> Unit
+) {
+    if (permissionDenied) {
+        Text(stringResource(R.string.scan_bluetooth_permission_required), color = MaterialTheme.colorScheme.error)
+    }
+
+    // Show Bluetooth disabled banner with enable button
+    if (bluetoothDisabled) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    onEnableBluetooth()
+                }
+                .padding(8.dp),
+            color = MaterialTheme.colorScheme.errorContainer
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = stringResource(R.string.bluetooth_disabled),
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = {
+                        onEnableBluetooth()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text(stringResource(R.string.bluetooth_enable))
+                }
+            }
+        }
+    }
+
+    // Show scan error with retry option
+    if (scanError != null) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    onRetry()
+                }
+                .padding(8.dp),
+            color = MaterialTheme.colorScheme.errorContainer
+        ) {
+            Text(
+                text = stringResource(R.string.scan_failed_tap_retry, scanError),
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.padding(12.dp)
+            )
+        }
+    }
+
+    if (connState is ConnectionState.Connecting || connState is ConnectionState.Handshaking) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        val statusMsg = if (connState is ConnectionState.Handshaking) {
+            connState.status
+        } else {
+            stringResource(R.string.connecting)
+        }
+        Text(statusMsg, modifier = Modifier.align(Alignment.CenterHorizontally))
+    }
+
+    if (connState is ConnectionState.Error) {
+        Text(
+            text = "${stringResource(R.string.error)}: ${connState.message}",
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(8.dp)
+        )
+    }
+
+    // Show scanning indicator when no devices found yet
+    if (isScanning) {
+        Box(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(stringResource(R.string.scan_scanning))
+            }
+        }
+    }
+}
+
+@SuppressLint("MissingPermission")
+private suspend fun collectScanResults(
+    repository: ScooterRepository,
+    devicesMap: MutableMap<String, ScannedDevice>,
+    onError: (String?) -> Unit
+) {
+    repository.scan()
+        .retry(3) { cause ->
+            // Retry on scan failures (common on MIUI first launch)
+            Log.w("ScanScreen", "Scan failed, retrying: ${cause.message}")
+            delay(1000)
+            true
+        }
+        .catch { e ->
+            Log.e("ScanScreen", "Scan error after retries: ${e.message}")
+            onError(e.message)
+        }
+        .collect { res ->
+            updateScannedDevice(repository, devicesMap, res)
+        }
+}
+
+@SuppressLint("MissingPermission")
+private fun updateScannedDevice(
+    repository: ScooterRepository,
+    devicesMap: MutableMap<String, ScannedDevice>,
+    res: ScanResult
+) {
+    val mac = res.device.address
+    val isReg = repository.isRegistered(mac)
+    // Get advertised name from scan record (more reliable)
+    val advertisedName = res.scanRecord?.deviceName ?: res.device.name
+
+    // Only update if device is new or RSSI changed significantly (>5 dBm)
+    // This reduces unnecessary recompositions
+    val existing = devicesMap[mac]
+    if (existing == null ||
+        kotlin.math.abs(existing.rssi - res.rssi) > 5 ||
+        existing.name != advertisedName) {
+        val scannedDevice = ScannedDevice(res, isReg)
+        // Log scooter discovery
+        if (scannedDevice.looksLikeScooter) {
+            Log.i("ScanScreen", "Found scooter: $advertisedName ($mac)")
+        }
+        devicesMap[mac] = scannedDevice
     }
 }
 

@@ -71,8 +71,8 @@ class GatewayCodecTest {
     @Test fun v2PreservesEvidenceFreshnessSourceAndExplicitlyTypedExtras() {
         val stale = full().merge(TelemetrySnapshot(mapOf(FieldId.SOC_PERCENT to r(20.0).copy(state = FieldState.STALE))))
         val frame = GatewayCodec.encodeV2(stale, 1, 2, 77, 100,
-            extras = mapOf(GatewayField.AVG_SPEED_KMH to r(18.0), GatewayField.REMAINING_RANGE_KM to r(25.0)),
-            alerts = mapOf(GatewayAlertKind.BATTERY_LOW to r(1.0)))
+            supplement = GatewayV2Supplement(extras = mapOf(GatewayField.AVG_SPEED_KMH to r(18.0), GatewayField.REMAINING_RANGE_KM to r(25.0)),
+            alerts = mapOf(GatewayAlertKind.BATTERY_LOW to r(1.0))))
         assertEquals(FieldState.STALE, frame[GatewayField.SOC_PERCENT].state)
         assertEquals(20.0, frame[GatewayField.SOC_PERCENT].value)
         assertEquals(Evidence.WIRE_CAPTURED, frame[GatewayField.SOC_PERCENT].evidence)
@@ -102,7 +102,7 @@ class GatewayCodecTest {
         assertEquals(Reading.UNSUPPORTED, frame[GatewayField.SPEED_KMH])
         rejected { GatewayCodec.encodeV2(full(), 1, 2, 1, -1) }
         rejected { GatewayCodec.encodeV2(full(), 1, 2, 1, 100, maxAgeMs = -1) }
-        rejected { GatewayCodec.encodeV2(full(), 1, 2, 1, 100, extras = mapOf(GatewayField.PACK_VOLTAGE to r(1.0))) }
+        rejected { GatewayCodec.encodeV2(full(), 1, 2, 1, 100, supplement = GatewayV2Supplement(extras = mapOf(GatewayField.PACK_VOLTAGE to r(1.0)))) }
     }
 
     @Test fun v2CarriesEveryEvidenceLevelWithoutPromotingIt() {

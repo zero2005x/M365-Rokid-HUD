@@ -320,17 +320,7 @@ class WifiGatewayServer(private val context: Context) {
     /**
      * Send telemetry to all connected clients
      */
-    fun updateTelemetry(
-        speedKmh: Double,
-        scooterBattery: Int,
-        tempC: Double,
-        totalMileageM: Long,
-        avgSpeedKmh: Double,
-        remainingKm: Double,
-        connectionState: Int,
-        tripMeters: Int,
-        tripSeconds: Int
-    ) {
+    fun updateTelemetry(frame: GatewayV1Frame) {
         val now = System.currentTimeMillis()
         val updates = telemetryUpdateCount.incrementAndGet()
 
@@ -343,17 +333,7 @@ class WifiGatewayServer(private val context: Context) {
         }
         if (lastTelemetryUpdateMs == 0L) lastTelemetryUpdateMs = now
         
-        val telemetryData = GatewayV1Frame(
-            speedKmh = speedKmh,
-            batteryPercent = scooterBattery,
-            temperatureC = tempC,
-            totalDistanceMeters = totalMileageM,
-            avgSpeedKmh = avgSpeedKmh,
-            remainingRangeKm = remainingKm,
-            connectionState = connectionState,
-            tripMeters = tripMeters,
-            tripSeconds = tripSeconds,
-        ).toBytes()
+        val telemetryData = frame.toBytes()
 
         // Send to all connected clients
         sendToAll(MSG_TYPE_TELEMETRY, telemetryData)

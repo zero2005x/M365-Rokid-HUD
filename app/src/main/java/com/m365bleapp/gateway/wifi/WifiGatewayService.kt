@@ -11,9 +11,11 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.m365bleapp.R
+import com.m365bleapp.gateway.toGatewayFrame
+import com.m365bleapp.gateway.toGatewayState
 import com.m365bleapp.gateway.DisplayPrefsStore
 import com.m365bleapp.gateway.M365HudGattProfile
-import com.m365bleapp.repository.ConnectionState
+import com.m365bleapp.repository.MotorInfo
 import com.m365bleapp.repository.ScooterRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
@@ -37,6 +39,7 @@ import java.util.Calendar
 class WifiGatewayService : Service() {
     
     companion object {
+        private const val INITIALIZING_MESSAGE = "Initializing WiFi Gateway..."
         private const val TAG = "WifiGatewayService"
         private const val NOTIFICATION_ID = 1002
         private const val CHANNEL_ID = "m365_wifi_gateway_channel"
@@ -93,11 +96,11 @@ class WifiGatewayService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     NOTIFICATION_ID,
-                    buildNotification("Initializing WiFi Gateway..."),
+                    buildNotification(INITIALIZING_MESSAGE),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                 )
             } else {
-                startForeground(NOTIFICATION_ID, buildNotification("Initializing WiFi Gateway..."))
+                startForeground(NOTIFICATION_ID, buildNotification(INITIALIZING_MESSAGE))
             }
         } catch (e: Exception) {
             Log.e(TAG, "startForeground failed; stopping service", e)
@@ -113,7 +116,7 @@ class WifiGatewayService : Service() {
     }
     
     private fun initializeGateway() {
-        Log.i(TAG, "Initializing WiFi Gateway...")
+        Log.i(TAG, INITIALIZING_MESSAGE)
         
         wifiServer = WifiGatewayServer(applicationContext)
         
@@ -190,51 +193,33 @@ class WifiGatewayService : Service() {
         Log.i(TAG, "Starting telemetry observer...")
         
         // Observe motor info and push to WiFi clients
+        observeMotorInfo()
+        startHeartbeat()
+    }
+
+    private fun observeMotorInfo() {
         scope.launch {
-            repository?.motorInfo?.collectLatest { info ->
-                if (info != null) {
-                    val connState = when (repository?.connectionState?.value) {
-                        is ConnectionState.Disconnected -> M365HudGattProfile.STATE_DISCONNECTED
-                        is ConnectionState.Connecting, is ConnectionState.Handshaking -> M365HudGattProfile.STATE_CONNECTING
-                        is ConnectionState.Ready -> M365HudGattProfile.STATE_READY
-                        is ConnectionState.Error -> M365HudGattProfile.STATE_DISCONNECTED
-                        else -> M365HudGattProfile.STATE_DISCONNECTED
-                    }
-                    
-                    wifiServer?.updateTelemetry(
-                        speedKmh = info.speed,
-                        scooterBattery = info.battery,
-                        tempC = info.temp,
-                        totalMileageM = (info.mileage * 1000).toLong(),
-                        avgSpeedKmh = info.avgSpeed,
-                        remainingKm = info.remainingKm,
-                        connectionState = connState,
-                        tripMeters = info.tripMeters,
-                        tripSeconds = info.tripSeconds
-                    )
-                    
-                    val clientCount = wifiServer?.getConnectedDeviceCount() ?: 0
-                    if (clientCount > 0) {
-                        updateNotification("📡 WiFi | 🛴 ${info.speed.toInt()} km/h | 🔋${info.battery}%")
-                    }
-                } else {
-                    // Send disconnected state
-                    wifiServer?.updateTelemetry(
-                        speedKmh = 0.0,
-                        scooterBattery = 0,
-                        tempC = 0.0,
-                        totalMileageM = 0L,
-                        avgSpeedKmh = 0.0,
-                        remainingKm = 0.0,
-                        connectionState = M365HudGattProfile.STATE_DISCONNECTED,
-                        tripMeters = 0,
-                        tripSeconds = 0
-                    )
-                }
-            }
+            repository?.motorInfo?.collectLatest { info -> forwardMotorInfo(info) }
         }
-        
-        // Heartbeat: send time data periodically
+    }
+
+    private fun forwardMotorInfo(info: MotorInfo?) {
+        if (info != null) {
+            val connState = repository?.connectionState?.value.toGatewayState()
+
+            wifiServer?.updateTelemetry(info.toGatewayFrame(connState))
+
+            val clientCount = wifiServer?.getConnectedDeviceCount() ?: 0
+            if (clientCount > 0) {
+                updateNotification("📡 WiFi | 🛴 ${info.speed.toInt()} km/h | 🔋${info.battery}%")
+            }
+        } else {
+            // Send disconnected state
+            wifiServer?.updateTelemetry(null.toGatewayFrame(M365HudGattProfile.STATE_DISCONNECTED))
+        }
+    }
+
+    private fun startHeartbeat() {
         scope.launch {
             while (true) {
                 delay(1000L)

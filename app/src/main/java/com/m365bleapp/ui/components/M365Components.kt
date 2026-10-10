@@ -100,7 +100,7 @@ fun M365SpeedDisplay(
         // Speed digits
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "%.1f".format(currentSpeed),
+                text = com.m365bleapp.ui.formatOneDecimal(currentSpeed.toDouble()),
                 style = MaterialTheme.typography.displayMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface

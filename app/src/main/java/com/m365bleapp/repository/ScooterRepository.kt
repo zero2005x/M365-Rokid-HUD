@@ -919,10 +919,9 @@ class ScooterRepository private constructor(
                 Log.d("ScooterRepo", "Enabling UART RX...")
                 check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { UART_SUBSCRIPTION_FAILED }
                 Log.d("ScooterRepo", "UART RX subscribed")
+                connectionResources.ifCurrent(attempt) { logger.startSession() }
                 installPhoneSession(attemptContext, gatt)
                 connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Ready }
-                // Beep to confirm connection (Optional but nice)
-                beep()
                 
                 // Read initial states (light, etc.) to sync UI with scooter
                 delay(500)  // Wait for connection to stabilize
@@ -1393,7 +1392,7 @@ class ScooterRepository private constructor(
             else -> 0xB0 to 0x20 // Motor info (speed): 32 bytes
         }
 
-        fun pollIntervalMs(): Long = if (lastSpeed > SPEED_THRESHOLD_KMH) {
+        fun pollIntervalMs(): Long = if (kotlin.math.abs(lastSpeed) > SPEED_THRESHOLD_KMH) {
             POLL_INTERVAL_MOVING_MS
         } else {
             POLL_INTERVAL_IDLE_MS
@@ -1527,14 +1526,26 @@ class ScooterRepository private constructor(
                 encrypt = cipher::encrypt,
                 submit = { encrypted -> runBlocking(connection) { submitEncryptedOnce(encrypted, epoch) } },
                 decrypt = { bytes -> connectionResources.useNative(epoch) { native.decryptSafe(it, bytes) } },
-                onReply = { raw, at -> connectionResources.ifCurrent(epoch) { installed.observe(raw, at); parseTelemetry(raw) }; Unit },
-                onPoison = { scope.launch(ioDispatcher + connection) {
-                    val retired = releaseConnection(expectedEpoch = epoch)
-                    if (retired != null) connectionResources.ifCurrent(retired) {
-                        _connectionState.value = ConnectionState.Error("Transaction unconfirmed; reconnect required")
+                onReply = { raw, at -> connectionResources.ifCurrent(epoch) {
+                    installed.observe(raw, at)
+                    parseTelemetry(raw)
+                    if (installed.faultCode?.let { it != 0 } == true) {
+                        _experimentalSettings.value = _experimentalSettings.value.copy(enabled = false)
                     }
                 }; Unit },
-                nowMs = SystemClock::elapsedRealtime)
+                onPoison = { scope.launch(ioDispatcher + connection) {
+                    Log.w("ScooterRepo", "Encrypted session retired: ${installed.transport.retirementReason}")
+                    val retired = releaseConnection(expectedEpoch = epoch)
+                    if (retired != null) connectionResources.ifCurrent(retired) {
+                        _connectionState.value = ConnectionState.Error(getString(R.string.session_unconfirmed))
+                    }
+                }; Unit },
+                nowMs = SystemClock::elapsedRealtime,
+                onDiagnostic = { message ->
+                    logger.logBle("SESSION", "XIAOMI", "UART", "TRANSACTION", byteArrayOf(), message)
+                    if (message.startsWith("SESSION_RETIRED") || message.startsWith("COMMAND")) Log.i("ScooterRepo", message)
+                    else Log.d("ScooterRepo", message)
+                })
             installed = XiaomiPhoneSession(transport, SystemClock::elapsedRealtime)
             phoneSession = installed
             _experimentalSettings.value = ExperimentalSettingsState(available = true, deviceId = connection.deviceId, connectionId = epoch.toString())
@@ -1555,7 +1566,7 @@ class ScooterRepository private constructor(
     fun enableM365Experimental(expectedConnectionId: String?): Boolean = connectionResources.withCurrent { epoch ->
         val session = phoneSession?.takeIf { it.transport.connectionId == epoch.toString() && it.transport.connectionId == expectedConnectionId && it.transport.connected }
             ?: return@withCurrent false
-        session.enableM365Experimental()
+        if (!session.enableM365Experimental()) return@withCurrent false
         _experimentalSettings.value = _experimentalSettings.value.copy(enabled = true)
         true
     }
@@ -1833,6 +1844,9 @@ class ScooterRepository private constructor(
         }
         
         val info = MotorInfoParser.parse(data, _motorInfo.value) ?: return
+        if (info.errorCode != _motorInfo.value?.errorCode) {
+            Log.i("ScooterRepo", "ESC fault code=${info.errorCode}: ${info.errorDescription}")
+        }
         Log.d("ScooterRepo", "Parsed motor info: $info")
         _motorInfo.value = info
         logger.log(info)

@@ -338,4 +338,9 @@
     <string name="experimental_send">Send once</string>
     <string name="experimental_readback_confirmed">Readback matched. Hardware compatibility remains unverified.</string>
     <string name="experimental_unconfirmed">Not confirmed</string>
+    <string name="session_unconfirmed">The vehicle did not confirm a transaction. This connection was stopped; reconnect to continue. See logs for details.</string>
+    <string name="legacy_control_unavailable">Control unavailable in this version</string>
+    <string name="scooter_fault">Vehicle fault %1$d: %2$s</string>
+    <string name="scooter_fault_throttle">Throttle signal abnormal (one long and four short beeps)</string>
+    <string name="experimental_fault_blocked">Stop riding and check the vehicle. Setting writes are disabled while a fault is reported.</string>
 </resources>

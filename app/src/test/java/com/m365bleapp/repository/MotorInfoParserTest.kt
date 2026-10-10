@@ -12,8 +12,8 @@ import org.junit.Test
  *   offset shows up as a wrong value rather than as a coincidence.
  * * the `hex(...)` payloads are **real 32-byte 0xB0 replies captured from a
  *   Xiaomi M365** on 2026-09-20. They are what stops this file from agreeing
- *   with the parser's own assumptions: an earlier revision asserted that speed
- *   was signed, which passed here and put negative speeds on the HUD.
+ *   with the parser's own assumptions about offsets and scales. Reverse-speed
+ *   words below are synthetic boundary cases and still need a field capture.
  */
 class MotorInfoParserTest {
 
@@ -40,7 +40,7 @@ class MotorInfoParserTest {
     private val capturedMoving =
         "0000000000080000330096000000101b06000000660036010000000000000000"
 
-    /** The same real reply with B5 replaced by the ESC's no-estimate sentinel. */
+    /** The same real reply with B5 replaced by a specified raw speed word. */
     private fun withRawSpeed(raw: Int): ByteArray {
         val data = hex(capturedMoving)
         data[10] = raw.toByte()
@@ -75,7 +75,25 @@ class MotorInfoParserTest {
         assertEquals(31.0, moving.temp, 0.00001)
     }
 
-    // ------------------------------------------- speed: unsigned + sentinel
+    @Test fun `motor block reports throttle fault and a later healthy sample clears it`() {
+        val fault = hex(capturedAtRest).also { it[0] = 14 }
+        val info = MotorInfoParser.parse(fault)!!
+        assertEquals(14, info.errorCode)
+        assertEquals("Throttle handle failure", info.errorDescription)
+        val healthy = MotorInfoParser.parse(hex(capturedAtRest), info)!!
+        assertEquals(0, healthy.errorCode)
+        assertEquals("None - all OK", healthy.errorDescription)
+        assertEquals(info.battery, healthy.battery)
+    }
+
+    @Test fun `motor update preserves diagnostics obtained from other registers`() {
+        val existing = MotorInfo(0.0, 50, 20.0, 2.0, batteryTemperatureC = 31.5, packVoltageV = 36.0)
+        val info = MotorInfoParser.parse(hex(capturedAtRest), existing)!!
+        assertEquals(31.5, info.batteryTemperatureC!!, 0.0)
+        assertEquals(36.0, info.packVoltageV!!, 0.0)
+    }
+
+    // --------------------------------------- speed: forward + reverse words
 
     @Test
     fun `speed above 32 km per hour is not negative`() {
@@ -88,13 +106,12 @@ class MotorInfoParserTest {
     }
 
     @Test
-    fun `small negative speeds read as zero rather than 60 plus km per hour`() {
-        // 2026-10-07 capture: 62.883..65.197 km/h unsigned with the odometer
-        // advancing ~2.7 km/h. 0xEA76 (-5.5 km/h) was the same thing seen earlier.
-        for (raw in intArrayOf(0xC000, 0xEA76, 0xF5C3, 0xF900, 0xFEAD)) {
+    fun `reverse speeds retain their sign rather than disappearing or showing 60 plus`() {
+        for ((raw, expected) in listOf(0xC000 to -16.384, 0xEA76 to -5.514,
+            0xF5C3 to -2.621, 0xF900 to -1.792, 0xFEAD to -0.339)) {
             assertEquals(
                 "raw 0x${raw.toString(16)} is a negative speed",
-                0.0,
+                expected,
                 MotorInfoParser.parse(withRawSpeed(raw))!!.speed,
                 0.00001
             )
@@ -102,14 +119,12 @@ class MotorInfoParserTest {
     }
 
     @Test
-    fun `the no-estimate sentinel reads as zero rather than 65 km per hour`() {
-        // Values observed on hardware while the wheel was not turning. Masking the
-        // sign without this filter would turn each of them into ~65 km/h, which is
-        // worse than the ~-0.1 km/h the signed read produced.
+    fun `near zero negative readings remain small and signed`() {
+        // B5 alone cannot distinguish stationary noise from slow reverse movement.
         for (raw in intArrayOf(0xFF3E, 0xFF61, 0xFF9A, 0xFF9D, 0xFFA6, 0xFFF4, 0xFFFF)) {
             assertEquals(
-                "raw 0x${raw.toString(16)} should mean 'no estimate'",
-                0.0,
+                "raw 0x${raw.toString(16)} must not wrap to 65 km per hour",
+                (raw - 65536) / 1000.0,
                 MotorInfoParser.parse(withRawSpeed(raw))!!.speed,
                 0.00001
             )
@@ -117,18 +132,15 @@ class MotorInfoParserTest {
     }
 
     @Test
-    fun `the sentinel cut-off sits exactly at the documented constant`() {
-        // Largest accepted value, then the first rejected one. Pinned so a future
-        // change to the threshold has to be deliberate.
+    fun `forward wrap boundary preserves the core interpretation`() {
         assertEquals(49.151, MotorInfoParser.parse(withRawSpeed(0xBFFF))!!.speed, 0.00001)
-        assertEquals(0.0, MotorInfoParser.parse(withRawSpeed(0xC000))!!.speed, 0.00001)
+        assertEquals(-16.384, MotorInfoParser.parse(withRawSpeed(0xC000))!!.speed, 0.00001)
     }
 
     @Test
-    fun `a sentinel only zeroes the speed, not the rest of the sample`() {
-        // The wheel being unmeasurable says nothing about battery or odometer.
+    fun `reverse speed keeps the rest of the sample intact`() {
         val result = MotorInfoParser.parse(withRawSpeed(0xFFF4))!!
-        assertEquals(0.0, result.speed, 0.00001)
+        assertEquals(-0.012, result.speed, 0.00001)
         assertEquals(51, result.battery)
         assertEquals(400.144, result.mileage, 0.00001)
         assertEquals(31.0, result.temp, 0.00001)

@@ -19,6 +19,7 @@
 # Local release staging: signed AABs and R8 mapping files for Play upload.
 /release/
 /glass-hud/build/
+/pev-protocol-core/build/
 /glass-hud/local.properties
 
 # Kotlin

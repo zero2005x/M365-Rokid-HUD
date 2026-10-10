@@ -299,4 +299,9 @@
     <string name="experimental_send">发送一次</string>
     <string name="experimental_readback_confirmed">回读一致。硬件兼容性仍未验证。</string>
     <string name="experimental_unconfirmed">未确认</string>
+    <string name="session_unconfirmed">车辆未确认通信交易，已停止本次连接；请重新连接。详细原因可查看日志。</string>
+    <string name="legacy_control_unavailable">此版本暂不支持控制</string>
+    <string name="scooter_fault">车辆故障 %1$d：%2$s</string>
+    <string name="scooter_fault_throttle">油门信号异常（1 长 4 短警报）</string>
+    <string name="experimental_fault_blocked">请停止骑行并检查车辆。车辆报告故障期间，设置写入已停用。</string>
 </resources>

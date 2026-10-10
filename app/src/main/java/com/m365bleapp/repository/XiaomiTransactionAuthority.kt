@@ -26,7 +26,8 @@ internal class XiaomiTransactionAuthority(private val transport: XiaomiEncrypted
         val before = transport.submissionSequence
         val result = coordinator.execute(plan, context(plan))
         val confirmed = result.outcome in setOf(CommandOutcome.READBACK_CONFIRMED, CommandOutcome.ACK_CONFIRMED)
-        if (!confirmed && transport.submissionSequence != before) transport.poison()
+        transport.diagnostic("COMMAND ${plan.spec.id}: ${result.outcome} ${result.detail.orEmpty()}")
+        if (!confirmed && transport.submissionSequence != before) transport.poison("Command ${plan.spec.id} ${result.outcome}: ${result.detail.orEmpty()}")
         result
     }
 
@@ -48,7 +49,7 @@ internal class XiaomiTransactionAuthority(private val transport: XiaomiEncrypted
         }
         // There is no request ID. A late reply after an unanswered query must not confirm a
         // subsequent same-register write/readback; reconnect rather than reuse this epoch.
-        transport.poison()
+        transport.poison("Read register=0x${register.toString(16)} length=$length unconfirmed after ${timeoutMs}ms")
         return null
     }
 
@@ -57,7 +58,7 @@ internal class XiaomiTransactionAuthority(private val transport: XiaomiEncrypted
         try {
             return operation()
         } catch (failure: Exception) {
-            transport.poison()
+            transport.poison("Transaction interrupted or failed: ${failure.message}")
             throw failure
         } finally {
             transactions.unlock()

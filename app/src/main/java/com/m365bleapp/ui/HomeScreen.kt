@@ -203,6 +203,8 @@ private fun ConnectedHome(
                 Spacer(modifier = Modifier.height(Dimens.space16))
             }
 
+            ScooterFaultBanner(info)
+
             // --- Hero: speed. A dash, not 0.0, until the first reading arrives —
             // a zero here reads as a real measurement.
             Box(
@@ -211,7 +213,7 @@ private fun ConnectedHome(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = info?.speed?.let { "%.1f".format(it) }
+                        text = info?.speed?.let { formatOneDecimal(it) }
                             ?: stringResource(R.string.value_unknown),
                         fontSize = FontSizes.heroSpeed,
                         fontWeight = FontWeight.Bold,
@@ -407,6 +409,7 @@ private fun LightControlRow(
         } else {
             Switch(
                 checked = lightOn,
+                enabled = false, // Backend deliberately rejects unaudited legacy commands.
                 onCheckedChange = { want ->
                     loading = true
                     scope.launch {
@@ -504,7 +507,7 @@ private fun LockControlRow(
                     style = MaterialTheme.typography.bodyLarge
                 )
                 Text(
-                    text = stringResource(R.string.control_state_unknown),
+                    text = stringResource(R.string.legacy_control_unavailable),
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary
                 )
@@ -516,6 +519,7 @@ private fun LockControlRow(
             val compactPadding = PaddingValues(horizontal = Dimens.space12)
             Row(horizontalArrangement = Arrangement.spacedBy(Dimens.space8)) {
                 OutlinedButton(
+                    enabled = false,
                     onClick = { confirmLock = true },
                     contentPadding = compactPadding,
                     colors = ButtonDefaults.outlinedButtonColors(
@@ -523,6 +527,7 @@ private fun LockControlRow(
                     )
                 ) { Text(stringResource(R.string.control_lock), maxLines = 1, softWrap = false) }
                 Button(
+                    enabled = false,
                     contentPadding = compactPadding,
                     onClick = {
                         loading = true

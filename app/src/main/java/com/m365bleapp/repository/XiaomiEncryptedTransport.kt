@@ -22,6 +22,7 @@ internal class XiaomiEncryptedTransport(
     private val nowMs: () -> Long,
     private val maxReplies: Int = 64,
     private val maxReplyBytes: Int = 8192,
+    private val onDiagnostic: (String) -> Unit = {},
 ) : PevTransport {
     private data class Ingress(val value: Byte, val sequence: Long, val atMs: Long)
     private data class Reply(val notification: TransportNotification, val atMs: Long)
@@ -32,6 +33,8 @@ internal class XiaomiEncryptedTransport(
     private val submissions = AtomicLong()
     private var replyBytes = 0
     @Volatile private var closed = false
+    @Volatile var retirementReason: String? = null
+        private set
     @Volatile var lastReplyAtMs: Long? = null
         private set
 
@@ -46,13 +49,15 @@ internal class XiaomiEncryptedTransport(
 
     override fun writeForConnection(bytes: ByteArray, expectedConnectionId: String): Boolean {
         if (!connected || expectedConnectionId != connectionId || !logicalPdu(bytes)) return false
+        diagnostic("TX logical=${bytes.joinToString("") { "%02X".format(it) }}")
         val encrypted = try { encrypt(bytes.copyOf()) }
-            catch (failure: Exception) { poison(); throw failure }
-        if (encrypted == null || encrypted.isEmpty() || !connected) return false
+            catch (failure: Exception) { poison("UART encryption failed: ${failure.message}"); throw failure }
+        if (encrypted == null || encrypted.isEmpty()) { poison("UART encryption returned no frame"); return false }
+        if (!connected) return false
         submissions.incrementAndGet()
         val accepted = try { submit(encrypted) }
-            catch (failure: Exception) { poison(); throw failure }
-        if (!accepted) { poison(); return false }
+            catch (failure: Exception) { poison("UART submission failed: ${failure.message}"); throw failure }
+        if (!accepted) { poison("UART submission rejected or timed out"); return false }
         return connected
     }
 
@@ -70,7 +75,7 @@ internal class XiaomiEncryptedTransport(
      */
     fun accept(bytes: ByteArray) {
         if (!connected) return
-        if (bytes.size > 4096 || cursor.get() > Long.MAX_VALUE - bytes.size) { poison(); return }
+        if (bytes.size > 4096 || cursor.get() > Long.MAX_VALUE - bytes.size) { poison("UART ingress limit exceeded"); return }
         val at = nowMs()
         val start = cursor.getAndAdd(bytes.size.toLong())
         val frames = synchronized(monitor) {
@@ -86,15 +91,22 @@ internal class XiaomiEncryptedTransport(
         for ((first, frame) in frames) {
             if (!connected) return
             val raw = decryptValid(frame) ?: continue
-            if (!admit(Reply(TransportNotification(first.sequence, connectionId, raw), first.atMs))) { poison(); return }
+            if (!admit(Reply(TransportNotification(first.sequence, connectionId, raw), first.atMs))) { poison("UART reply queue overflow"); return }
             if (closed) return
             onReply(raw.copyOf(), first.atMs)
         }
     }
 
     private fun decryptValid(frame: ByteArray): ByteArray? {
-        val raw = decrypt(frame) ?: return null
-        return raw.takeIf { it.size == (frame[2].toInt() and 0xFF) + 5 && XiaomiReply.parse(it) != null }
+        val raw = decrypt(frame)
+        if (raw == null || raw.isEmpty()) { diagnostic("RX failed native authentication"); return null }
+        val reply = XiaomiReply.parse(raw)
+        if (raw.size != (frame[2].toInt() and 0xFF) + 5 || reply == null) {
+            diagnostic("RX rejected decrypted frame length=${raw.size}")
+            return null
+        }
+        diagnostic("RX dir=0x${reply.direction.toString(16)} type=0x${reply.type.toString(16)} register=0x${reply.register.toString(16)} length=${reply.data.size} data=${reply.data.joinToString("") { "%02X".format(it) }}")
+        return raw
     }
 
     private fun admit(reply: Reply): Boolean = synchronized(monitor) {
@@ -164,10 +176,12 @@ internal class XiaomiEncryptedTransport(
         monitor.notifyAll()
     }
 
-    fun poison() {
+    fun diagnostic(message: String) = onDiagnostic(message)
+
+    fun poison(reason: String = "Transaction unconfirmed") {
         val notify = synchronized(monitor) {
-            if (closed) false else { close(); true }
+            if (closed) false else { retirementReason = reason; close(); true }
         }
-        if (notify) onPoison()
+        if (notify) { diagnostic("SESSION_RETIRED: $reason"); onPoison() }
     }
 }

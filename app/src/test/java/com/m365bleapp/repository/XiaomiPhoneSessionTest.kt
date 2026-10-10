@@ -8,6 +8,28 @@ import org.junit.Test
 import java.util.Collections
 
 class XiaomiPhoneSessionTest {
+    @Test fun `reported throttle fault revokes consent and blocks every setting without radio writes`() {
+        val link = SyntheticXiaomiPhoneLink()
+        link.stationary()
+        assertTrue(link.session.enableM365Experimental())
+        link.session.observe(SyntheticXiaomiPhoneLink.reply(0xB0, ByteArray(32).also { it[0] = 14 }), link.now)
+        assertEquals(14, link.session.faultCode)
+        assertFalse(link.session.enableM365Experimental())
+        for (setting in listOf(XiaomiSetting.Kers(1), XiaomiSetting.Cruise(true),
+            XiaomiSetting.TailLight(true, StatusWordWriteOrder.LITTLE_ENDIAN),
+            XiaomiSetting.Units(true, StatusWordWriteOrder.BIG_ENDIAN))) {
+            assertEquals(CommandOutcome.REJECTED, link.session.execute(setting).outcome)
+        }
+        assertTrue(link.writes.isEmpty())
+        assertTrue(link.transport.connected)
+        link.stationary()
+        assertEquals(CommandOutcome.REJECTED, link.session.execute(XiaomiSetting.Kers(1)).outcome)
+        assertTrue(link.writes.isEmpty())
+        assertTrue(link.session.enableM365Experimental())
+        assertEquals(CommandOutcome.READBACK_CONFIRMED, link.session.execute(XiaomiSetting.Kers(1)).outcome)
+        link.session.close()
+    }
+
     @Test fun `authenticated transport alone does not authorize settings`() {
         val link = SyntheticXiaomiPhoneLink()
         link.stationary()

@@ -19,6 +19,7 @@ import kotlinx.coroutines.CancellationException
 @Composable
 internal fun ExperimentalVehicleSettings(repository: ScooterRepository) {
     val state by repository.experimentalSettings.collectAsState()
+    val info by repository.motorInfo.collectAsState()
     val scope = rememberCoroutineScope()
     var optIn by remember(state.connectionId) { mutableStateOf(false) }
     var order by remember(state.connectionId) { mutableStateOf<StatusWordWriteOrder?>(null) }
@@ -28,10 +29,19 @@ internal fun ExperimentalVehicleSettings(repository: ScooterRepository) {
     val confirmedText = stringResource(R.string.experimental_readback_confirmed)
     val unconfirmedText = stringResource(R.string.experimental_unconfirmed)
 
+    LaunchedEffect(info?.errorCode) {
+        if (info?.errorCode?.let { it != 0 } == true) {
+            optIn = false
+            pending = null
+        }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.experimental_title), style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.experimental_scope), style = MaterialTheme.typography.bodySmall)
+        ScooterFaultBanner(info)
         if (!state.available) Text(stringResource(R.string.experimental_connect_required))
+        else if (info?.errorCode?.let { it != 0 } == true) Text(stringResource(R.string.experimental_fault_blocked))
         else if (!state.enabled) {
             Button(onClick = { optIn = true }) { Text(stringResource(R.string.experimental_enable)) }
         } else {

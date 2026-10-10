@@ -1,14 +1,11 @@
 package com.m365bleapp.repository
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.content.Context
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
 import android.util.Log
-import androidx.core.app.ActivityCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.m365bleapp.R
@@ -706,11 +703,7 @@ class ScooterRepository private constructor(
                 // on Android 12+ without this permission. The @RequiresPermission
                 // annotation is compile-time only, so check it for real and fail
                 // with a clear message instead of an opaque crash.
-                if (ActivityCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.BLUETOOTH_CONNECT
-                    ) != PackageManager.PERMISSION_GRANTED
-                ) {
+                if (!com.m365bleapp.utils.BluetoothHelper.hasConnectPermission(context)) {
                     throw SecurityException(getString(R.string.bluetooth_permission_required))
                 }
 
@@ -787,11 +780,7 @@ class ScooterRepository private constructor(
                 // Permission is already verified at the top of connect(); this
                 // re-check is belt-and-braces for the lint annotation.
                 Log.d("ScooterRepo", "Requesting MTU 512")
-                if (androidx.core.app.ActivityCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.BLUETOOTH_CONNECT
-                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                ) {
+                if (!com.m365bleapp.utils.BluetoothHelper.hasConnectPermission(context)) {
                     Log.w("ScooterRepo", "Missing BLUETOOTH_CONNECT permission")
                 }
                 gatt.requestMtu(512)

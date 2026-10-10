@@ -115,6 +115,19 @@ object BluetoothHelper {
     }
     
     /**
+     * Whether GATT connect/read/write/notify calls are permitted.
+     *
+     * BLUETOOTH_CONNECT only exists from API 31. On API 30 and below the
+     * platform does not know the name, so checkSelfPermission() always reports
+     * DENIED even though the install-time BLUETOOTH grant covers these calls.
+     * Checking it directly there blocks every connection on Android 11 and older.
+     */
+    fun hasConnectPermission(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /**
      * Check if BLE advertise permissions are granted (for Gateway)
      */
     fun hasAdvertisePermissions(context: Context): Boolean {

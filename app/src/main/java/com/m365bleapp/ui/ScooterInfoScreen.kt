@@ -113,6 +113,7 @@ fun ScooterInfoScreen(
                 isEmpty = snapshot.isEmpty
             )
             IdentitySection(snapshot)
+            ScooterFaultBanner(live)
             SpeedSection(live, snapshot, isLive, caps)
             BatterySection(live, snapshot, isLive, caps)
             TripSection(live, snapshot, isLive, caps)
@@ -342,7 +343,7 @@ private fun formatAge(ageMs: Long): String {
 /** Formats a value with its unit, or an em dash when there is nothing to show. */
 @Composable
 private fun formatOrDash(value: Float?, unit: String): String =
-    value?.let { "${"%.1f".format(it)} $unit" } ?: stringResource(R.string.value_unknown)
+    value?.let { "${formatOneDecimal(it.toDouble())} $unit" } ?: stringResource(R.string.value_unknown)
 
 @Composable
 private fun InfoCard(

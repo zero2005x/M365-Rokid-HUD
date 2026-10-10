@@ -368,7 +368,7 @@ private fun RowScope.HudSpeedColumn(
     ) {
         if (displayPrefs.shows(DisplayField.SPEED)) {
             Text(
-                text = "%.1f".format(telemetry.speedKmh),
+                text = formatSpeedKmh(telemetry.speedKmh),
                 color = palette.primaryColor,
                 fontSize = (48f * scale).sp,
                 fontWeight = FontWeight.Bold,

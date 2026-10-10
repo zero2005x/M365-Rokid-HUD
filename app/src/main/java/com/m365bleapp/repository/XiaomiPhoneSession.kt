@@ -20,20 +20,27 @@ internal class XiaomiPhoneSession(val transport: XiaomiEncryptedTransport, priva
     private val consent = WriteSession(transport.deviceId, transport.connectionId, authenticated = true)
     @Volatile private var identity = DeviceIdentity(family = Family.XIAOMI_SCOOTER)
     @Volatile private var telemetry = TelemetrySnapshot()
+    @Volatile var faultCode: Int? = null
+        private set
 
-    fun enableM365Experimental() {
+    fun enableM365Experimental(): Boolean {
+        if (faultCode?.let { it != 0 } == true) return false
         identity = DeviceIdentity(Family.XIAOMI_SCOOTER, "M365", source = IdentitySource.USER_SELECTED)
         consent.enableExperimental(identity)
+        return true
     }
 
     fun observe(raw: ByteArray, atMs: Long) {
         val reply = XiaomiReply.parse(raw) ?: return
         if (reply.direction == 0x23 && reply.type == XiaomiPdu.CMD_READ && reply.register == XiaomiPdu.REG_MOTOR_INFO && reply.data.size == 32) {
             telemetry = XiaomiMotorInfoDecoder.decode(reply.data, atMs)
+            faultCode = (reply.data[0].toInt() and 0xFF) or ((reply.data[1].toInt() and 0xFF) shl 8)
+            if (faultCode != 0) consent.revokeExperimental()
         }
     }
 
-    fun execute(setting: XiaomiSetting): CommandResult = authority.execute({ read ->
+    fun execute(setting: XiaomiSetting): CommandResult = authority.execute(build@{ read ->
+        if (faultCode?.let { it != 0 } == true) return@build null
         when (setting) {
             is XiaomiSetting.Kers -> plan(XiaomiSettings.kersPlan(setting.level))
             is XiaomiSetting.Cruise -> plan(XiaomiSettings.cruisePlan(setting.on))

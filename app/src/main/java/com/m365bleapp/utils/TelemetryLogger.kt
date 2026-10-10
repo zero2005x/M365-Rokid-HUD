@@ -129,7 +129,7 @@ class TelemetryLogger(private val context: Context) {
             // Telemetry log file
             val telemetryFile = File(dir, "m365_telemetry_${stamp}.csv")
             FileWriter(telemetryFile, true).use { writer ->
-                writer.append("Timestamp,Model,ModelId,Confidence,Speed,Battery,Temperature,AvgSpeed,TripSeconds,TripMeters,RemainingKm,Mileage\n")
+                writer.append("Timestamp,Model,ModelId,Confidence,Speed,Battery,Temperature,AvgSpeed,TripSeconds,TripMeters,RemainingKm,Mileage,ErrorCode\n")
             }
 
             // BLE communication log file
@@ -164,7 +164,7 @@ class TelemetryLogger(private val context: Context) {
 
         val line = "${timestamp()},${csvEscape(model)},${csvEscape(modelId)},${csvEscape(confidence)}," +
                 "${info.speed},${info.battery},${info.temp}," +
-                "${info.avgSpeed},${info.tripSeconds},${info.tripMeters},${info.remainingKm},${info.mileage}\n"
+                "${info.avgSpeed},${info.tripSeconds},${info.tripMeters},${info.remainingKm},${info.mileage},${info.errorCode ?: ""}\n"
 
         synchronized(writeLock) {
             val file = currentSessionFile ?: return

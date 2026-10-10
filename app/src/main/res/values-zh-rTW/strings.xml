@@ -301,4 +301,9 @@
     <string name="experimental_send">傳送一次</string>
     <string name="experimental_readback_confirmed">回讀相符。硬體相容性仍未驗證。</string>
     <string name="experimental_unconfirmed">未確認</string>
+    <string name="session_unconfirmed">車輛未確認通訊交易，已停止本次連線；請重新連線。詳細原因可查看日誌。</string>
+    <string name="legacy_control_unavailable">此版本尚不支援控制</string>
+    <string name="scooter_fault">車輛故障 %1$d：%2$s</string>
+    <string name="scooter_fault_throttle">油門訊號異常（1 長 4 短警報）</string>
+    <string name="experimental_fault_blocked">請停止騎乘並檢查車輛。車輛回報故障期間，設定寫入已停用。</string>
 </resources>

@@ -9,6 +9,13 @@ import org.junit.Test
 
 class GatewayTelemetryTest {
     @Test
+    fun reverseSpeedSurvivesPhoneToGlassesWireRoundTrip() {
+        val info = MotorInfo(speed = -2.5, battery = 50, temp = 20.0, mileage = 1.0)
+        val frame = info.toGatewayFrame(M365HudGattProfile.STATE_READY)
+        assertEquals(-2.5, GatewayV1Frame.fromBytes(frame.toBytes())!!.speedKmh, 0.01)
+    }
+
+    @Test
     fun motorInfoKeepsLegacyUnitsAndWireFields() {
         val info = MotorInfo(
             speed = 23.45, battery = 76, temp = 31.2, mileage = 123.456,

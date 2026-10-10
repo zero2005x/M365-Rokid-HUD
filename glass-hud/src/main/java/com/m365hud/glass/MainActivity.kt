@@ -42,6 +42,10 @@ class MainActivity : ComponentActivity() {
     // Service connection
     private var bleService: BleConnectionService? = null
     private var serviceBound = false
+    private var bindRequested = false
+
+    /** Set once the BLE permissions are held; onResume then (re)starts the service. */
+    private var blePermissionsGranted = false
     
     // The lifecycle collector switches sources when Android rebinds the service.
     private val observedClient = MutableStateFlow<UnifiedConnectionManager?>(null)
@@ -190,10 +194,22 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         observedClient.value = null
         // Unbind from service but don't stop it - let it run in background
-        if (serviceBound) {
+        if (bindRequested) {
             unbindService(serviceConnection)
+            bindRequested = false
             serviceBound = false
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Launching while the glasses display is asleep makes the activity
+        // TOP_SLEEPING, and the platform then refuses startForegroundService.
+        // The bind below still creates the service, but without a start
+        // onStartCommand never runs, so the connection manager never scans and
+        // the HUD waits forever. Starting again here, once the display is on,
+        // recovers; onStartCommand is idempotent for an already-running service.
+        if (blePermissionsGranted) startBleService()
     }
     
     private fun checkPermissionsAndStart() {
@@ -249,18 +265,27 @@ class MainActivity : ComponentActivity() {
     
     private fun startBleService() {
         Log.i(TAG, "Starting BLE connection service")
-        
+        blePermissionsGranted = true
+
         val serviceIntent = Intent(this, BleConnectionService::class.java)
-        
+
         // Start as foreground service
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        } catch (e: IllegalStateException) {
+            // ForegroundServiceStartNotAllowedException (API 31+) is an
+            // IllegalStateException; onResume retries once the display is on.
+            Log.w(TAG, "Service start refused while not in foreground; retrying on resume", e)
         }
-        
+
         // Bind to service to get updates
-        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+        if (!bindRequested) {
+            bindRequested = bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
     }
     
     /** Registered once from onCreate; lifecycle stop cancels collection, start resumes it. */

@@ -142,6 +142,7 @@
     <string name="state_unknown_error">未知错误</string>
     <string name="connection_lost">与滑板车的连接已断开，请重新连接。</string>
     <string name="connection_lost_title">连接中断</string>
+    <string name="state_reconnecting">连接中断，自动重新连接中（%1$d/%2$d）…</string>
     <string name="reconnect">重新连接</string>
     
     <!-- Errors -->

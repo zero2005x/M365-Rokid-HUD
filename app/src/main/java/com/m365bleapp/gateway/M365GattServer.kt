@@ -4,13 +4,12 @@ import android.Manifest
 import android.bluetooth.*
 import android.bluetooth.le.*
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import androidx.annotation.RequiresPermission
-import androidx.core.app.ActivityCompat
+import com.m365bleapp.utils.BluetoothHelper
 import io.github.zero2005x.pev.core.gateway.GatewayV1Frame
 import io.github.zero2005x.pev.core.gateway.GatewayCommandGuard
 import java.nio.ByteBuffer
@@ -144,11 +143,7 @@ class M365GattServer(
         ) {
             if (descriptor.uuid != M365HudGattProfile.CCCD_UUID) return
 
-            val hasPermission = ActivityCompat.checkSelfPermission(
-                context, Manifest.permission.BLUETOOTH_CONNECT
-            ) == PackageManager.PERMISSION_GRANTED
-
-            if (!hasPermission) {
+            if (!BluetoothHelper.hasConnectPermission(context)) {
                 // Dropping the reply silently makes the central time out. There
                 // is nothing else we can do here without the permission, so at
                 // least make the failure visible in the log.
@@ -209,10 +204,7 @@ class M365GattServer(
             offset: Int,
             characteristic: BluetoothGattCharacteristic
         ) {
-            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) 
-                != PackageManager.PERMISSION_GRANTED) {
-                return
-            }
+            if (!BluetoothHelper.hasConnectPermission(context)) return
             
             when (characteristic.uuid) {
                 M365HudGattProfile.TELEMETRY_CHAR_UUID -> {
@@ -247,11 +239,8 @@ class M365GattServer(
             offset: Int,
             value: ByteArray
         ) {
-            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) 
-                != PackageManager.PERMISSION_GRANTED) {
-                return
-            }
-            
+            if (!BluetoothHelper.hasConnectPermission(context)) return
+
             when (characteristic.uuid) {
                 M365HudGattProfile.GLASSES_BATTERY_CHAR_UUID -> {
                     val allowed = !preparedWrite && offset == 0 &&

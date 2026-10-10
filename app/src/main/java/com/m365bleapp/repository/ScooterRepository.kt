@@ -1,14 +1,11 @@
 package com.m365bleapp.repository
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.content.Context
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
 import android.util.Log
-import androidx.core.app.ActivityCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.m365bleapp.R
@@ -26,6 +23,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import java.util.UUID
@@ -183,6 +181,18 @@ class ScooterRepository private constructor(
         const val PLAINTEXT_FAILURES_BEFORE_RECONNECT = 5
 
         /**
+         * Waits before each automatic reconnect after an established link drops.
+         *
+         * A rider cannot tap "reconnect" while riding, and a single BLE
+         * supervision timeout (GATT status 8) is common at the edge of range.
+         * Six tries span roughly a minute; after that the error is shown.
+         */
+        private val AUTO_RECONNECT_BACKOFF_MS = longArrayOf(1_000, 2_000, 4_000, 8_000, 15_000, 30_000)
+
+        /** Upper bound for one reconnect attempt to reach Ready or Error. */
+        private const val AUTO_RECONNECT_ATTEMPT_TIMEOUT_MS = 45_000L
+
+        /**
          * Handshake frames to send before declaring NinebotCrypto pairing failed.
          *
          * Each stage is retried at its own interval, so this bounds the whole
@@ -205,6 +215,7 @@ class ScooterRepository private constructor(
     
     // Helper function to get localized strings
     private fun getString(resId: Int): String = context.getString(resId)
+    private fun getString(resId: Int, vararg args: Any): String = context.getString(resId, *args)
 
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -251,6 +262,15 @@ class ScooterRepository private constructor(
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState = _connectionState.asStateFlow()
 
+    /**
+     * True while an established link is being restored automatically.
+     *
+     * The home page keeps the dashboard up during this window instead of falling
+     * back to the scan list, where a tap would cancel the retry in progress.
+     */
+    private val _autoReconnecting = MutableStateFlow(false)
+    val autoReconnecting = _autoReconnecting.asStateFlow()
+
     private val _motorInfo = MutableStateFlow<MotorInfo?>(null)
     val motorInfo = _motorInfo.asStateFlow()
     
@@ -270,6 +290,7 @@ class ScooterRepository private constructor(
     private val uartWriteLane = ConnectionWriteLane(connectionResources)
     private var plaintextJob: Job? = null
     private var connectionJob: Job? = null
+    @Volatile private var autoReconnectJob: Job? = null
 
     private suspend fun capturedConnection(): ConnectionEpoch =
         requireNotNull(currentCoroutineContext()[ConnectionEpoch]) { "missing connection binding" }
@@ -657,16 +678,22 @@ class ScooterRepository private constructor(
         }
     }
 
+    fun connect(mac: String, register: Boolean = false) {
+        // A rider-chosen connection supersedes any pending automatic retry.
+        cancelAutoReconnect()
+        startConnection(mac, register)
+    }
+
     // NOSONAR kotlin:S3776 — this is a single sequential BLE connect procedure:
     // permission gate, GATT connect, MTU, then one of three mutually exclusive
     // dialect branches (plaintext / NinebotCrypto / Xiaomi auth), each with its
     // own early exit. Splitting it across the return@launch boundaries would hide
     // the strict ordering the handshake depends on. Behaviour is covered by the
     // protocol unit tests; any restructure must be verified on real hardware.
-    fun connect(mac: String, register: Boolean = false) { // NOSONAR
+    private fun startConnection(mac: String, register: Boolean) { // NOSONAR
         // A real session must never inherit synthetic samples, so the demo is
         // stopped before anything else happens.
-        disconnect()
+        stopConnection()
         val attempt = connectionResources.epoch
         // Normalize MAC address to uppercase to ensure consistent token lookup
         val normalizedMac = mac.uppercase()
@@ -706,11 +733,7 @@ class ScooterRepository private constructor(
                 // on Android 12+ without this permission. The @RequiresPermission
                 // annotation is compile-time only, so check it for real and fail
                 // with a clear message instead of an opaque crash.
-                if (ActivityCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.BLUETOOTH_CONNECT
-                    ) != PackageManager.PERMISSION_GRANTED
-                ) {
+                if (!com.m365bleapp.utils.BluetoothHelper.hasConnectPermission(context)) {
                     throw SecurityException(getString(R.string.bluetooth_permission_required))
                 }
 
@@ -787,11 +810,7 @@ class ScooterRepository private constructor(
                 // Permission is already verified at the top of connect(); this
                 // re-check is belt-and-braces for the lint annotation.
                 Log.d("ScooterRepo", "Requesting MTU 512")
-                if (androidx.core.app.ActivityCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.BLUETOOTH_CONNECT
-                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                ) {
+                if (!com.m365bleapp.utils.BluetoothHelper.hasConnectPermission(context)) {
                     Log.w("ScooterRepo", "Missing BLUETOOTH_CONNECT permission")
                 }
                 gatt.requestMtu(512)
@@ -1309,7 +1328,7 @@ class ScooterRepository private constructor(
                         // counts timeouts and relies on the GATT callback alone.
                         val retired = releaseConnection(expectedEpoch = expectedEpoch)
                         if (retired != null) connectionResources.ifCurrent(retired) {
-                            _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+                            reportConnectionLost()
                         }
                         return@launch
                     }
@@ -1423,7 +1442,7 @@ class ScooterRepository private constructor(
     private fun retireFailedTelemetryConnection(expectedEpoch: Long) {
         val retired = releaseConnection(expectedEpoch = expectedEpoch)
         if (retired != null) connectionResources.ifCurrent(retired) {
-            _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+            reportConnectionLost()
         }
     }
 
@@ -1499,10 +1518,13 @@ class ScooterRepository private constructor(
         val epoch = connection.value
         connectionResources.ifCurrent(epoch) {
             lateinit var installed: XiaomiPhoneSession
+            val cipher = XiaomiSessionCipher(nativeEncrypt = { bytes, counter ->
+                connectionResources.useNative(epoch) { native.encryptSafe(it, bytes, counter) }
+            })
             val transport = XiaomiEncryptedTransport(connection.deviceId, epoch.toString(),
                 live = { connectionResources.isCurrent(epoch) && connectionResources.handle === gatt && connectionResources.hasNative },
                 currentMtu = { bleManager.negotiatedMtu },
-                encrypt = { bytes -> connectionResources.useNative(epoch) { native.encryptSafe(it, bytes, 0L) } },
+                encrypt = cipher::encrypt,
                 submit = { encrypted -> runBlocking(connection) { submitEncryptedOnce(encrypted, epoch) } },
                 decrypt = { bytes -> connectionResources.useNative(epoch) { native.decryptSafe(it, bytes) } },
                 onReply = { raw, at -> connectionResources.ifCurrent(epoch) { installed.observe(raw, at); parseTelemetry(raw) }; Unit },
@@ -1946,16 +1968,82 @@ class ScooterRepository private constructor(
                 activeConnection = null
                 sensitiveHandshake = false
                 logger.stopSession()
-                _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
                 _motorInfo.value = null
+                reportConnectionLost()
             }
         }
     }
 
     fun disconnect() {
+        cancelAutoReconnect()
+        stopConnection()
+    }
+
+    private fun stopConnection() {
         stopDemo()
         val retired = releaseConnection() ?: return
         connectionResources.ifCurrent(retired) { _connectionState.value = ConnectionState.Disconnected }
+    }
+
+    private fun cancelAutoReconnect() {
+        autoReconnectJob?.cancel()
+        autoReconnectJob = null
+        _autoReconnecting.value = false
+    }
+
+    /**
+     * Reports a lost link, reconnecting automatically when it had been Ready.
+     *
+     * Only an established session is retried: a drop during the handshake is
+     * more likely a wrong key or a scooter that refuses this phone, and retrying
+     * that in a loop would hide the real error. Must run where the lost epoch is
+     * still current, so the Ready check reads the state of the link that died.
+     */
+    private fun reportConnectionLost() {
+        val mac = lastConnectedMac
+        val wasReady = _connectionState.value is ConnectionState.Ready
+        if (!wasReady || mac == null) {
+            _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+            return
+        }
+        Log.w("ScooterRepo", "Established link lost; starting automatic reconnect to $mac")
+        _autoReconnecting.value = true
+        _connectionState.value = ConnectionState.Handshaking(
+            getString(R.string.state_reconnecting, 1, AUTO_RECONNECT_BACKOFF_MS.size)
+        )
+        autoReconnectJob?.cancel()
+        autoReconnectJob = scope.launch(Dispatchers.Main) { autoReconnect(mac) }
+    }
+
+    private suspend fun autoReconnect(mac: String) {
+        val attempts = AUTO_RECONNECT_BACKOFF_MS.size
+        for ((index, backoff) in AUTO_RECONNECT_BACKOFF_MS.withIndex()) {
+            val status = getString(R.string.state_reconnecting, index + 1, attempts)
+            _connectionState.value = ConnectionState.Handshaking(status)
+            delay(backoff)
+            Log.i("ScooterRepo", "Auto-reconnect attempt ${index + 1}/$attempts to $mac")
+            startConnection(mac, register = false)
+            // startConnection publishes its own states asynchronously; overwrite
+            // any stale Error first so the wait below sees only this attempt.
+            _connectionState.value = ConnectionState.Handshaking(status)
+            val outcome = withTimeoutOrNull(AUTO_RECONNECT_ATTEMPT_TIMEOUT_MS) {
+                connectionState.first { it is ConnectionState.Ready || it is ConnectionState.Error }
+            }
+            if (outcome is ConnectionState.Ready) {
+                Log.i("ScooterRepo", "Auto-reconnect succeeded on attempt ${index + 1}")
+                autoReconnectJob = null
+                _autoReconnecting.value = false
+                return
+            }
+            Log.w("ScooterRepo", "Auto-reconnect attempt ${index + 1} failed: $outcome")
+            // A dropped Ready link would have launched a fresh supervisor that
+            // cancels this one; reaching here means this attempt never got Ready.
+            stopConnection()
+        }
+        Log.w("ScooterRepo", "Auto-reconnect gave up after $attempts attempts")
+        _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+        autoReconnectJob = null
+        _autoReconnecting.value = false
     }
 
     fun getLogs(): List<java.io.File> = logger.getLogFiles()

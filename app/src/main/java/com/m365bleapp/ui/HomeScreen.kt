@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import androidx.compose.animation.Crossfade
 import android.content.Context
 import android.os.BatteryManager
+import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FlashlightOff
@@ -97,10 +98,13 @@ fun HomeScreen(
     onOpenScooterInfo: () -> Unit
 ) {
     val connState by repository.connectionState.collectAsState()
+    val reconnecting by repository.autoReconnecting.collectAsState()
 
     // Only treat a fully ready link as connected. Showing telemetry during
-    // Handshaking would display zeros as if they were real readings.
-    val isConnected = connState is ConnectionState.Ready
+    // Handshaking would display zeros as if they were real readings. An
+    // automatic reconnect keeps the dashboard (telemetry is cleared, so it
+    // shows dashes): the scan list invited a tap that cancelled the retry.
+    val isConnected = connState is ConnectionState.Ready || reconnecting
 
     Crossfade(
         targetState = isConnected,
@@ -110,6 +114,8 @@ fun HomeScreen(
         if (connected) {
             ConnectedHome(
                 repository = repository,
+                reconnectStatus = (connState as? ConnectionState.Handshaking)?.status
+                    .takeIf { reconnecting },
                 onOpenSettings = onOpenSettings,
                 onOpenScooterInfo = onOpenScooterInfo
             )
@@ -136,9 +142,12 @@ fun HomeScreen(
 @Composable
 private fun ConnectedHome(
     repository: ScooterRepository,
+    /** Non-null while an automatic reconnect runs; the text is its progress. */
+    reconnectStatus: String?,
     onOpenSettings: () -> Unit,
     onOpenScooterInfo: () -> Unit
 ) {
+    val reconnecting = reconnectStatus != null
     val motorInfo by repository.motorInfo.collectAsState()
     val info = motorInfo
 
@@ -175,9 +184,9 @@ private fun ConnectedHome(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = stringResource(R.string.connected),
+                    text = stringResource(if (reconnecting) R.string.connecting else R.string.connected),
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if (reconnecting) TextSecondary else MaterialTheme.colorScheme.primary
                 )
                 IconButton(onClick = onOpenSettings) {
                     Icon(
@@ -188,6 +197,11 @@ private fun ConnectedHome(
             }
 
             Spacer(modifier = Modifier.height(Dimens.space16))
+
+            if (reconnectStatus != null) {
+                ReconnectingBanner(reconnectStatus)
+                Spacer(modifier = Modifier.height(Dimens.space16))
+            }
 
             // --- Hero: speed. A dash, not 0.0, until the first reading arrives —
             // a zero here reads as a real measurement.
@@ -239,7 +253,8 @@ private fun ConnectedHome(
 
             // --- Everyday controls. Each capability-gated: a control for a
             // register this model does not have would write to the wrong address.
-            if (capabilities.tailLight) {
+            // Scooter writes are hidden while reconnecting: there is no link.
+            if (capabilities.tailLight && !reconnecting) {
                 LightControlRow(repository = repository, snackbarHostState = snackbarHostState)
                 Spacer(modifier = Modifier.height(Dimens.space8))
             }
@@ -251,7 +266,7 @@ private fun ConnectedHome(
             )
             Spacer(modifier = Modifier.height(Dimens.space8))
 
-            if (capabilities.motorLock) {
+            if (capabilities.motorLock && !reconnecting) {
                 LockControlRow(repository = repository, snackbarHostState = snackbarHostState)
                 Spacer(modifier = Modifier.height(Dimens.space8))
             }
@@ -270,6 +285,29 @@ private fun ConnectedHome(
 
             Spacer(modifier = Modifier.height(Dimens.space24))
         }
+    }
+}
+
+@Composable
+private fun ReconnectingBanner(status: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.tertiaryContainer, RoundedCornerShape(Dimens.space12))
+            .padding(Dimens.space12),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(20.dp),
+            strokeWidth = 2.dp,
+            color = MaterialTheme.colorScheme.onTertiaryContainer
+        )
+        Spacer(modifier = Modifier.width(Dimens.space12))
+        Text(
+            text = status,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onTertiaryContainer
+        )
     }
 }
 

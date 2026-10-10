@@ -40,34 +40,35 @@ internal fun ExperimentalVehicleSettings(repository: ScooterRepository) {
         Text(stringResource(R.string.experimental_title), style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.experimental_scope), style = MaterialTheme.typography.bodySmall)
         ScooterFaultBanner(info)
-        if (!state.available) Text(stringResource(R.string.experimental_connect_required))
-        else if (info?.errorCode?.let { it != 0 } == true) Text(stringResource(R.string.experimental_fault_blocked))
-        else if (!state.enabled) {
-            Button(onClick = { optIn = true }) { Text(stringResource(R.string.experimental_enable)) }
-        } else {
-            Text(stringResource(R.string.experimental_device, state.deviceId.orEmpty()))
-            Text(stringResource(R.string.experimental_order_note), style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = order == StatusWordWriteOrder.BIG_ENDIAN, onClick = { order = StatusWordWriteOrder.BIG_ENDIAN }, label = { Text("BE") })
-                FilterChip(selected = order == StatusWordWriteOrder.LITTLE_ENDIAN, onClick = { order = StatusWordWriteOrder.LITTLE_ENDIAN }, label = { Text("LE") })
+        when {
+            !state.available -> Text(stringResource(R.string.experimental_connect_required))
+            info?.errorCode?.let { it != 0 } == true -> Text(stringResource(R.string.experimental_fault_blocked))
+            !state.enabled -> Button(onClick = { optIn = true }) { Text(stringResource(R.string.experimental_enable)) }
+            else -> {
+                Text(stringResource(R.string.experimental_device, state.deviceId.orEmpty()))
+                Text(stringResource(R.string.experimental_order_note), style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = order == StatusWordWriteOrder.BIG_ENDIAN, onClick = { order = StatusWordWriteOrder.BIG_ENDIAN }, label = { Text("BE") })
+                    FilterChip(selected = order == StatusWordWriteOrder.LITTLE_ENDIAN, onClick = { order = StatusWordWriteOrder.LITTLE_ENDIAN }, label = { Text("LE") })
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(enabled = !busy && order != null, onClick = { order?.let { pending = XiaomiSetting.TailLight(true, it) } }) { Text(stringResource(R.string.experimental_light_on)) }
+                    OutlinedButton(enabled = !busy && order != null, onClick = { order?.let { pending = XiaomiSetting.TailLight(false, it) } }) { Text(stringResource(R.string.experimental_light_off)) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(enabled = !busy && order != null, onClick = { order?.let { pending = XiaomiSetting.Units(false, it) } }) { Text("km/h") }
+                    OutlinedButton(enabled = !busy && order != null, onClick = { order?.let { pending = XiaomiSetting.Units(true, it) } }) { Text("mph") }
+                }
+                Text(stringResource(R.string.experimental_motion_note), style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (level in 0..2) OutlinedButton(enabled = !busy, onClick = { pending = XiaomiSetting.Kers(level) }) { Text(stringResource(R.string.experimental_kers, level)) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(enabled = !busy, onClick = { pending = XiaomiSetting.Cruise(true) }) { Text(stringResource(R.string.experimental_cruise_on)) }
+                    OutlinedButton(enabled = !busy, onClick = { pending = XiaomiSetting.Cruise(false) }) { Text(stringResource(R.string.experimental_cruise_off)) }
+                }
+                TextButton(onClick = { repository.disconnect() }) { Text(stringResource(R.string.experimental_disable)) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(enabled = !busy && order != null, onClick = { order?.let { pending = XiaomiSetting.TailLight(true, it) } }) { Text(stringResource(R.string.experimental_light_on)) }
-                OutlinedButton(enabled = !busy && order != null, onClick = { order?.let { pending = XiaomiSetting.TailLight(false, it) } }) { Text(stringResource(R.string.experimental_light_off)) }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(enabled = !busy && order != null, onClick = { order?.let { pending = XiaomiSetting.Units(false, it) } }) { Text("km/h") }
-                OutlinedButton(enabled = !busy && order != null, onClick = { order?.let { pending = XiaomiSetting.Units(true, it) } }) { Text("mph") }
-            }
-            Text(stringResource(R.string.experimental_motion_note), style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                for (level in 0..2) OutlinedButton(enabled = !busy, onClick = { pending = XiaomiSetting.Kers(level) }) { Text(stringResource(R.string.experimental_kers, level)) }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(enabled = !busy, onClick = { pending = XiaomiSetting.Cruise(true) }) { Text(stringResource(R.string.experimental_cruise_on)) }
-                OutlinedButton(enabled = !busy, onClick = { pending = XiaomiSetting.Cruise(false) }) { Text(stringResource(R.string.experimental_cruise_off)) }
-            }
-            TextButton(onClick = { repository.disconnect() }) { Text(stringResource(R.string.experimental_disable)) }
         }
         if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         result?.let { Text(it, style = MaterialTheme.typography.bodySmall) }

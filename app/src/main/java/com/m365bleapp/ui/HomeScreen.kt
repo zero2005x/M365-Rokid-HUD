@@ -98,13 +98,13 @@ fun HomeScreen(
     onOpenScooterInfo: () -> Unit
 ) {
     val connState by repository.connectionState.collectAsState()
-    val reconnecting by repository.autoReconnecting.collectAsState()
+    val reconnectStatus by repository.autoReconnectStatus.collectAsState()
 
     // Only treat a fully ready link as connected. Showing telemetry during
     // Handshaking would display zeros as if they were real readings. An
     // automatic reconnect keeps the dashboard (telemetry is cleared, so it
     // shows dashes): the scan list invited a tap that cancelled the retry.
-    val isConnected = connState is ConnectionState.Ready || reconnecting
+    val isConnected = connState is ConnectionState.Ready || reconnectStatus != null
 
     Crossfade(
         targetState = isConnected,
@@ -114,8 +114,7 @@ fun HomeScreen(
         if (connected) {
             ConnectedHome(
                 repository = repository,
-                reconnectStatus = (connState as? ConnectionState.Handshaking)?.status
-                    .takeIf { reconnecting },
+                reconnectStatus = reconnectStatus,
                 onOpenSettings = onOpenSettings,
                 onOpenScooterInfo = onOpenScooterInfo
             )

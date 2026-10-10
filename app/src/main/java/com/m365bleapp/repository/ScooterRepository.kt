@@ -263,13 +263,16 @@ class ScooterRepository private constructor(
     val connectionState = _connectionState.asStateFlow()
 
     /**
-     * True while an established link is being restored automatically.
+     * Progress text while an established link is being restored automatically,
+     * or null when no retry runs.
      *
      * The home page keeps the dashboard up during this window instead of falling
      * back to the scan list, where a tap would cancel the retry in progress.
+     * Kept separate from [connectionState] because each attempt passes through
+     * Connecting and the handshake's own Handshaking text.
      */
-    private val _autoReconnecting = MutableStateFlow(false)
-    val autoReconnecting = _autoReconnecting.asStateFlow()
+    private val _autoReconnectStatus = MutableStateFlow<String?>(null)
+    val autoReconnectStatus = _autoReconnectStatus.asStateFlow()
 
     private val _motorInfo = MutableStateFlow<MotorInfo?>(null)
     val motorInfo = _motorInfo.asStateFlow()
@@ -1536,8 +1539,13 @@ class ScooterRepository private constructor(
                 onPoison = { scope.launch(ioDispatcher + connection) {
                     Log.w("ScooterRepo", "Encrypted session retired: ${installed.transport.retirementReason}")
                     val retired = releaseConnection(expectedEpoch = epoch)
+                    // A retired session must not be reused, but a fresh login is
+                    // safe: it starts a new nonce sequence and resets setting
+                    // consent, and no unconfirmed command is ever re-sent. On a
+                    // weak link a 5 s read timeout is the usual way a ride's
+                    // session ends, so it gets the same retry as a GATT drop.
                     if (retired != null) connectionResources.ifCurrent(retired) {
-                        _connectionState.value = ConnectionState.Error(getString(R.string.session_unconfirmed))
+                        reportConnectionLost(getString(R.string.session_unconfirmed))
                     }
                 }; Unit },
                 nowMs = SystemClock::elapsedRealtime,
@@ -2002,7 +2010,7 @@ class ScooterRepository private constructor(
     private fun cancelAutoReconnect() {
         autoReconnectJob?.cancel()
         autoReconnectJob = null
-        _autoReconnecting.value = false
+        _autoReconnectStatus.value = null
     }
 
     /**
@@ -2012,19 +2020,20 @@ class ScooterRepository private constructor(
      * more likely a wrong key or a scooter that refuses this phone, and retrying
      * that in a loop would hide the real error. Must run where the lost epoch is
      * still current, so the Ready check reads the state of the link that died.
+     *
+     * [errorMessage] is shown when no retry is started.
      */
-    private fun reportConnectionLost() {
+    private fun reportConnectionLost(errorMessage: String = getString(R.string.connection_lost)) {
         val mac = lastConnectedMac
         val wasReady = _connectionState.value is ConnectionState.Ready
         if (!wasReady || mac == null) {
-            _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
+            _connectionState.value = ConnectionState.Error(errorMessage)
             return
         }
         Log.w("ScooterRepo", "Established link lost; starting automatic reconnect to $mac")
-        _autoReconnecting.value = true
-        _connectionState.value = ConnectionState.Handshaking(
-            getString(R.string.state_reconnecting, 1, AUTO_RECONNECT_BACKOFF_MS.size)
-        )
+        val status = getString(R.string.state_reconnecting, 1, AUTO_RECONNECT_BACKOFF_MS.size)
+        _autoReconnectStatus.value = status
+        _connectionState.value = ConnectionState.Handshaking(status)
         autoReconnectJob?.cancel()
         autoReconnectJob = scope.launch(Dispatchers.Main) { autoReconnect(mac) }
     }
@@ -2033,6 +2042,7 @@ class ScooterRepository private constructor(
         val attempts = AUTO_RECONNECT_BACKOFF_MS.size
         for ((index, backoff) in AUTO_RECONNECT_BACKOFF_MS.withIndex()) {
             val status = getString(R.string.state_reconnecting, index + 1, attempts)
+            _autoReconnectStatus.value = status
             _connectionState.value = ConnectionState.Handshaking(status)
             delay(backoff)
             Log.i("ScooterRepo", "Auto-reconnect attempt ${index + 1}/$attempts to $mac")
@@ -2046,7 +2056,7 @@ class ScooterRepository private constructor(
             if (outcome is ConnectionState.Ready) {
                 Log.i("ScooterRepo", "Auto-reconnect succeeded on attempt ${index + 1}")
                 autoReconnectJob = null
-                _autoReconnecting.value = false
+                _autoReconnectStatus.value = null
                 return
             }
             Log.w("ScooterRepo", "Auto-reconnect attempt ${index + 1} failed: $outcome")
@@ -2057,7 +2067,7 @@ class ScooterRepository private constructor(
         Log.w("ScooterRepo", "Auto-reconnect gave up after $attempts attempts")
         _connectionState.value = ConnectionState.Error(getString(R.string.connection_lost))
         autoReconnectJob = null
-        _autoReconnecting.value = false
+        _autoReconnectStatus.value = null
     }
 
     fun getLogs(): List<java.io.File> = logger.getLogFiles()

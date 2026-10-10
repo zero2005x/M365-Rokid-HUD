@@ -1499,10 +1499,13 @@ class ScooterRepository private constructor(
         val epoch = connection.value
         connectionResources.ifCurrent(epoch) {
             lateinit var installed: XiaomiPhoneSession
+            val cipher = XiaomiSessionCipher(nativeEncrypt = { bytes, counter ->
+                connectionResources.useNative(epoch) { native.encryptSafe(it, bytes, counter) }
+            })
             val transport = XiaomiEncryptedTransport(connection.deviceId, epoch.toString(),
                 live = { connectionResources.isCurrent(epoch) && connectionResources.handle === gatt && connectionResources.hasNative },
                 currentMtu = { bleManager.negotiatedMtu },
-                encrypt = { bytes -> connectionResources.useNative(epoch) { native.encryptSafe(it, bytes, 0L) } },
+                encrypt = cipher::encrypt,
                 submit = { encrypted -> runBlocking(connection) { submitEncryptedOnce(encrypted, epoch) } },
                 decrypt = { bytes -> connectionResources.useNative(epoch) { native.decryptSafe(it, bytes) } },
                 onReply = { raw, at -> connectionResources.ifCurrent(epoch) { installed.observe(raw, at); parseTelemetry(raw) }; Unit },

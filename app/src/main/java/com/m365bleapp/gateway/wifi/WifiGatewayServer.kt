@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.util.Log
+import com.m365bleapp.gateway.GatewayUiState
 import com.m365bleapp.gateway.DisplayPrefsStore
 import com.m365bleapp.gateway.M365HudGattProfile
 import kotlinx.coroutines.*
@@ -72,8 +73,8 @@ class WifiGatewayServer(private val context: Context) {
         const val TELEMETRY_DATA_SIZE = 20
         const val TIME_DATA_SIZE = 12
 
-        /** Largest accepted message; anything else is a protocol violation. */
-        const val MAX_MESSAGE_LENGTH = 1024
+        /** Largest accepted message. V1 stays 20 bytes; this is only the acceptance bound. */
+        val MAX_MESSAGE_LENGTH = io.github.zero2005x.pev.core.gateway.GatewayWifiFraming.maxDeclaredLength()
 
         /** Read timeout per client; a silent client is treated as disconnected. */
         const val CLIENT_READ_TIMEOUT_MS = 30_000
@@ -114,6 +115,12 @@ class WifiGatewayServer(private val context: Context) {
     // from more than one coroutine and @Volatile does not make ++ atomic.
     @Volatile private var lastTelemetryUpdateMs: Long = 0
     private val telemetryUpdateCount = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile private var typedTelemetry: ByteArray? = null
+    @Volatile var vehicleSupportsLegacyV1: Boolean = true
+
+    fun updateTypedTelemetry(bytes: ByteArray?, sessionGeneration: Long = 0) {
+        typedTelemetry = bytes?.let { ByteBuffer.allocate(8 + it.size).putLong(sessionGeneration).put(it).array() }
+    }
     
     /**
      * Server state sealed class
@@ -186,6 +193,7 @@ class WifiGatewayServer(private val context: Context) {
         connectedClients.values.forEach { it.close() }
         connectedClients.clear()
         _connectedDeviceCount.value = 0
+        publishCompatibility()
         
         // Close server socket
         try {
@@ -215,6 +223,7 @@ class WifiGatewayServer(private val context: Context) {
                 val connection = ClientConnection(clientSocket, clientId)
                 connectedClients[clientId] = connection
                 _connectedDeviceCount.value = connectedClients.size
+                publishCompatibility()
 
                 // Push the current HUD field selection immediately, matching the
                 // BLE path where the phone notifies on subscription. Without
@@ -284,6 +293,7 @@ class WifiGatewayServer(private val context: Context) {
         } finally {
             connection.close()
             connectedClients.remove(connection.clientId)
+            publishCompatibility()
             _connectedDeviceCount.value = connectedClients.size
             Log.i(TAG, "Client removed: ${connection.clientId}, remaining: ${connectedClients.size}")
         }
@@ -311,12 +321,25 @@ class WifiGatewayServer(private val context: Context) {
                     Log.d(TAG, "Glasses battery: $batteryLevel%")
                 }
             }
+            io.github.zero2005x.pev.core.gateway.GatewayWifiFraming.TYPE_HELLO.toByte() -> {
+                if (!connection.policy.receiveHello(payload, vehicleSupportsLegacyV1)) return
+                publishCompatibility()
+                sendTo(
+                    connection,
+                    io.github.zero2005x.pev.core.gateway.GatewayWifiFraming.TYPE_HELLO.toByte(),
+                    io.github.zero2005x.pev.core.gateway.GatewayNegotiation.encodeHello(2, true, 185),
+                )
+            }
             else -> {
                 Log.w(TAG, "Unknown message type: $type")
             }
         }
     }
     
+    private fun publishCompatibility() {
+        GatewayUiState.publishConnections(connectedClients.mapValues { it.value.policy.choice.name.lowercase() })
+    }
+
     /**
      * Send telemetry to all connected clients
      */
@@ -336,7 +359,15 @@ class WifiGatewayServer(private val context: Context) {
         val telemetryData = frame.toBytes()
 
         // Send to all connected clients
-        sendToAll(MSG_TYPE_TELEMETRY, telemetryData)
+        connectedClients.values.filter {
+            it.policy.shouldSendV1(vehicleSupportsLegacyV1)
+        }.forEach { sendTo(it, MSG_TYPE_TELEMETRY, telemetryData) }
+        val typed = typedTelemetry
+        if (typed != null) {
+            connectedClients.values
+                .filter { it.policy.choice == io.github.zero2005x.pev.core.gateway.GatewayTransportChoice.NEGOTIATED_V2 }
+                .forEach { sendTo(it, io.github.zero2005x.pev.core.gateway.GatewayWifiFraming.TYPE_TELEMETRY_V2.toByte(), typed) }
+        }
     }
 
     /**
@@ -552,6 +583,7 @@ class WifiGatewayServer(private val context: Context) {
         val socket: Socket,
         val clientId: String
     ) {
+        internal val policy = WifiPeerPolicy()
         var isConnected: Boolean = true
             private set
         

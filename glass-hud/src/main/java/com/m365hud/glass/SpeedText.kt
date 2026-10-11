@@ -9,4 +9,4 @@ import kotlin.math.abs
  * such as -0.012 km/h would otherwise round to "-0.0" on the glasses.
  */
 internal fun formatSpeedKmh(kmh: Float): String =
-    "%.1f".format(if (abs(kmh) < 0.05f) 0f else kmh)
+    if (!kmh.isFinite()) "—" else "%.1f".format(if (abs(kmh) < 0.05f) 0f else kmh)

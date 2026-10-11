@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 package com.m365bleapp.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,8 +19,8 @@ import kotlinx.coroutines.CancellationException
 /** Explicit model selection and consent are discarded on disconnect; no remembered radio writes. */
 @Composable
 internal fun ExperimentalVehicleSettings(repository: ScooterRepository) {
-    val state by repository.experimentalSettings.collectAsState()
-    val info by repository.motorInfo.collectAsState()
+    val state by repository.experimentalSettings.collectAsStateWithLifecycle()
+    val info by repository.motorInfo.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var optIn by remember(state.connectionId) { mutableStateOf(false) }
     var order by remember(state.connectionId) { mutableStateOf<StatusWordWriteOrder?>(null) }

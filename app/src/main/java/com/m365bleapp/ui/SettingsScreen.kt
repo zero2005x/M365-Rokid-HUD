@@ -1,5 +1,6 @@
 package com.m365bleapp.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -44,7 +45,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import com.m365bleapp.R
-import androidx.compose.runtime.collectAsState
 import com.m365bleapp.protocol.ModelOverrideStore
 import com.m365bleapp.repository.ConnectionState
 import com.m365bleapp.repository.ScooterRepository
@@ -119,6 +119,8 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = Dimens.gutter)
         ) {
+            SettingsSection(stringResource(R.string.nav_vehicles))
+            Text(stringResource(R.string.unaudited_controls_note))
             ExperimentalVehicleSettings(repository)
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -133,8 +135,6 @@ fun SettingsScreen(
 
             // --- Glasses connection ---
             SettingsSection(stringResource(R.string.settings_section_gateway))
-            GatewayRow()
-            WifiGatewayRow(context)
             BatteryOptimizationRow(context)
 
             // --- Advanced ---
@@ -168,7 +168,7 @@ fun SettingsScreen(
             // register layout the app tries, and the protocol line reports what
             // it turned out to be. Splitting them across screens meant the rider
             // had to guess which one to change.
-            ModelOverrideSettingsRow(context)
+            ModelOverrideSettingsRow(repository)
 
             ProtocolSettingsRow(repository)
 
@@ -226,14 +226,13 @@ fun SettingsScreen(
  * next to the switch that depends on it.
  */
 @Composable
-private fun GatewayRow() {
-    var enabled by remember {
-        mutableStateOf(com.m365bleapp.gateway.GatewayService.isRunning())
-    }
+internal fun GatewayRow() {
+    val gateway by com.m365bleapp.gateway.GatewayUiState.state.collectAsStateWithLifecycle()
+    val enabled = gateway.bleRunning
     // Shared safe enabler: checks Bluetooth + BLUETOOTH_ADVERTISE/CONNECT before
     // starting the service, so this toggle can no longer start a gateway that
     // then silently fails to advertise.
-    val enableGateway = rememberGatewayEnabler(setEnabled = { enabled = it })
+    val enableGateway = rememberGatewayEnabler(setEnabled = { com.m365bleapp.gateway.GatewayUiState.refresh() })
 
     SettingsRow(
         icon = "📡",
@@ -259,10 +258,9 @@ private fun GatewayRow() {
  * switches on the glance surface is clutter; the rider picks a transport once.
  */
 @Composable
-private fun WifiGatewayRow(context: Context) {
-    var enabled by remember {
-        mutableStateOf(com.m365bleapp.gateway.wifi.WifiGatewayService.isRunning())
-    }
+internal fun WifiGatewayRow(context: Context) {
+    val gateway by com.m365bleapp.gateway.GatewayUiState.state.collectAsStateWithLifecycle()
+    val enabled = gateway.wifiRunning
 
     SettingsRow(
         icon = "📶",
@@ -281,7 +279,7 @@ private fun WifiGatewayRow(context: Context) {
                     } else {
                         com.m365bleapp.gateway.wifi.WifiGatewayService.stop(context)
                     }
-                    enabled = want
+                    com.m365bleapp.gateway.GatewayUiState.refresh()
                 }
             )
         },
@@ -291,7 +289,7 @@ private fun WifiGatewayRow(context: Context) {
             } else {
                 com.m365bleapp.gateway.wifi.WifiGatewayService.start(context)
             }
-            enabled = !enabled
+            com.m365bleapp.gateway.GatewayUiState.refresh()
         }
     )
 }
@@ -322,7 +320,7 @@ private fun DemoRideRow(repository: ScooterRepository) {
     // recomposition and the switch stayed off after it was turned on.
     // startDemo()/stopDemo() both move connectionState, so observing it makes
     // this row recompose exactly when the answer can change.
-    val connectionState by repository.connectionState.collectAsState()
+    val connectionState by repository.connectionState.collectAsStateWithLifecycle()
     val running = connectionState is ConnectionState.Ready && repository.isDemoRunning
 
     SettingsRow(
@@ -440,27 +438,24 @@ private fun SettingsRow(
  * discoverable without having to remember what an unlabelled icon does.
  */
 @Composable
-private fun ModelOverrideSettingsRow(context: Context) {
-    val store = remember { ModelOverrideStore.getInstance(context) }
-    val override by store.override.collectAsState()
+private fun ModelOverrideSettingsRow(repository: ScooterRepository) {
+    val context = LocalContext.current
+    val store = remember { com.m365bleapp.protocol.VehicleProfileStore.getInstance(context) }
+    val records by store.records.collectAsStateWithLifecycle()
+    val override = records.let { store.manualModel(repository.currentAddress) }
     var pickerOpen by remember { mutableStateOf(false) }
 
     if (pickerOpen) {
-        ModelOverrideDialog(
-            current = override,
-            onDismiss = { pickerOpen = false },
-            onSelect = { choice ->
-                store.set(choice)
-                pickerOpen = false
-            }
-        )
+        repository.currentAddress?.let { address ->
+            ModelOverrideDialog(address, repository, onDismiss = { pickerOpen = false })
+        }
     }
 
     SettingsRow(
         icon = "\uD83D\uDE97",
         title = stringResource(R.string.model_override_title),
         subtitle = override?.displayName ?: stringResource(R.string.model_override_automatic),
-        onClick = { pickerOpen = true }
+        onClick = { if (repository.currentAddress != null) pickerOpen = true }
     )
 }
 
@@ -476,8 +471,8 @@ private fun ModelOverrideSettingsRow(context: Context) {
 private fun ProtocolSettingsRow(repository: ScooterRepository) {
     // Resolved here rather than passed in, so the row is self-contained.
     val context = LocalContext.current
-    val profile by repository.activeProfile.collectAsState()
-    val protocol by repository.detectedProtocol.collectAsState()
+    val profile by repository.activeProfile.collectAsStateWithLifecycle()
+    val protocol by repository.detectedProtocol.collectAsStateWithLifecycle()
 
     val summary = buildString {
         append(profile?.displayName ?: stringResource(R.string.diagnostics_no_layout))

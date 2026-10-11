@@ -6,35 +6,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/**
- * The rider's manual model choice, when the app cannot identify the scooter.
- *
- * ## Why this exists
- *
- * Nothing observable before connecting identifies a scooter's protocol: the
- * advertised name covers several wire generations of the same family, and the
- * GATT service list is not a discriminator. So on a scooter this project has
- * never seen, automatic identification can simply fail.
- *
- * Without a manual override that failure would be permanent — the rider would
- * have no way to say "this is an M365 Pro" to an app that is otherwise perfectly
- * capable of talking to it. The override is therefore not a convenience; it is
- * the escape hatch that keeps the app usable on untested hardware.
- *
- * ## Why it is global rather than per-device
- *
- * A per-MAC override would be more precise, but the rider generally owns one
- * scooter and reaches for this when identification fails — possibly before a
- * stable MAC is even known. A single global choice is simpler to reason about
- * and to explain. It is persisted so it survives the restart that follows a
- * language change or a crash.
- *
- * ## What it does NOT do
- *
- * Choosing a model does **not** raise the confidence. [ScooterModelRegistry.resolve]
- * reports a manual choice as [Confidence.UNVERIFIED], because the choice says
- * which register layout to *try*; it does not make that layout correct. The
- * badge keeps saying so.
+/** Legacy global preference, retained only until explicit migration or discard.
+ * New choices are written to VehicleProfileStore and never to this store.
  */
 class ModelOverrideStore private constructor(context: Context) {
 

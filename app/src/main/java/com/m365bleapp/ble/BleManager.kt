@@ -286,6 +286,9 @@ class BleManager internal constructor(
         retired.second?.invoke(retired.third)
     }
 
+    private var stopActiveScan: (() -> Unit)? = null
+    fun stopScan() { stopActiveScan?.invoke(); stopActiveScan = null }
+
     @SuppressLint("MissingPermission")
     fun scan(): Flow<ScanResult> = callbackFlow {
         val scanner = adapter.bluetoothLeScanner
@@ -304,7 +307,8 @@ class BleManager internal constructor(
         }
 
         scanner.startScan(callback)
-        awaitClose { scanner.stopScan(callback) }
+        stopActiveScan = { scanner.stopScan(callback); close() }
+        awaitClose { scanner.stopScan(callback); stopActiveScan = null }
     }
 
     fun getDevice(mac: String): BluetoothDevice {

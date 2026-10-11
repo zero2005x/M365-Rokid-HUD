@@ -58,6 +58,7 @@ fun rememberGatewayEnabler(setEnabled: (Boolean) -> Unit): (Boolean) -> Unit { /
     ) { permissions ->
         if (permissions.values.all { it } && pendingEnable) {
             GatewayService.start(context)
+            com.m365bleapp.gateway.GatewayUiState.refresh()
             setEnabled(true)
         }
         pendingEnable = false
@@ -69,6 +70,7 @@ fun rememberGatewayEnabler(setEnabled: (Boolean) -> Unit): (Boolean) -> Unit { /
         if (BluetoothHelper.isBluetoothEnabled(context) && pendingEnable) {
             if (BluetoothHelper.hasAdvertisePermissions(context)) {
                 GatewayService.start(context)
+                com.m365bleapp.gateway.GatewayUiState.refresh()
                 setEnabled(true)
                 pendingEnable = false
             } else {
@@ -125,11 +127,13 @@ fun rememberGatewayEnabler(setEnabled: (Boolean) -> Unit): (Boolean) -> Unit { /
                 }
                 else -> {
                     GatewayService.start(context)
+                    com.m365bleapp.gateway.GatewayUiState.refresh()
                     setEnabled(true)
                 }
             }
         } else {
             GatewayService.stop(context)
+            com.m365bleapp.gateway.GatewayUiState.refresh()
             setEnabled(false)
         }
     }

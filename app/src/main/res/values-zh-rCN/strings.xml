@@ -304,4 +304,21 @@
     <string name="scooter_fault">车辆故障 %1$d：%2$s</string>
     <string name="scooter_fault_throttle">油门信号异常（1 长 4 短警报）</string>
     <string name="experimental_fault_blocked">请停止骑行并检查车辆。车辆报告故障期间，设置写入已停用。</string>
+    <string name="nav_ride">骑行</string>
+    <string name="nav_vehicles">车辆</string>
+    <string name="nav_glasses">眼镜</string>
+    <string name="ride_connect_hint">请从车辆页连接。这个画面不会中断正在进行的连接。</string>
+    <string name="gateway_legacy">旧版眼镜数据包</string>
+    <string name="gateway_negotiated">已协商类型化遥测</string>
+    <string name="gateway_incompatible">这副眼镜无法显示这台车辆。旧版数据包不会被填入零值。</string>
+    <string name="unaudited_controls_note">旧版灯光与锁定控制不可用。实验性设置经明确同意后可能发送已审核命令。</string>
+    <string name="model_override_next_device">这个选择只会保存到你接下来连接的那台车，不会套用到每一台已保存的车。</string>
+
+    <string name="current_vehicle">当前车辆</string>
+    <string name="saved_vehicles">已保存车辆</string>
+    <string name="search_nearby">搜索附近设备</string>
+    <string name="legacy_model_prompt">请选择已保存车辆来绑定旧型号（%1$s），或丢弃。</string>
+    <string name="discard">丢弃</string>
+    <string name="data_updated_at">数据更新：%1$s</string>
+    <string name="vehicle_disconnected">已断开</string>
 </resources>

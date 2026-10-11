@@ -10,7 +10,9 @@ internal object WifiHudProtocol {
 
     fun readFrame(input: DataInputStream): Frame {
         val length = input.readInt()
-        if (length !in 1..1024) throw IOException("Invalid HUD frame length: $length")
+        if (length !in 1..(io.github.zero2005x.pev.core.gateway.GatewayWifiFraming.maxDeclaredLength() + 8)) {
+            throw IOException("Invalid HUD frame length: $length")
+        }
         val type = input.readByte()
         val payload = ByteArray(length - 1)
         input.readFully(payload)

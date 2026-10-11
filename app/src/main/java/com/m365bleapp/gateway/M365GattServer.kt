@@ -127,6 +127,7 @@ class M365GattServer(
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 subscriptions.values.forEach { it.remove(address) }
                 Log.i(TAG, "Device DISCONNECTED: $address, remaining subscribers: ${subscriberCount()}")
+                GatewayUiState.refresh()
             } else if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.i(TAG, "Device CONNECTED: $address, waiting for notification subscription...")
             }
@@ -162,6 +163,7 @@ class M365GattServer(
                 value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) -> {
                     subscribersOf(charUuid)[address] = device
                     Log.i(TAG, "Notifications ENABLED for $address on $charUuid, total subscribers: ${subscriberCount()}")
+                    GatewayUiState.refresh()
 
                     // Push the current HUD field selection the moment the
                     // glasses subscribe to it.
@@ -180,6 +182,7 @@ class M365GattServer(
                 value.contentEquals(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE) -> {
                     subscribersOf(charUuid).remove(address)
                     Log.i(TAG, "Notifications DISABLED for $address on $charUuid, total subscribers: ${subscriberCount()}")
+                    GatewayUiState.refresh()
                     BluetoothGatt.GATT_SUCCESS
                 }
 

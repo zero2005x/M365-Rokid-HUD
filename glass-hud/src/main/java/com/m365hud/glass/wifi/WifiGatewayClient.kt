@@ -53,6 +53,8 @@ class WifiGatewayClient(private val context: Context) {
     @Volatile private var output: DataOutputStream? = null
     @Volatile private var lastTelemetryMs = 0L
     @Volatile private var latencyMs = Long.MAX_VALUE
+    private val typedReceiver = TypedTelemetryReceiver()
+    private var typedNegotiated = false
     private var discovery: NsdManager.DiscoveryListener? = null
     private var nsd: NsdManager? = null
 
@@ -153,8 +155,12 @@ class WifiGatewayClient(private val context: Context) {
                     val writer = DataOutputStream(current.getOutputStream())
                     synchronized(this@WifiGatewayClient) {
                         if (generation.get() != epoch) return@launch
+                        typedReceiver.reset()
+                        typedNegotiated = false
+                        _telemetry.value = TelemetryData()
                         output = writer
                         _connectionState.value = ConnectionState.Connected(address)
+                        send(writer, 0x07, io.github.zero2005x.pev.core.gateway.GatewayNegotiation.encodeHello(2, true, 185))
                         _isTelemetryFresh.value = false
                         lastTelemetryMs = 0
                     }
@@ -172,7 +178,7 @@ class WifiGatewayClient(private val context: Context) {
                                 delay(500)
                                 synchronized(this@WifiGatewayClient) {
                                     if (generation.get() == epoch) {
-                                        _isTelemetryFresh.value = lastTelemetryMs != 0L &&
+                                        _isTelemetryFresh.value = (!typedNegotiated || _telemetry.value.fieldValid(io.github.zero2005x.pev.core.gateway.GatewayField.SPEED_KMH)) && lastTelemetryMs != 0L &&
                                             SystemClock.elapsedRealtime() - lastTelemetryMs < TELEMETRY_STALE_MS
                                     }
                                 }
@@ -205,6 +211,9 @@ class WifiGatewayClient(private val context: Context) {
                     current.close()
                     synchronized(this@WifiGatewayClient) {
                         if (generation.get() == epoch) {
+                            typedReceiver.reset()
+                            typedNegotiated = false
+                            _telemetry.value = TelemetryData()
                             output = null
                             socket = null
                             _isTelemetryFresh.value = false
@@ -221,7 +230,8 @@ class WifiGatewayClient(private val context: Context) {
 
     private fun process(frame: WifiHudProtocol.Frame) {
         when (frame.type) {
-            MSG_TYPE_TELEMETRY -> WifiHudProtocol.telemetry(frame.payload)?.let {
+            0x10.toByte() -> applyTyped(frame.payload)
+            MSG_TYPE_TELEMETRY -> if (!typedNegotiated) WifiHudProtocol.telemetry(frame.payload)?.let {
                 _telemetry.value = it
                 lastTelemetryMs = SystemClock.elapsedRealtime()
                 _isTelemetryFresh.value = true
@@ -240,6 +250,14 @@ class WifiGatewayClient(private val context: Context) {
                 }
             }
         }
+    }
+
+    private fun applyTyped(payload: ByteArray) {
+        val data = typedReceiver.applyTyped(payload) ?: return
+        typedNegotiated = true
+        _telemetry.value = data
+        lastTelemetryMs = SystemClock.elapsedRealtime()
+        _isTelemetryFresh.value = data.fieldValid(io.github.zero2005x.pev.core.gateway.GatewayField.SPEED_KMH)
     }
 
     private fun send(writer: DataOutputStream, type: Byte, payload: ByteArray) {
@@ -276,6 +294,8 @@ class WifiGatewayClient(private val context: Context) {
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         _connectionState.value = ConnectionState.Disconnected
         _isTelemetryFresh.value = false
+        typedReceiver.reset()
+        typedNegotiated = false
         _telemetry.value = TelemetryData()
         _timeData.value = TimeData()
         _displayPrefs.value = DisplayPrefs()

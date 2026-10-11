@@ -245,6 +245,7 @@ class GatewayService : Service() {
         }
         
         isServiceRunning = true
+        GatewayUiState.refresh()
         updateNotification("🔍 Waiting for Rokid connection...")
         
         // Start telemetry observation
@@ -388,6 +389,7 @@ class GatewayService : Service() {
         Log.d(TAG, "GatewayService onDestroy")
         isServiceRunning = false
         instance = null
+        GatewayUiState.refresh()
         
         scope.cancel()
         

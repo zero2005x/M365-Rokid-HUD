@@ -1,5 +1,6 @@
 package com.m365bleapp.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -53,10 +54,10 @@ fun ScooterInfoScreen(
     repository: ScooterRepository,
     onBack: () -> Unit
 ) {
-    val motorInfo by repository.motorInfo.collectAsState()
+    val motorInfo by repository.motorInfo.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     val snapshotStore = remember { VehicleSnapshotStore.getInstance(context) }
-    val snapshot by snapshotStore.snapshot.collectAsState()
+    val snapshot by snapshotStore.snapshot.collectAsStateWithLifecycle()
 
     // Re-render the "x minutes ago" banner without recomposing every frame.
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -73,9 +74,7 @@ fun ScooterInfoScreen(
     // Which fields this scooter can actually report. Capability-driven rather
     // than "does it look like an M365": a section whose register this model does
     // not have is hidden entirely instead of being rendered as a row of zeros.
-    val overrideStore = remember { ModelOverrideStore.getInstance(context) }
-    val modelOverride by overrideStore.override.collectAsState()
-    val identification = ScooterModelRegistry.resolve(snapshot.modelNameOrNull(), modelOverride)
+    val identification by repository.identification.collectAsStateWithLifecycle()
     val caps = identification.model.capabilities
 
     Scaffold(

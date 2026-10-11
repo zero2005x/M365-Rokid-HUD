@@ -6,7 +6,7 @@ Presence of a decoder is **not** vehicle verification. Add one row per model/fir
 | Family | Model | Firmware | Field | Decoder | Evidence | Notes |
 |---|---|---|---|---|---|---|
 | Xiaomi scooter | M365 | unknown, no all-firmware claim | SOC | `XiaomiMotorInfoDecoder` @8 u16 | W | 152 historical owner payloads; {43,44,51}; no new hardware acceptance |
-| Xiaomi scooter | M365 | unknown | speed | @10 u16 with 0xC000 negative/sentinel threshold | W | signed core observation retained; HUD clamps negatives; this raw subset does not prove the historical moving-window scale claim |
+| Xiaomi scooter | M365 | unknown | speed | @10 u16 with 0xC000 negative/sentinel threshold | W | signed core observation retained; HUD displays signed speed; this raw subset does not prove the historical moving-window scale claim |
 | Xiaomi scooter | M365 | unknown | total distance | @14 u32 m | W | historical 400107–400871 m |
 | Xiaomi scooter | M365 | unknown | frame temperature | @22 i16 /10 | W | 31–45 C; `TEMP_FRAME`, not IMU/MOS |
 | Xiaomi scooter | M365 | unknown | BMS status 0x31 | `XiaomiBmsDecoder`: capacity mAh, SOC, battery current A, pack voltage V | V | no BMS capture; invalid SOC is not clamped in core |
@@ -24,12 +24,16 @@ Presence of a decoder is **not** vehicle verification. Add one row per model/fir
 | Others | see doc/MULTIVEHICLE_HANDOFF.md §8 | | | not started | | |
 
 Remaining capability gaps: no public family registry, no Ninebot/Zydtech/KingSong/Veteran/I2 core codec,
-no Begode settings, and no phone session/UI wiring yet. No aggregate support badge is justified.
+no Begode settings or Begode phone session/UI wiring yet. Xiaomi has the single-writer phone session and consent-gated experimental settings. No aggregate support badge is justified.
 
 ## Consumer integration (2026-10-08)
 HUD phone delegates M365 register reads to core; phone BLE/Wi-Fi and glasses share core V1 bytes.
 RideFlux's isolated `codex/pev-core-consumer` branch consumes the same authoritative external source
 for M365 read PDUs, SOC, odometer and frame temperature. It retains disputed legacy speed/B9 display
 policies and independent Ninebot diagnostics. This is not full core migration or vehicle acceptance.
-V2 delivery/negotiation and the unique phone writer/experimental UI remain pending in both products.
+Phone Wi-Fi accepts a PEVH hello per socket. New/new peers use typed V2; legacy peers retain the unchanged 20-byte M365 packet; INCOMPATIBLE sockets receive no V1 telemetry. BLE remains V1 only. V2 observations keep parser receipt times, with frame temperature and total distance included; missing fields are NOT_PROVIDED. Glasses gate phone session generation and sequence and clear non-VALID fields. Begode A2 has no Ready connection and no physical-scale telemetry: `ffe0` is vendor-static and unconfirmed, and CAP-B is not captured.
 See `TEST_REPORT.md` and the isolated consumer's `docs/PEV_CORE_CONSUMER.md` for actual validation.
+
+## UI / V2 integration (2026-10-12)
+
+Vehicle profiles require explicit legacy migration to a saved address or discard. Scanning is requested by a button and disabled during Connecting, Handshaking, Ready and automatic reconnect. Ready navigates to Ride; tab switching does not close the vehicle session. See `doc/UI_V2_INTEGRATION_20261012.md` for test totals and hardware limitations. These implementation changes do not promote any vehicle to hardware-verified support.

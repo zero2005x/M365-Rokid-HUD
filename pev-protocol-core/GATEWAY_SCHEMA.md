@@ -12,9 +12,29 @@ and returns an explicit incompatibility result. It requires eight fresh typed re
 trip/time, average speed and range. Existing primitive producer APIs are retained for M365 only;
 they do not satisfy the new multi-vehicle freshness contract.
 
-V2 is an independently designed **core-only, unreleased** packet. No deployed client is expected
-to understand the earlier draft. Do not send V2 until per-connection negotiation, clock alignment
-and bounded transport reassembly exist. Packet integer fields use little endian.
+V2 is negotiated per Wi-Fi socket. A missing hello remains V1 only when the vehicle
+supports legacy M365 telemetry. A `PEVH` hello (TCP type `0x07`, 8-byte payload) selects
+NEGOTIATED_V2 for typed-capable new/new peers, otherwise LEGACY_V1 or INCOMPATIBLE.
+An INCOMPATIBLE socket receives no V1. Compatibility state belongs to each socket and
+is removed on disconnect. Old phone/new glasses fall back to V1 without a phone hello;
+new phone/old glasses continue to receive the unchanged V1 packet. BLE remains V1 only;
+the core BLE fragmentation utility is not connected to production notifications.
+
+Production Wi-Fi V2 uses TCP type `0x10`, payload `[phone sessionGeneration i64 BE][PEVG packet]`.
+The TCP length prefix (i32 BE) includes the type byte and these 8 generation bytes, so the
+maximum V2 declared length is 1 + 8 + 4096. The PEVG packet below remains unchanged and
+uses little endian. The generation comes from the phone vehicle-session epoch, not the
+glasses reconnect counter. Receiver resets its gate on socket reconnect; within a socket,
+older generations and duplicate/older sequences are dropped. Sequence continues across
+vehicle sessions while the Wi-Fi service runs.
+
+Motor observations are stamped when the decoder receives data, never at gateway send time.
+Each complete packet is aged using `generatedAtMs - observedAtMs` from the phone clock;
+glasses use `fromBytesForRemoteDisplay` and never subtract their wall clock from a phone
+observation. Local elapsed time detects silence on the socket independently. Non-VALID
+fields clear their prior display value to —. M365 B0 supplies speed, SOC, TEMP_FRAME and
+TOTAL_DISTANCE_M; received 0x3A supplies trip distance/time with its own observation times.
+Primitive defaults, disputed legacy range and unobserved fields remain NOT_PROVIDED.
 
 | Header offset | Representation |
 |---|---|
@@ -24,7 +44,7 @@ and bounded transport reassembly exist. Packet integer fields use little endian.
 | 6 | connection state, u8 |
 | 7 | reserved zero |
 | 8 | complete packet length including CRC, u16 |
-| 10 | per-connection sequence, u32 |
+| 10 | gateway stream sequence, u32 |
 | 14 | sender generation time, nonnegative i64 epoch milliseconds |
 | 22, 23 | field count and alert count, each u8 |
 
@@ -52,10 +72,10 @@ substitute receipt time. Alert values are 0/1 with the same metadata rules. `Gat
 suppresses duplicate/out-of-order sequences, expires observations and emits newly active edges.
 Its owner must reset it on reconnect; complete snapshots clear omitted alerts.
 
-Inbound glasses messages allow only heartbeat feedback (0/8 bytes) and a single battery byte
-from 0–100. Vehicle commands and client display-preference messages are refused. Display
+Inbound glasses messages allow only heartbeat feedback (0/8 bytes), a single battery byte
+from 0–100, and a validated 8-byte version hello. Vehicle commands and client display-preference messages are refused. Display
 preferences flow from phone to glasses. Production Wi-Fi and BLE battery ingress apply this gate.
 
-Pending: capability/version negotiation, V2 BLE fragmentation and Wi-Fi envelope, upgrade UI,
-clock alignment, semantic V2 display and actual per-connection alert tracker wiring. No V2
-glasses or multi-vehicle gateway acceptance is claimed by the core tests.
+Pending: production V2 BLE transport, capability UI beyond M365, actual alert-tracker
+wiring, and hardware acceptance of the new Wi-Fi/UI path. Core/unit tests do not establish
+V2 glasses or multi-vehicle hardware acceptance. Glasses never issue vehicle commands.

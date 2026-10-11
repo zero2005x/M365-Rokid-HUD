@@ -1,9 +1,11 @@
 package com.m365bleapp.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.annotation.SuppressLint
 import androidx.compose.animation.Crossfade
 import android.content.Context
 import android.os.BatteryManager
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -50,7 +52,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,38 +68,15 @@ import com.m365bleapp.ui.theme.Dimens
 import com.m365bleapp.ui.theme.FontSizes
 import com.m365bleapp.ui.theme.TextSecondary
 
-/**
- * The single control page.
- *
- * ## Why this replaced two screens
- *
- * The app used to have a scan screen that *navigated away* the moment a scooter
- * connected, which produced two problems:
- *
- *  - "Where do I connect?" — the connection controls were on one screen and
- *    every other control was on a screen you could only reach by connecting, so
- *    the app's entry point changed meaning depending on state.
- *  - Connecting to a *different* scooter meant disconnecting first, because the
- *    device list only existed on the screen you had already left.
- *
- * This page keeps one identity and changes what it shows:
- *
- *  - **No scooter connected** → the scan and device list, i.e. the old
- *    ScanScreen, unchanged.
- *  - **Connected** → live telemetry plus the everyday controls (lights, gateway,
- *    lock) and a way into the full detail page.
- *
- * There is no separate dashboard route any more: the connected face *is* the
- * dashboard, and [ScooterInfoScreen] is the one detail page.
- */
+/** Ride tab. Connection and gateway lifetimes belong to their services. */
 @Composable
 fun HomeScreen(
     repository: ScooterRepository,
     onOpenSettings: () -> Unit,
-    onOpenScooterInfo: () -> Unit
+    onOpenScooterInfo: () -> Unit,
 ) {
-    val connState by repository.connectionState.collectAsState()
-    val reconnectStatus by repository.autoReconnectStatus.collectAsState()
+    val connState by repository.connectionState.collectAsStateWithLifecycle()
+    val reconnectStatus by repository.autoReconnectStatus.collectAsStateWithLifecycle()
 
     // Only treat a fully ready link as connected. Showing telemetry during
     // Handshaking would display zeros as if they were real readings. An
@@ -119,25 +97,14 @@ fun HomeScreen(
                 onOpenScooterInfo = onOpenScooterInfo
             )
         } else {
-            ScanScreen(
-                repository = repository,
-                // The connected transition is owned here by the Crossfade now, so
-                // ScanScreen must not also push a route when a link goes Ready.
-                onNavigateToDashboard = {},
-                onNavigateToSettings = onOpenSettings
-            )
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(stringResource(R.string.ride_connect_hint), textAlign = TextAlign.Center)
+            }
         }
     }
 }
 
-/**
- * The connected face of the home page.
- *
- * The rider's stated priority order is speed, then scooter battery, then glasses
- * battery; the everyday actions are lights, the glasses gateway and the lock.
- * Everything diagnostic or rarely touched is one tap away in Settings, because a
- * dashboard that shows everything at once shows nothing clearly.
- */
+/** Vehicle identity, telemetry, and read-only connection status. */
 @Composable
 private fun ConnectedHome(
     repository: ScooterRepository,
@@ -147,23 +114,17 @@ private fun ConnectedHome(
     onOpenScooterInfo: () -> Unit
 ) {
     val reconnecting = reconnectStatus != null
-    val motorInfo by repository.motorInfo.collectAsState()
+    val motorInfo by repository.motorInfo.collectAsStateWithLifecycle()
     val info = motorInfo
+    val identity by repository.identification.collectAsStateWithLifecycle()
+    val profiles by com.m365bleapp.protocol.VehicleProfileStore.getInstance(LocalContext.current).records.collectAsStateWithLifecycle()
+    val title = profiles.firstOrNull { it.addressHint.equals(repository.currentAddress, true) }?.displayName?.ifBlank { null } ?: identity.model.displayName
 
-    // Gateway state is polled rather than observed: GatewayService is a
-    // foreground service component and exposes only static queries.
-    var gatewayEnabled by remember { mutableStateOf(GatewayService.isRunning()) }
-    var glassesConnected by remember { mutableStateOf(GatewayService.isGlassesConnected()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            gatewayEnabled = GatewayService.isRunning()
-            glassesConnected = GatewayService.isGlassesConnected()
-            delay(2000)
-        }
-    }
+    val gatewayState by com.m365bleapp.gateway.GatewayUiState.state.collectAsStateWithLifecycle()
+    val gatewayEnabled = gatewayState.bleRunning
+    val glassesConnected = gatewayState.glassesConnected
 
     val snackbarHostState = remember { SnackbarHostState() }
-    val capabilities = repository.currentCapabilities()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -173,6 +134,7 @@ private fun ConnectedHome(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(androidx.compose.foundation.rememberScrollState())
                 .padding(horizontal = Dimens.gutter)
         ) {
             // --- Header: identity + settings, so Settings is reachable while
@@ -183,7 +145,8 @@ private fun ConnectedHome(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = stringResource(if (reconnecting) R.string.connecting else R.string.connected),
+                    text = title + " · " + stringResource(if (reconnecting) R.string.connecting else R.string.connected) + "\n" +
+                        stringResource(R.string.data_updated_at, info?.receivedAtMs?.let { java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "—"),
                     style = MaterialTheme.typography.titleMedium,
                     color = if (reconnecting) TextSecondary else MaterialTheme.colorScheme.primary
                 )
@@ -236,7 +199,7 @@ private fun ConnectedHome(
                 horizontalArrangement = Arrangement.spacedBy(Dimens.space12)
             ) {
                 BatteryTile(
-                    label = "🛴",
+                    label = if (identity.model.producesTelemetry) "🛴" else "🚗",
                     percent = info?.battery,
                     modifier = Modifier.weight(1f)
                 )
@@ -250,27 +213,9 @@ private fun ConnectedHome(
                 glassesConnected = glassesConnected
             )
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(Dimens.space16))
 
-            // --- Everyday controls. Each capability-gated: a control for a
-            // register this model does not have would write to the wrong address.
-            // Scooter writes are hidden while reconnecting: there is no link.
-            if (capabilities.tailLight && !reconnecting) {
-                LightControlRow(repository = repository, snackbarHostState = snackbarHostState)
-                Spacer(modifier = Modifier.height(Dimens.space8))
-            }
-
-            GatewayControlRow(
-                gatewayEnabled = gatewayEnabled,
-                glassesConnected = glassesConnected,
-                onSetEnabled = { gatewayEnabled = it }
-            )
             Spacer(modifier = Modifier.height(Dimens.space8))
-
-            if (capabilities.motorLock && !reconnecting) {
-                LockControlRow(repository = repository, snackbarHostState = snackbarHostState)
-                Spacer(modifier = Modifier.height(Dimens.space8))
-            }
 
             HomeActionButton(
                 label = stringResource(R.string.dashboard_view_details),
@@ -368,215 +313,6 @@ private fun HomeStatusLine(gatewayEnabled: Boolean, glassesConnected: Boolean) {
         Text(text = "👓", fontSize = 16.sp)
         Spacer(modifier = Modifier.width(Dimens.space8))
         Text(text = text, style = MaterialTheme.typography.bodyMedium, color = color)
-    }
-}
-
-/** Tail-light toggle. Reflects the repository's light state. */
-@Composable
-private fun LightControlRow(
-    repository: ScooterRepository,
-    snackbarHostState: SnackbarHostState
-) {
-    val scope = rememberCoroutineScope()
-    val lightOn by repository.isLightOn.collectAsState()
-    var loading by remember { mutableStateOf(false) }
-    val msgOn = stringResource(R.string.msg_light_on)
-    val msgOff = stringResource(R.string.msg_light_off)
-    val failFmt = stringResource(R.string.msg_light_failed)
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(Dimens.primaryButtonHeight),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = if (lightOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
-                contentDescription = null,
-                tint = if (lightOn) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.width(Dimens.space8))
-            Text(
-                text = stringResource(R.string.control_light),
-                style = MaterialTheme.typography.bodyLarge
-            )
-        }
-        if (loading) {
-            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-        } else {
-            Switch(
-                checked = lightOn,
-                enabled = false, // Backend deliberately rejects unaudited legacy commands.
-                onCheckedChange = { want ->
-                    loading = true
-                    scope.launch {
-                        repository.setLight(want)
-                            .onSuccess { snackbarHostState.showSnackbar(if (want) msgOn else msgOff) }
-                            .onFailure { e -> snackbarHostState.showSnackbar(failFmt.format(e.message ?: "")) }
-                        loading = false
-                    }
-                }
-            )
-        }
-    }
-}
-
-/**
- * Motor lock control.
- *
- * The scooter cannot report its lock state, so the state is shown as *unknown*
- * rather than an optimistic "unlocked" that would be wrong after a reconnect.
- * Locking asks for confirmation because it is safety-relevant and the vehicle
- * may be moving; unlocking does not.
- */
-@Composable
-private fun LockControlRow(
-    repository: ScooterRepository,
-    snackbarHostState: SnackbarHostState
-) {
-    val scope = rememberCoroutineScope()
-    var loading by remember { mutableStateOf(false) }
-    var confirmLock by remember { mutableStateOf(false) }
-    val lockedMsg = stringResource(R.string.msg_motor_locked)
-    val unlockedMsg = stringResource(R.string.msg_motor_unlocked)
-    val lockFailFmt = stringResource(R.string.msg_lock_failed)
-    val unlockFailFmt = stringResource(R.string.msg_unlock_failed)
-
-    if (confirmLock) {
-        AlertDialog(
-            onDismissRequest = { confirmLock = false },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error
-                )
-            },
-            title = { Text(stringResource(R.string.lock_confirm_title)) },
-            text = { Text(stringResource(R.string.lock_confirm_message)) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        confirmLock = false
-                        loading = true
-                        scope.launch {
-                            repository.lock()
-                                .onSuccess { snackbarHostState.showSnackbar(lockedMsg) }
-                                .onFailure { e -> snackbarHostState.showSnackbar(lockFailFmt.format(e.message ?: "")) }
-                            loading = false
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Text(stringResource(R.string.control_lock)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmLock = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            }
-        )
-    }
-
-    // The label side takes the leftover width and may wrap; the buttons keep
-    // their text on one line. Without the weight the label claimed its full
-    // intrinsic width first, and in Russian/Ukrainian ("Разблокировать") the
-    // unlock button was squeezed into a circle with its text broken per letter.
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = Dimens.primaryButtonHeight),
-        horizontalArrangement = Arrangement.spacedBy(Dimens.space8),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            modifier = Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Default.LockOpen,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.width(Dimens.space8))
-            Column {
-                Text(
-                    text = stringResource(R.string.control_motor),
-                    style = MaterialTheme.typography.bodyLarge
-                )
-                Text(
-                    text = stringResource(R.string.legacy_control_unavailable),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary
-                )
-            }
-        }
-        if (loading) {
-            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-        } else {
-            val compactPadding = PaddingValues(horizontal = Dimens.space12)
-            Row(horizontalArrangement = Arrangement.spacedBy(Dimens.space8)) {
-                OutlinedButton(
-                    enabled = false,
-                    onClick = { confirmLock = true },
-                    contentPadding = compactPadding,
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) { Text(stringResource(R.string.control_lock), maxLines = 1, softWrap = false) }
-                Button(
-                    enabled = false,
-                    contentPadding = compactPadding,
-                    onClick = {
-                        loading = true
-                        scope.launch {
-                            repository.unlock()
-                                .onSuccess { snackbarHostState.showSnackbar(unlockedMsg) }
-                                .onFailure { e -> snackbarHostState.showSnackbar(unlockFailFmt.format(e.message ?: "")) }
-                            loading = false
-                        }
-                    }
-                ) { Text(stringResource(R.string.control_unlock), maxLines = 1, softWrap = false) }
-            }
-        }
-    }
-}
-
-/** Glasses HUD gateway toggle, using the shared safe enabler. */
-@Composable
-private fun GatewayControlRow(
-    gatewayEnabled: Boolean,
-    glassesConnected: Boolean,
-    onSetEnabled: (Boolean) -> Unit
-) {
-    val enableGateway = rememberGatewayEnabler(setEnabled = onSetEnabled)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(Dimens.primaryButtonHeight),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column {
-            Text(
-                text = "👓 " + stringResource(R.string.gateway_hud),
-                style = MaterialTheme.typography.bodyLarge
-            )
-            Text(
-                text = when {
-                    glassesConnected -> stringResource(R.string.glasses_connected)
-                    gatewayEnabled -> stringResource(R.string.gateway_broadcasting)
-                    else -> stringResource(R.string.gateway_off)
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
-            )
-        }
-        Switch(
-            checked = gatewayEnabled,
-            onCheckedChange = { enableGateway(it) }
-        )
     }
 }
 

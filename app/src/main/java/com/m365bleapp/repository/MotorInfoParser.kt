@@ -43,7 +43,8 @@ internal object MotorInfoParser {
     fun parse(data: ByteArray, existing: MotorInfo? = null): MotorInfo? {
         if (data.size < 22) return null
 
-        val snapshot = XiaomiMotorInfoDecoder.decode(data, System.currentTimeMillis())
+        val receivedAt = System.currentTimeMillis()
+        val snapshot = XiaomiMotorInfoDecoder.decode(data, receivedAt)
         val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
 
         // B5 has no separate direction or unavailable flag in this block.
@@ -65,6 +66,8 @@ internal object MotorInfoParser {
         val errorCode = bb.getShort(0).toInt() and 0xFFFF
 
         return (existing ?: MotorInfo(0.0, 0, 0.0, 0.0)).copy(
+            receivedAtMs = receivedAt,
+            typedFields = existing?.typedFields.orEmpty().filterKeys { it !in setOf(FieldId.SPEED_KMH, FieldId.SOC_PERCENT, FieldId.TEMP_FRAME, FieldId.TOTAL_DISTANCE_M) } + snapshot.fields,
             speed = decodedSpeed,
             avgSpeed = avgSpeed,
             mileage = mileageKm,

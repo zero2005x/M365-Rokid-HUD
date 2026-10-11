@@ -317,7 +317,7 @@ private fun RowScope.HudStatusColumn(
         if (displayPrefs.shows(DisplayField.TEMPERATURE)) {
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "%.0f°C".format(telemetry.temperatureC),
+                text = if (telemetry.temperatureC.isFinite()) "%.0f°C".format(telemetry.temperatureC) else "—",
                 color = palette.secondaryColor.copy(alpha = 0.8f),
                 fontSize = (14f * scale).sp,
                 maxLines = 1,
@@ -386,7 +386,7 @@ private fun RowScope.HudSpeedColumn(
 
         if (displayPrefs.shows(DisplayField.AVG_SPEED)) {
             Text(
-                text = "avg %.1f".format(telemetry.avgSpeedKmh),
+                text = if (telemetry.avgSpeedKmh.isFinite()) "avg %.1f".format(telemetry.avgSpeedKmh) else "—",
                 color = palette.secondaryColor.copy(alpha = 0.7f),
                 fontSize = (14f * scale).sp,
                 maxLines = 1
@@ -395,7 +395,7 @@ private fun RowScope.HudSpeedColumn(
 
         if (displayPrefs.shows(DisplayField.REMAINING_RANGE)) {
             Text(
-                text = "~%.1f km".format(telemetry.remainingRangeKm),
+                text = if (telemetry.remainingRangeKm.isFinite()) "~%.1f km".format(telemetry.remainingRangeKm) else "—",
                 color = palette.secondaryColor.copy(alpha = 0.7f),
                 fontSize = (14f * scale).sp,
                 maxLines = 1
@@ -437,7 +437,7 @@ private fun RowScope.HudTripColumn(
                 Text(text = "🛴", fontSize = (14f * scale).sp)
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
-                    text = "${telemetry.scooterBattery}%",
+                    text = if (telemetry.scooterBattery >= 0) "${telemetry.scooterBattery}%" else "—",
                     color = palette.levelColor(telemetry.scooterBattery, palette.primaryColor),
                     fontSize = (18f * scale).sp,
                     fontWeight = if (telemetry.scooterBattery <= 15) FontWeight.Bold else FontWeight.Normal,

@@ -20,6 +20,7 @@ import com.m365bleapp.ble.BleManager
 import com.m365bleapp.ffi.M365Native
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,6 +114,10 @@ data class MotorInfo(
     val batteryHealthPercent: Int? = null,
     /** True while the BMS reports charging (`0x30` bit 6). */
     val isCharging: Boolean? = null,
+    /** Receipt time of the most recent motor block; never a gateway send timestamp. */
+    val receivedAtMs: Long? = null,
+    /** Actual field observations; primitive defaults have no provenance. */
+    val typedFields: Map<FieldId, io.github.zero2005x.pev.core.telemetry.Reading> = emptyMap(),
 )
 
 class ScooterRepository private constructor(
@@ -276,6 +281,8 @@ class ScooterRepository private constructor(
 
     private val _motorInfo = MutableStateFlow<MotorInfo?>(null)
     val motorInfo = _motorInfo.asStateFlow()
+    private val _sessionGeneration = MutableStateFlow(0L)
+    val sessionGeneration = _sessionGeneration.asStateFlow()
     
     // Lock and Light state tracking
     private val _isLocked = MutableStateFlow(false)
@@ -605,11 +612,13 @@ class ScooterRepository private constructor(
     val bondStore by lazy { com.m365bleapp.bond.AndroidBondStore.get(context, sharedPreferences) }
     @Volatile private var sensitiveHandshake = false
 
-    fun scan(): Flow<android.bluetooth.le.ScanResult> {
-        return bleManager.scan()
-            .onStart { _isScanning.value = true }
-            .onCompletion { _isScanning.value = false }
-    }
+    fun stopScan() = bleManager.stopScan()
+    fun scan(): Flow<android.bluetooth.le.ScanResult> = kotlinx.coroutines.flow.flow {
+        if (_connectionState.value !is ConnectionState.Disconnected && _connectionState.value !is ConnectionState.Error) return@flow
+        if (autoReconnectStatus.value != null) return@flow
+        emitAll(bleManager.scan())
+    }.onStart { _isScanning.value = true }
+        .onCompletion { _isScanning.value = false }
 
     // ------------------------------------------------------------------ demo
 
@@ -682,6 +691,7 @@ class ScooterRepository private constructor(
     }
 
     fun connect(mac: String, register: Boolean = false) {
+        bleManager.stopScan()
         // A rider-chosen connection supersedes any pending automatic retry.
         cancelAutoReconnect()
         startConnection(mac, register)
@@ -721,8 +731,7 @@ class ScooterRepository private constructor(
             // A manual override beats the advertisement. The rider is looking at
             // the scooter; this code is matching a string. It is persisted so it
             // survives the restart that follows a language change or a crash.
-            val manual = ModelOverrideStore.getInstance(context).override.value
-            logger.setActiveModel(ScooterModelRegistry.resolve(advertisedName, manual))
+            updateIdentification()
         }.onFailure {
             Log.w("ScooterRepo", "Could not resolve scooter model: ${it.message}")
             logger.setActiveModel(null)
@@ -1101,11 +1110,20 @@ class ScooterRepository private constructor(
      * Deliberately shares [lastConnectedAdvertisedName] with the diagnostics
      * block, so what the UI shows and what a bug report contains cannot differ.
      */
-    fun currentIdentification(): com.m365bleapp.protocol.Identification =
-        com.m365bleapp.protocol.ScooterModelRegistry.resolve(
-            advertisedName = lastConnectedAdvertisedName,
-            override = com.m365bleapp.protocol.ModelOverrideStore.getInstance(context).override.value,
-        )
+    private val vehicleIdentity = com.m365bleapp.protocol.VehicleIdentificationState(
+        com.m365bleapp.protocol.VehicleProfileStore.getInstance(context), logger::setActiveModel)
+    val identification = vehicleIdentity.state
+    val currentAddress: String? get() = lastConnectedMac
+    fun currentIdentification(): com.m365bleapp.protocol.Identification = identification.value
+    private fun updateIdentification() = vehicleIdentity.activate(lastConnectedMac, lastConnectedAdvertisedName)
+    fun setVehicleModel(address: String, model: com.m365bleapp.protocol.ScooterModel?) = vehicleIdentity.bind(address, model)
+    fun savedVehicleAddresses(): List<String> = sharedPreferences.all.keys
+        .filter { it.endsWith("_token") }.map { it.removeSuffix("_token") }.sorted()
+    fun resolveLegacyModel(address: String?) {
+        val pending = ModelOverrideStore.getInstance(context)
+        com.m365bleapp.protocol.VehicleProfileStore.getInstance(context).resolvePending(address, pending)
+        if (address != null && address.equals(lastConnectedMac, true)) updateIdentification()
+    }
 
     /**
      * What the connected scooter can report and be controlled for.
@@ -1138,7 +1156,7 @@ class ScooterRepository private constructor(
         val profiles = bleManager.discoveredProfiles.value
         val model = com.m365bleapp.protocol.ScooterModelRegistry.resolve(
             lastConnectedAdvertisedName,
-            com.m365bleapp.protocol.ModelOverrideStore.getInstance(context).override.value,
+            com.m365bleapp.protocol.VehicleProfileStore.getInstance(context).manualModel(lastConnectedMac),
         )
 
         return buildString {
@@ -1881,6 +1899,7 @@ class ScooterRepository private constructor(
         val existing = _motorInfo.value
         if (existing != null) {
             _motorInfo.value = existing.copy(
+                typedFields = existing.typedFields + trip.fields,
                 tripSeconds = tripSeconds,
                 tripMeters = tripMeters
             )
@@ -1949,7 +1968,9 @@ class ScooterRepository private constructor(
             phoneSession?.close()
             phoneSession = null
             _experimentalSettings.value = ExperimentalSettingsState()
+            _motorInfo.value = null
             val gatt = bleManager.retireConnection()
+            _sessionGeneration.value = connectionResources.epoch
             plaintextSession = null
             activeConnection?.closeMailboxes()
             activeConnection = null
@@ -1994,6 +2015,7 @@ class ScooterRepository private constructor(
                 sensitiveHandshake = false
                 logger.stopSession()
                 _motorInfo.value = null
+                _sessionGeneration.value = retiredEpoch
                 reportConnectionLost()
             }
         }

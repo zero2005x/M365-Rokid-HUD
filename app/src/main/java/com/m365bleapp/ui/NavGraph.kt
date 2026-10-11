@@ -28,7 +28,7 @@ fun NavHostContainer(repository: ScooterRepository) {
     // face is the dashboard; ScooterInfoScreen is the one full detail view.
     NavHost(navController = navController, startDestination = "home") {
         composable("home") {
-            HomeScreen(
+            AppShell(
                 repository = repository,
                 onOpenSettings = { navController.navigate("settings") },
                 onOpenScooterInfo = { navController.navigate("scooterInfo") }

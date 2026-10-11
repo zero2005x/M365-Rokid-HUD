@@ -15,6 +15,7 @@ import com.m365bleapp.gateway.toGatewayFrame
 import com.m365bleapp.gateway.toGatewayState
 import com.m365bleapp.gateway.DisplayPrefsStore
 import com.m365bleapp.gateway.M365HudGattProfile
+import com.m365bleapp.gateway.GatewayUiState
 import com.m365bleapp.repository.MotorInfo
 import com.m365bleapp.repository.ScooterRepository
 import kotlinx.coroutines.*
@@ -76,6 +77,7 @@ class WifiGatewayService : Service() {
     // Read cross-thread via the companion accessors.
     @Volatile
     private var isServiceRunning = false
+    private val typedSequence = java.util.concurrent.atomic.AtomicLong(0)
     
     // WakeLock for background operation
     private var wakeLock: PowerManager.WakeLock? = null
@@ -128,6 +130,7 @@ class WifiGatewayService : Service() {
         }
         
         isServiceRunning = true
+        GatewayUiState.refresh()
         
         // Observe server state
         scope.launch {
@@ -147,6 +150,7 @@ class WifiGatewayService : Service() {
         // Observe connected device count
         scope.launch {
             wifiServer?.connectedDeviceCount?.collect { count ->
+                GatewayUiState.refresh()
                 if (count > 0) {
                     val state = wifiServer?.serverState?.value
                     if (state is WifiGatewayServer.ServerState.Running) {
@@ -207,6 +211,17 @@ class WifiGatewayService : Service() {
         if (info != null) {
             val connState = repository?.connectionState?.value.toGatewayState()
 
+            wifiServer?.vehicleSupportsLegacyV1 = repository?.isDemoRunning == true || repository?.currentIdentification()?.model?.producesTelemetry == true
+            wifiServer?.updateTypedTelemetry(
+                com.m365bleapp.gateway.GatewayTypedTelemetry.m365OrNull(
+                    info,
+                    connState,
+                    typedSequence.incrementAndGet(),
+                    System.currentTimeMillis(),
+                ),
+                repository?.sessionGeneration?.value ?: 0L
+            )
+
             wifiServer?.updateTelemetry(info.toGatewayFrame(connState))
 
             val clientCount = wifiServer?.getConnectedDeviceCount() ?: 0
@@ -215,6 +230,9 @@ class WifiGatewayService : Service() {
             }
         } else {
             // Send disconnected state
+            wifiServer?.updateTypedTelemetry(
+                com.m365bleapp.gateway.GatewayTypedTelemetry.m365OrNull(null, M365HudGattProfile.STATE_DISCONNECTED,
+                    typedSequence.incrementAndGet(), System.currentTimeMillis()), repository?.sessionGeneration?.value ?: 0L)
             wifiServer?.updateTelemetry(null.toGatewayFrame(M365HudGattProfile.STATE_DISCONNECTED))
         }
     }
@@ -224,6 +242,7 @@ class WifiGatewayService : Service() {
             while (true) {
                 delay(1000L)
                 
+                forwardMotorInfo(repository?.motorInfo?.value)
                 if (wifiServer?.getConnectedDeviceCount() ?: 0 > 0) {
                     val calendar = Calendar.getInstance()
                     val batteryManager = getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
@@ -283,6 +302,7 @@ class WifiGatewayService : Service() {
         Log.d(TAG, "WifiGatewayService onDestroy")
         isServiceRunning = false
         instance = null
+        GatewayUiState.refresh()
         
         scope.cancel()
         releaseWakeLock()

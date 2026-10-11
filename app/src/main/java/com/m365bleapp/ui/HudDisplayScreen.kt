@@ -1,5 +1,6 @@
 package com.m365bleapp.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,7 +30,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,8 +71,8 @@ fun HudDisplayScreen(
     store: DisplayPrefsStore,
     onBack: () -> Unit
 ) {
-    val mask by store.mask.collectAsState()
-    val textScale by store.textScalePercent.collectAsState()
+    val mask by store.mask.collectAsStateWithLifecycle()
+    val textScale by store.textScalePercent.collectAsStateWithLifecycle()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,

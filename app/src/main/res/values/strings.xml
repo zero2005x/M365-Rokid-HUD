@@ -343,4 +343,21 @@
     <string name="scooter_fault">Vehicle fault %1$d: %2$s</string>
     <string name="scooter_fault_throttle">Throttle signal abnormal (one long and four short beeps)</string>
     <string name="experimental_fault_blocked">Stop riding and check the vehicle. Setting writes are disabled while a fault is reported.</string>
+    <string name="nav_ride">Ride</string>
+    <string name="nav_vehicles">Vehicles</string>
+    <string name="nav_glasses">Glasses</string>
+    <string name="ride_connect_hint">Connect a vehicle from the Vehicles tab. This screen does not stop an active link.</string>
+    <string name="gateway_legacy">Legacy glasses packet</string>
+    <string name="gateway_negotiated">Typed telemetry negotiated</string>
+    <string name="gateway_incompatible">These glasses cannot show this vehicle. The legacy packet is not being filled with zeros.</string>
+    <string name="unaudited_controls_note">Legacy light and lock controls are unavailable. Experimental settings may send audited commands after explicit consent.</string>
+    <string name="model_override_next_device">This choice is saved on the next vehicle you connect. It is not applied to every saved vehicle.</string>
+
+    <string name="current_vehicle">Current vehicle</string>
+    <string name="saved_vehicles">Saved vehicles</string>
+    <string name="search_nearby">Search nearby devices</string>
+    <string name="legacy_model_prompt">Choose a saved vehicle for the previous model (%1$s), or discard it.</string>
+    <string name="discard">Discard</string>
+    <string name="data_updated_at">Data updated: %1$s</string>
+    <string name="vehicle_disconnected">Disconnected</string>
 </resources>

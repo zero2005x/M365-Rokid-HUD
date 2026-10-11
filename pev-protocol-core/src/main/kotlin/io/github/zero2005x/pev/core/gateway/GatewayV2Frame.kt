@@ -63,6 +63,18 @@ class GatewayV2Frame(
     }
 
     companion object {
+        /**
+         * Display path for a peer that does not share this clock. Uses the sender
+         * generation time already stored in the packet, so glasses do not subtract
+         * their wall clock from the phone's. Field states remain those the phone encoded.
+         */
+        fun fromBytesForRemoteDisplay(bytes: ByteArray, maxAgeMs: Long = GatewayProtocol.DEFAULT_MAX_AGE_MS): GatewayV2Frame? {
+            if (!validEnvelope(bytes)) return null
+            val generatedAt = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getLong(14)
+            if (generatedAt < 0) return null
+            return fromBytes(bytes, generatedAt, maxAgeMs)
+        }
+
         /** Clocks must share the phone's epoch basis; caller supplies age, never receipt-as-observation. */
         fun fromBytes(bytes: ByteArray, nowMs: Long, maxAgeMs: Long = GatewayProtocol.DEFAULT_MAX_AGE_MS): GatewayV2Frame? {
             require(nowMs >= 0 && maxAgeMs >= 0) { INVALID_FRESHNESS_WINDOW }

@@ -28,6 +28,8 @@ object GatewayCommandGuard {
         type == MSG_TYPE_HEARTBEAT && payload.size in setOf(0, 8) -> InspectionResult.Allowed(type, "Heartbeat")
         type == MSG_TYPE_GLASSES_BATTERY && payload.size == 1 && (payload[0].toInt() and 0xFF) <= 100 ->
             InspectionResult.Allowed(type, "Glasses battery update")
+        type == GatewayWifiFraming.TYPE_HELLO.toByte() && GatewayNegotiation.decodeHello(payload) != null ->
+            InspectionResult.Allowed(type, "Gateway version hello")
         type == MSG_TYPE_COMMAND -> InspectionResult.Rejected(type, "Vehicle settings cannot originate from glasses")
         else -> InspectionResult.Rejected(type, "Unsupported client message or invalid feedback payload")
     }

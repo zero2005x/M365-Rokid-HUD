@@ -186,17 +186,15 @@ class BleManager internal constructor(
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             connectionOwner.ifCurrent(expectedEpoch) {
+                Log.i("BleManager", "GATT connection epoch=$expectedEpoch status=$status newState=$newState")
                 if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
                     abortConnection(expectedEpoch)
                     return@ifCurrent
                 }
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    try {
-                        val refreshMethod = gatt.javaClass.getMethod("refresh")
-                        refreshMethod.invoke(gatt)
-                    } catch (e: Exception) {
-                        Log.w("BleManager", "GATT cache refresh unavailable: ${e.message}")
-                    }
+                    // Do not invalidate Android's cache immediately before discovery.
+                    // On rapid reconnects this returned success with an empty service
+                    // list on the Redmi, making the next auth subscription impossible.
                     try {
                         if (!gatt.discoverServices()) abortConnection(expectedEpoch)
                     } catch (e: SecurityException) {
@@ -208,7 +206,8 @@ class BleManager internal constructor(
         @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             connectionOwner.ifCurrent(expectedEpoch) {
-                if (status != BluetoothGatt.GATT_SUCCESS) {
+                if (status != BluetoothGatt.GATT_SUCCESS || gatt.services.isEmpty()) {
+                    Log.w("BleManager", "Service discovery unusable: status=$status services=${gatt.services.size}")
                     abortConnection(expectedEpoch)
                     return@ifCurrent
                 }

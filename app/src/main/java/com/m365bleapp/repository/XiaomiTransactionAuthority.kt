@@ -19,6 +19,24 @@ internal class XiaomiTransactionAuthority(private val transport: XiaomiEncrypted
         query(register, length, timeoutMs)
     }
 
+    /**
+     * Only the read-only motor snapshot may be re-requested after a lost reply.
+     * Keep the transaction lock throughout; every submission is freshly encrypted.
+     * A delayed B0 snapshot is telemetry, never evidence for a setting's readback.
+     * Settings and all other reads retain the single-submission retirement policy.
+     */
+    fun readMotorTelemetry(attemptTimeoutMs: Long = 1500): ByteArray? = transaction {
+        require(attemptTimeoutMs in 1..5000)
+        for (attempt in 1..3) {
+            val reply = query(0xB0, 32, attemptTimeoutMs, retireOnTimeout = false)
+            if (reply != null) return@transaction reply
+            if (!transport.connected) return@transaction null
+            transport.diagnostic("TELEMETRY_MISS: register=0xb0 attempt=$attempt/3")
+        }
+        transport.poison("Motor telemetry unanswered after 3 fresh read attempts")
+        null
+    }
+
     /** Builder runs inside the same transaction as any fresh observation and the complete plan. */
     fun execute(build: (read: (Int, Int) -> ByteArray?) -> CommandPlan?, context: (CommandPlan) -> CommandExecutionContext): CommandResult = transaction {
         val plan = build { register, length -> query(register, length, 1000) }
@@ -31,7 +49,7 @@ internal class XiaomiTransactionAuthority(private val transport: XiaomiEncrypted
         result
     }
 
-    private fun query(register: Int, length: Int, timeoutMs: Long): ByteArray? {
+    private fun query(register: Int, length: Int, timeoutMs: Long, retireOnTimeout: Boolean = true): ByteArray? {
         require(register in 0..255 && length in 1..255 && timeoutMs in 1..30_000)
         val cursor = transport.notificationSequence
         if (!transport.writeForConnection(XiaomiPdu.read(register, length), transport.connectionId)) return null
@@ -49,7 +67,7 @@ internal class XiaomiTransactionAuthority(private val transport: XiaomiEncrypted
         }
         // There is no request ID. A late reply after an unanswered query must not confirm a
         // subsequent same-register write/readback; reconnect rather than reuse this epoch.
-        transport.poison("Read register=0x${register.toString(16)} length=$length unconfirmed after ${timeoutMs}ms")
+        if (retireOnTimeout) transport.poison("Read register=0x${register.toString(16)} length=$length unconfirmed after ${timeoutMs}ms")
         return null
     }
 

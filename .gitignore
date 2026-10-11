@@ -83,3 +83,5 @@ google-services.json
 
 # Rokid Client Secrets
 *.lc
+
+/pev-protocol-core/bin/

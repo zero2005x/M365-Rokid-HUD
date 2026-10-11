@@ -11,6 +11,50 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 class XiaomiTransactionAuthorityTest {
+    @Test fun `lost motor reply is recovered without retiring login`() {
+        val link = SyntheticXiaomiPhoneLink()
+        link.onSubmit = {
+            if (link.writes.size == 2) link.emit(SyntheticXiaomiPhoneLink.reply(0xB0, ByteArray(32)))
+            true
+        }
+        assertNotNull(link.session.authority.readMotorTelemetry(20))
+        assertEquals(2, link.writes.size)
+        assertEquals(0, link.poisonCount)
+        assertTrue(link.transport.connected)
+        link.session.close()
+    }
+
+    @Test fun `three lost motor replies retire login once`() {
+        val link = SyntheticXiaomiPhoneLink()
+        link.onSubmit = { true }
+        assertNull(link.session.authority.readMotorTelemetry(20))
+        assertEquals(3, link.writes.size)
+        assertEquals(1, link.poisonCount)
+        assertFalse(link.transport.connected)
+        link.session.close()
+    }
+
+    @Test fun `rejected motor submission is never retried in poisoned login`() {
+        val link = SyntheticXiaomiPhoneLink()
+        link.onSubmit = { false }
+        assertNull(link.session.authority.readMotorTelemetry(20))
+        assertEquals(1, link.writes.size)
+        assertEquals(1, link.poisonCount)
+        link.session.close()
+    }
+
+    @Test fun `late motor reply cannot confirm setting register read`() {
+        val link = SyntheticXiaomiPhoneLink()
+        link.onSubmit = {
+            link.emit(SyntheticXiaomiPhoneLink.reply(0xB0, ByteArray(32)))
+            true
+        }
+        assertNull(link.session.authority.read(0x7D, 2, 20))
+        assertEquals(1, link.writes.size)
+        assertEquals(1, link.poisonCount)
+        link.session.close()
+    }
+
     @Test fun `read ignores unrelated direction type register and length`() {
         val link = SyntheticXiaomiPhoneLink()
         link.onSubmit = {

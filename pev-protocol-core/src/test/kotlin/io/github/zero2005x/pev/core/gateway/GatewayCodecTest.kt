@@ -20,6 +20,26 @@ class GatewayCodecTest {
         try { action(); fail("invalid configuration accepted") } catch (_: IllegalArgumentException) { /* refused */ }
     }
 
+    @Test fun everyFamilyMapsToItsGatewayVehicleType() {
+        val expected = mapOf(
+            io.github.zero2005x.pev.core.identity.Family.UNKNOWN to GatewayProtocol.VEHICLE_UNKNOWN,
+            io.github.zero2005x.pev.core.identity.Family.XIAOMI_SCOOTER to GatewayProtocol.VEHICLE_XIAOMI_M365,
+            io.github.zero2005x.pev.core.identity.Family.BEGODE to GatewayProtocol.VEHICLE_BEGODE_EUC,
+            io.github.zero2005x.pev.core.identity.Family.INMOTION_I1 to GatewayProtocol.VEHICLE_INMOTION,
+            io.github.zero2005x.pev.core.identity.Family.INMOTION_I2 to GatewayProtocol.VEHICLE_INMOTION,
+            io.github.zero2005x.pev.core.identity.Family.KINGSONG to GatewayProtocol.VEHICLE_KINGSONG,
+            io.github.zero2005x.pev.core.identity.Family.VETERAN to GatewayProtocol.VEHICLE_VETERAN,
+            io.github.zero2005x.pev.core.identity.Family.ZYDTECH_SCOOTER to GatewayProtocol.VEHICLE_ZYDTECH,
+            io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER to GatewayProtocol.VEHICLE_NINEBOT_G30_ESX,
+        )
+        assertEquals(io.github.zero2005x.pev.core.identity.Family.entries.toSet(), expected.keys)
+        for ((family, type) in expected) {
+            assertEquals(family.name, type, GatewayCodec.vehicleTypeForFamily(family))
+            assertEquals(family.name, family == io.github.zero2005x.pev.core.identity.Family.XIAOMI_SCOOTER,
+                GatewayCodec.supportsLegacyV1(GatewayCodec.vehicleTypeForFamily(family)))
+        }
+    }
+
     @Test fun v1SafeDowngradePreservesAllActualM365FieldsAndDoubleQuantization() {
         assertTrue(GatewayCodec.supportsLegacyV1(GatewayProtocol.VEHICLE_XIAOMI_M365))
         assertFalse(GatewayCodec.supportsLegacyV1(GatewayProtocol.VEHICLE_BEGODE_EUC))

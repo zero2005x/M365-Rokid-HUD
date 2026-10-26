@@ -233,4 +233,40 @@ class BegodeA2CodecTest {
         assertEquals("GW1511014", BegodeA2Codec.parseDeviceInfoAsciiOrNull("GW1511014".toByteArray(Charsets.US_ASCII)))
         assertEquals(null, BegodeA2Codec.parseDeviceInfoAsciiOrNull(liveBytes))
     }
+
+    @Test
+    fun outOfRangeVerifiedFieldsAreInvalidNotClamped() {
+        val minTempWord = Short.MIN_VALUE.toInt() and 0xFFFF
+        for (voltageWord in listOf(100, 30_000)) {
+            val telemetry = frames(
+                BegodeA2Codec(Profile.A2).feed(frame(0, 24, voltageWord, 0, 0, 0, 0, minTempWord), observedAtMs = 1L)
+            ).single().telemetry
+            assertEquals(FieldState.INVALID, telemetry[FieldId.PACK_VOLTAGE].state)
+            assertEquals(null, telemetry[FieldId.PACK_VOLTAGE].value)
+            assertEquals(FieldState.INVALID, telemetry[FieldId.TEMP_IMU].state)
+        }
+    }
+
+    @Test
+    fun timestampDoesNotDecodeNonLiveFramesOrUnknownProfile() {
+        val nonLive = frames(BegodeA2Codec(Profile.A2).feed(frame(1, 0), observedAtMs = 1L)).single()
+        assertTrue(nonLive.telemetry.fields.isEmpty())
+        val unknown = frames(BegodeA2Codec(Profile.UNKNOWN).feed(frame(0, 24, 6120), observedAtMs = 1L)).single()
+        assertEquals(RawBody.Unresolved, unknown.body)
+        assertTrue(unknown.telemetry.fields.isEmpty())
+    }
+
+    @Test
+    fun deviceInfoAsciiRequiresBoundedAlphanumericGwPrefix() {
+        fun parse(text: String) = BegodeA2Codec.parseDeviceInfoAsciiOrNull(text.toByteArray(Charsets.US_ASCII))
+        assertEquals("GWab", parse("GWab"))
+        assertEquals("GW" + "Z".repeat(14), parse("GW" + "Z".repeat(14)))
+        assertEquals(null, parse("GW1"))
+        assertEquals(null, parse("GW" + "1".repeat(15)))
+        assertEquals(null, parse("XW151101"))
+        assertEquals(null, parse("GX151101"))
+        assertEquals(null, parse("GW15-101"))
+        assertEquals(null, parse("GW15 101"))
+        assertEquals(null, BegodeA2Codec.parseDeviceInfoAsciiOrNull(byteArrayOf(0x47, 0x57, 0x31, 0x80.toByte())))
+    }
 }

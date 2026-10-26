@@ -55,21 +55,22 @@ object VehicleProfileCodec {
         val current = StringBuilder()
         var escaped = false
         line.forEach { ch ->
-            if (escaped) {
-                current.append(when (ch) {
-                    't' -> '\t'
-                    'n' -> '\n'
-                    'r' -> '\r'
-                    else -> ch
-                })
-                escaped = false
-            } else if (ch == '\\') {
-                escaped = true
-            } else if (ch == '\t') {
-                fields += current.toString()
-                current.clear()
-            } else {
-                current.append(ch)
+            when {
+                escaped -> {
+                    current.append(when (ch) {
+                        't' -> '\t'
+                        'n' -> '\n'
+                        'r' -> '\r'
+                        else -> ch
+                    })
+                    escaped = false
+                }
+                ch == '\\' -> escaped = true
+                ch == '\t' -> {
+                    fields += current.toString()
+                    current.clear()
+                }
+                else -> current.append(ch)
             }
         }
         if (escaped) return emptyList()

@@ -904,10 +904,8 @@ class ScooterRepository private constructor(
                         val hmsoft = bleManager.discoveredProfiles.value.firstOrNull {
                             it.kind == com.m365bleapp.protocol.GattProfileKind.HMSOFT
                         }
-                        if (hmsoft == null) {
-                            throw IllegalStateException(
-                                "Begode A2 requires GATT service 0xffe0 / characteristic 0xffe1 (HMSoft)"
-                            )
+                        checkNotNull(hmsoft) {
+                            "Begode A2 requires GATT service 0xffe0 / characteristic 0xffe1 (HMSoft)"
                         }
                         connectionResources.ifCurrent(attempt) {
                             _connectionState.value = ConnectionState.Handshaking("Waiting for Begode A2 telemetry stream...")
@@ -1489,31 +1487,7 @@ class ScooterRepository private constructor(
                         }
                         val nowMs = System.currentTimeMillis()
                         if (chunk != null) {
-                            when (val update = session.onNotification(chunk, nowMs)) {
-                                is com.m365bleapp.protocol.BegodeA2Session.Update.DeviceInfo -> {
-                                    Log.i("ScooterRepo", "Begode A2 device-info ASCII: ${update.ascii}")
-                                    connectionResources.ifCurrent(expectedEpoch) {
-                                        snapshotStore.updateIdentity(
-                                            mac = connection.deviceId,
-                                            serial = null,
-                                            firmware = update.ascii,
-                                        )
-                                    }
-                                }
-                                is com.m365bleapp.protocol.BegodeA2Session.Update.Telemetry -> {
-                                    if (update.newlyReady) {
-                                        rememberProtocol(com.m365bleapp.protocol.ScooterProtocol.BEGODE_A2_STREAM)
-                                        connectionResources.ifCurrent(expectedEpoch) {
-                                            _connectionState.value = ConnectionState.Ready
-                                        }
-                                    }
-                                    connectionResources.ifCurrent(expectedEpoch) {
-                                        _motorInfo.value = update.motorInfo
-                                        logger.log(update.motorInfo)
-                                    }
-                                }
-                                com.m365bleapp.protocol.BegodeA2Session.Update.AwaitingCompleteFrame -> {}
-                            }
+                            applyBegodeA2Update(session.onNotification(chunk, nowMs), connection)
                         } else {
                             session.ageIfStale(nowMs)?.let { staleInfo ->
                                 connectionResources.ifCurrent(expectedEpoch) {
@@ -1527,6 +1501,40 @@ class ScooterRepository private constructor(
                     Log.i("ScooterRepo", "Begode A2 passive telemetry stream loop ended")
                 }
             }
+        }
+    }
+
+    /** Applies one [com.m365bleapp.protocol.BegodeA2Session.Update] to the current connection's state. */
+    private suspend fun applyBegodeA2Update(
+        update: com.m365bleapp.protocol.BegodeA2Session.Update,
+        connection: ConnectionEpoch,
+    ) {
+        val expectedEpoch = connection.value
+        when (update) {
+            is com.m365bleapp.protocol.BegodeA2Session.Update.DeviceInfo -> {
+                Log.i("ScooterRepo", "Begode A2 device-info ASCII: ${update.ascii}")
+                connectionResources.ifCurrent(expectedEpoch) {
+                    snapshotStore.updateIdentity(
+                        mac = connection.deviceId,
+                        serial = null,
+                        firmware = update.ascii,
+                    )
+                }
+            }
+            is com.m365bleapp.protocol.BegodeA2Session.Update.Telemetry -> {
+                if (update.newlyReady) {
+                    rememberProtocol(com.m365bleapp.protocol.ScooterProtocol.BEGODE_A2_STREAM)
+                    connectionResources.ifCurrent(expectedEpoch) {
+                        _connectionState.value = ConnectionState.Ready
+                    }
+                }
+                connectionResources.ifCurrent(expectedEpoch) {
+                    _motorInfo.value = update.motorInfo
+                    logger.log(update.motorInfo)
+                }
+            }
+            // A partial frame: nothing to publish until the 24-byte envelope completes.
+            com.m365bleapp.protocol.BegodeA2Session.Update.AwaitingCompleteFrame -> Unit
         }
     }
 

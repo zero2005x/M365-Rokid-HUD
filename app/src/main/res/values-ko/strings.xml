@@ -79,6 +79,7 @@
     <string name="info_avg_speed">평균 속도</string>
     <string name="info_battery_section">배터리 정보</string>
     <string name="info_battery_level">배터리 잔량</string>
+    <string name="info_pack_voltage">배터리 전압</string>
     <string name="info_remaining_range">예상 주행 거리</string>
     <string name="info_trip_section">현재 주행</string>
     <string name="info_trip_time">주행 시간</string>

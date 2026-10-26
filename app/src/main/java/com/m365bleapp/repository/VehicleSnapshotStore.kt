@@ -58,6 +58,7 @@ data class VehicleSnapshot(
     val remainingKm: Double = 0.0,
     val tripMeters: Int = 0,
     val tripSeconds: Int = 0,
+    val packVoltageV: Double? = null,
 
     /**
      * When this snapshot was last refreshed from live telemetry, in
@@ -115,12 +116,15 @@ class VehicleSnapshotStore private constructor(context: Context) {
         val remainingKm: Double,
         val tripMeters: Int,
         val tripSeconds: Int,
+        val packVoltageV: Double? = null,
     )
 
     fun updateTelemetry(mac: String?, update: TelemetryUpdate) {
         val previous = _snapshot.value
-        _snapshot.value = previous.copy(
-            mac = mac ?: previous.mac,
+        val sameVehicle = mac == null || previous.mac == null || previous.mac.equals(mac, ignoreCase = true)
+        val base = if (sameVehicle) previous else VehicleSnapshot(mac = mac)
+        _snapshot.value = base.copy(
+            mac = mac ?: base.mac,
             speedKmh = update.speedKmh,
             batteryPercent = update.batteryPercent,
             temperatureC = update.temperatureC,
@@ -129,6 +133,7 @@ class VehicleSnapshotStore private constructor(context: Context) {
             remainingKm = update.remainingKm,
             tripMeters = update.tripMeters,
             tripSeconds = update.tripSeconds,
+            packVoltageV = update.packVoltageV,
             capturedAtMs = System.currentTimeMillis()
         )
     }
@@ -157,10 +162,12 @@ class VehicleSnapshotStore private constructor(context: Context) {
      */
     fun updateIdentity(mac: String?, serial: String?, firmware: String?) {
         val previous = _snapshot.value
-        val merged = previous.copy(
-            mac = mac ?: previous.mac,
-            serial = serial ?: previous.serial,
-            firmware = firmware ?: previous.firmware
+        val sameVehicle = mac == null || previous.mac == null || previous.mac.equals(mac, ignoreCase = true)
+        val base = if (sameVehicle) previous else VehicleSnapshot(mac = mac)
+        val merged = base.copy(
+            mac = mac ?: base.mac,
+            serial = serial ?: base.serial,
+            firmware = firmware ?: base.firmware
         )
         if (merged.serial == previous.serial &&
             merged.firmware == previous.firmware &&

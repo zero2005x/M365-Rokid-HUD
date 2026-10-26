@@ -106,6 +106,7 @@
     <string name="info_avg_speed">Average Speed</string>
     <string name="info_battery_section">Battery Info</string>
     <string name="info_battery_level">Battery Level</string>
+    <string name="info_pack_voltage">Pack Voltage</string>
     <string name="info_remaining_range">Estimated Range</string>
     <string name="info_trip_section">Current Trip</string>
     <string name="info_trip_time">Trip Time</string>

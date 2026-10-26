@@ -15,6 +15,7 @@ class DeviceIdentityTest {
     @Test
     fun gattHintNeverMakesModelExact() {
         assertFalse(DeviceIdentity(Family.BEGODE, "A2").isExact)
+        assertFalse(DeviceIdentity(Family.BEGODE, "A2", source = IdentitySource.GATT_PROFILE).isExact)
     }
 
     @Test

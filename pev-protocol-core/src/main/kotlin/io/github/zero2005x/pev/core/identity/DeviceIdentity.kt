@@ -7,7 +7,7 @@ enum class Family {
 }
 
 /** How a family/model claim was obtained, weakest first. */
-enum class IdentitySource { GATT_HINT, USER_SELECTED, IN_BAND_QUERY }
+enum class IdentitySource { GATT_HINT, GATT_PROFILE, USER_SELECTED, IN_BAND_QUERY }
 
 /** One claim. Unknown stays null: model is never guessed from name, MAC or voltage range. */
 data class DeviceIdentity(
@@ -20,7 +20,8 @@ data class DeviceIdentity(
 ) {
     /** Exact-model profile is only known when a model was established beyond a GATT hint. */
     val isExact: Boolean
-        get() = family != Family.UNKNOWN && !model.isNullOrBlank() && source != IdentitySource.GATT_HINT
+        get() = family != Family.UNKNOWN && !model.isNullOrBlank() &&
+            source != IdentitySource.GATT_HINT && source != IdentitySource.GATT_PROFILE
 
     /** Stable key used to bind write-session consent; any change revokes it. */
     val profileKey: String

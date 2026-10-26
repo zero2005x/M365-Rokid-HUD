@@ -39,6 +39,17 @@ enum class ScooterProtocol(val id: String, val label: String) {
      */
     ENCRYPTION2("enc2", "Encryption2"),
 
+    /**
+     * Begode A2 passive 24-byte `55 AA ... 5A 5A 5A 5A` notification stream
+     * on `0xffe0`/`0xffe1` (`GattProfileKind.HMSOFT`).
+     */
+    BEGODE_A2_STREAM("begode_a2_stream", "Begode A2 55AA stream"),
+
+    /**
+     * InMotion I1 escaped CAN envelope (`AA AA ... 55 55`) diagnostic stream.
+     */
+    INMOTION_I1_CAN("inmotion_i1_can", "InMotion I1 CAN envelope"),
+
     /** Not yet identified; a probe is still owed. */
     UNKNOWN("unknown", "Unknown")
 }

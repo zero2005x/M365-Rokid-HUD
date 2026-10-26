@@ -208,31 +208,56 @@ class WifiGatewayService : Service() {
     }
 
     private fun forwardMotorInfo(info: MotorInfo?) {
+        val activeModel = repository?.currentIdentification()?.model ?: com.m365bleapp.protocol.ScooterModel.UNKNOWN
+        val vehicleType = if (repository?.isDemoRunning == true) {
+            io.github.zero2005x.pev.core.gateway.GatewayProtocol.VEHICLE_XIAOMI_M365
+        } else {
+            io.github.zero2005x.pev.core.gateway.GatewayCodec.vehicleTypeForFamily(activeModel.family)
+        }
+        val legacyAllowed = repository?.isDemoRunning == true ||
+            (activeModel.producesTelemetry && io.github.zero2005x.pev.core.gateway.GatewayCodec.supportsLegacyV1(vehicleType))
+        wifiServer?.vehicleSupportsLegacyV1 = legacyAllowed
+
         if (info != null) {
             val connState = repository?.connectionState?.value.toGatewayState()
 
-            wifiServer?.vehicleSupportsLegacyV1 = repository?.isDemoRunning == true || repository?.currentIdentification()?.model?.producesTelemetry == true
             wifiServer?.updateTypedTelemetry(
-                com.m365bleapp.gateway.GatewayTypedTelemetry.m365OrNull(
-                    info,
-                    connState,
-                    typedSequence.incrementAndGet(),
-                    System.currentTimeMillis(),
+                com.m365bleapp.gateway.GatewayTypedTelemetry.fromMotorInfoOrNull(
+                    info = info,
+                    vehicleType = vehicleType,
+                    connectionState = connState,
+                    sequence = typedSequence.incrementAndGet(),
+                    nowMs = System.currentTimeMillis(),
+                    maxAgeMs = activeModel.telemetryMaxAgeMs,
                 ),
                 repository?.sessionGeneration?.value ?: 0L
             )
 
-            wifiServer?.updateTelemetry(info.toGatewayFrame(connState))
+            if (legacyAllowed) {
+                wifiServer?.updateTelemetry(info.toGatewayFrame(connState))
+            }
 
             val clientCount = wifiServer?.getConnectedDeviceCount() ?: 0
             if (clientCount > 0) {
-                updateNotification("📡 WiFi | 🛴 ${info.speed.toInt()} km/h | 🔋${info.battery}%")
+                val speedText = info.validSpeedOrNull(activeModel.capabilities)?.let { "${it.toInt()} km/h" } ?: "—"
+                val battText = info.validBatteryOrNull(activeModel.capabilities)?.let { "🔋${it}%" }
+                    ?: info.validPackVoltageOrNull(activeModel.capabilities)?.let { "⚡${"%.1f".format(it)}V" }
+                    ?: "—"
+                updateNotification("📡 WiFi | 🛴 $speedText | $battText")
             }
         } else {
             // Send disconnected state
             wifiServer?.updateTypedTelemetry(
-                com.m365bleapp.gateway.GatewayTypedTelemetry.m365OrNull(null, M365HudGattProfile.STATE_DISCONNECTED,
-                    typedSequence.incrementAndGet(), System.currentTimeMillis()), repository?.sessionGeneration?.value ?: 0L)
+                com.m365bleapp.gateway.GatewayTypedTelemetry.fromMotorInfoOrNull(
+                    info = null,
+                    vehicleType = vehicleType,
+                    connectionState = M365HudGattProfile.STATE_DISCONNECTED,
+                    sequence = typedSequence.incrementAndGet(),
+                    nowMs = System.currentTimeMillis(),
+                    maxAgeMs = activeModel.telemetryMaxAgeMs,
+                ),
+                repository?.sessionGeneration?.value ?: 0L
+            )
             wifiServer?.updateTelemetry(null.toGatewayFrame(M365HudGattProfile.STATE_DISCONNECTED))
         }
     }

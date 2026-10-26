@@ -169,13 +169,15 @@ private fun ConnectedHome(
 
             // --- Hero: speed. A dash, not 0.0, until the first reading arrives —
             // a zero here reads as a real measurement.
+            val caps = identity.model.capabilities
+            val liveSpeed = info?.validSpeedOrNull(caps)
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = info?.speed?.let { formatOneDecimal(it) }
+                        text = liveSpeed?.let { formatOneDecimal(it) }
                             ?: stringResource(R.string.value_unknown),
                         fontSize = FontSizes.heroSpeed,
                         fontWeight = FontWeight.Bold,
@@ -200,7 +202,8 @@ private fun ConnectedHome(
             ) {
                 BatteryTile(
                     label = if (identity.model.producesTelemetry) "🛴" else "🚗",
-                    percent = info?.battery,
+                    percent = info?.validBatteryOrNull(caps),
+                    voltageV = info?.validPackVoltageOrNull(caps),
                     modifier = Modifier.weight(1f)
                 )
                 PhoneBatteryTile(modifier = Modifier.weight(1f))
@@ -257,9 +260,14 @@ private fun ReconnectingBanner(status: String) {
     }
 }
 
-/** Scooter/other battery tile that shows a dash rather than a fake 0 %. */
+/** Scooter/other battery tile that shows a dash (or verified pack voltage) rather than a fake 0 %. */
 @Composable
-private fun BatteryTile(label: String, percent: Int?, modifier: Modifier = Modifier) {
+private fun BatteryTile(
+    label: String,
+    percent: Int?,
+    modifier: Modifier = Modifier,
+    voltageV: Double? = null,
+) {
     if (percent != null) {
         M365BatteryBar(batteryLevel = percent, label = label, modifier = modifier)
     } else {
@@ -269,9 +277,10 @@ private fun BatteryTile(label: String, percent: Int?, modifier: Modifier = Modif
         ) {
             Text(text = "$label ", fontSize = 20.sp)
             Text(
-                text = stringResource(R.string.value_unknown),
+                text = voltageV?.let { "${"%.1f".format(it)} V" }
+                    ?: stringResource(R.string.value_unknown),
                 style = MaterialTheme.typography.titleMedium,
-                color = TextSecondary
+                color = if (voltageV != null) MaterialTheme.colorScheme.primary else TextSecondary
             )
         }
     }

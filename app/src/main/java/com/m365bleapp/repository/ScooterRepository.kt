@@ -118,7 +118,59 @@ data class MotorInfo(
     val receivedAtMs: Long? = null,
     /** Actual field observations; primitive defaults have no provenance. */
     val typedFields: Map<FieldId, io.github.zero2005x.pev.core.telemetry.Reading> = emptyMap(),
-)
+) {
+    fun validSpeedOrNull(caps: com.m365bleapp.protocol.ModelCapabilities): Double? {
+        if (!caps.speed) return null
+        val typed = typedFields[FieldId.SPEED_KMH]
+        if (typed != null) {
+            return typed.value?.takeIf {
+                typed.state == io.github.zero2005x.pev.core.telemetry.FieldState.VALID && !it.isNaN()
+            }
+        }
+        return speed.takeIf { !it.isNaN() }
+    }
+
+    fun validBatteryOrNull(caps: com.m365bleapp.protocol.ModelCapabilities): Int? {
+        if (!caps.batteryPercent) return null
+        val typed = typedFields[FieldId.SOC_PERCENT]
+        if (typed != null) {
+            return typed.value?.toInt()?.takeIf {
+                typed.state == io.github.zero2005x.pev.core.telemetry.FieldState.VALID && it in 0..100
+            }
+        }
+        return battery.takeIf { it in 0..100 }
+    }
+
+    fun validTempOrNull(caps: com.m365bleapp.protocol.ModelCapabilities): Double? {
+        if (!caps.temperature) return null
+        for (field in listOf(
+            FieldId.TEMP_FRAME,
+            FieldId.TEMP_MOSFET,
+            FieldId.TEMP_IMU,
+            FieldId.TEMP_MOTOR,
+            FieldId.TEMP_BATTERY,
+        )) {
+            val r = typedFields[field]
+            if (r != null) {
+                return r.value?.takeIf {
+                    r.state == io.github.zero2005x.pev.core.telemetry.FieldState.VALID && !it.isNaN()
+                }
+            }
+        }
+        return temp.takeIf { !it.isNaN() }
+    }
+
+    fun validPackVoltageOrNull(caps: com.m365bleapp.protocol.ModelCapabilities): Double? {
+        if (!caps.packVoltage) return null
+        val r = typedFields[FieldId.PACK_VOLTAGE]
+        if (r != null) {
+            return r.value?.takeIf {
+                r.state == io.github.zero2005x.pev.core.telemetry.FieldState.VALID && !it.isNaN()
+            }
+        }
+        return packVoltageV?.takeIf { !it.isNaN() }
+    }
+}
 
 class ScooterRepository private constructor(
     private val context: Context,
@@ -503,6 +555,13 @@ class ScooterRepository private constructor(
      * change the outcome without touching the branch that consumes it.
      */
     private fun detectedProtocolOrPlaintext(): com.m365bleapp.protocol.ScooterProtocol {
+        val modelFamily = currentIdentification().model.family
+        if (modelFamily == io.github.zero2005x.pev.core.identity.Family.BEGODE) {
+            return com.m365bleapp.protocol.ScooterProtocol.BEGODE_A2_STREAM
+        }
+        if (modelFamily == io.github.zero2005x.pev.core.identity.Family.INMOTION_I1) {
+            return com.m365bleapp.protocol.ScooterProtocol.INMOTION_I1_CAN
+        }
         val detected = _detectedProtocol.value
         return if (detected == com.m365bleapp.protocol.ScooterProtocol.UNKNOWN) {
             // No probe result yet: keep the previous behaviour of assuming the
@@ -516,7 +575,13 @@ class ScooterRepository private constructor(
 
     private fun adoptDiscoveredProfile() {
         val profiles = bleManager.discoveredProfiles.value
-        val chosen = profiles.firstOrNull()
+        val modelFamily = currentIdentification().model.family
+        val chosen = if (modelFamily == io.github.zero2005x.pev.core.identity.Family.BEGODE) {
+            profiles.firstOrNull { it.kind == com.m365bleapp.protocol.GattProfileKind.HMSOFT }
+                ?: profiles.firstOrNull()
+        } else {
+            profiles.firstOrNull()
+        }
 
         if (chosen == null) {
             Log.w(
@@ -597,7 +662,8 @@ class ScooterRepository private constructor(
                             averageSpeedKmh = info.avgSpeed,
                             remainingKm = info.remainingKm,
                             tripMeters = info.tripMeters,
-                            tripSeconds = info.tripSeconds
+                            tripSeconds = info.tripSeconds,
+                            packVoltageV = info.packVoltageV,
                         )
                     )
                 }
@@ -827,6 +893,41 @@ class ScooterRepository private constructor(
                 }
                 gatt.requestMtu(512)
                 delay(200)
+
+                // ---- Multi-device EUC / PEV session routing -------------------
+                // Non-Xiaomi / non-Ninebot families must never be probed with
+                // Xiaomi fe95 auth or Ninebot 5AA5 frames (blind cross-protocol
+                // probing is forbidden).
+                val activeModel = currentIdentification().model
+                when (activeModel.family) {
+                    io.github.zero2005x.pev.core.identity.Family.BEGODE -> {
+                        val hmsoft = bleManager.discoveredProfiles.value.firstOrNull {
+                            it.kind == com.m365bleapp.protocol.GattProfileKind.HMSOFT
+                        }
+                        if (hmsoft == null) {
+                            throw IllegalStateException(
+                                "Begode A2 requires GATT service 0xffe0 / characteristic 0xffe1 (HMSoft)"
+                            )
+                        }
+                        connectionResources.ifCurrent(attempt) {
+                            _connectionState.value = ConnectionState.Handshaking("Waiting for Begode A2 telemetry stream...")
+                        }
+                        Log.d("ScooterRepo", "Enabling 0xffe1 notifications for Begode A2 passive stream")
+                        check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { UART_SUBSCRIPTION_FAILED }
+                        startBegodeA2StreamLoop(gatt, attemptContext)
+                        return@launch
+                    }
+                    io.github.zero2005x.pev.core.identity.Family.INMOTION_I1,
+                    io.github.zero2005x.pev.core.identity.Family.INMOTION_I2,
+                    io.github.zero2005x.pev.core.identity.Family.KINGSONG,
+                    io.github.zero2005x.pev.core.identity.Family.VETERAN,
+                    io.github.zero2005x.pev.core.identity.Family.ZYDTECH_SCOOTER -> {
+                        throw IllegalStateException(
+                            "${activeModel.displayName}: recognised, telemetry and write commands withheld pending hardware verification"
+                        )
+                    }
+                    else -> { /* Xiaomi / Ninebot / Unknown proceed below */ }
+                }
 
                 // ---- Plaintext branch (stage C1) ------------------------------
                 // A plaintext scooter does not run the Xiaomi auth handshake at
@@ -1357,6 +1458,74 @@ class ScooterRepository private constructor(
                 }
 
                 Log.i("ScooterRepo", "Plaintext telemetry loop ended")
+            }
+        }
+    }
+
+    /**
+     * Passive notification stream loop for Begode A2 (`0xffe0`/`0xffe1`).
+     *
+     * Issues zero writes. Transitions `_connectionState` from `Handshaking` to
+     * `Ready` only after [com.m365bleapp.protocol.BegodeA2Session] reassembles and
+     * validates at least one 24-byte `55 AA ... 5A 5A 5A 5A` frame, and ages
+     * readings to `STALE` if no valid frame arrives within 1,000 ms.
+     */
+    private fun startBegodeA2StreamLoop(
+        gatt: android.bluetooth.BluetoothGatt,
+        connection: ConnectionEpoch,
+    ) {
+        val expectedEpoch = connection.value
+        connectionResources.ifCurrent(expectedEpoch) {
+            plaintextJob = scope.launch(ioDispatcher + connection) {
+                val session = com.m365bleapp.protocol.BegodeA2Session()
+                Log.i("ScooterRepo", "Begode A2 passive telemetry stream loop starting")
+                try {
+                    while (currentCoroutineContext().isActive &&
+                        connectionResources.isCurrent(expectedEpoch) &&
+                        activeGatt === gatt
+                    ) {
+                        val chunk = withTimeoutOrNull(250L) {
+                            capturedConnection().uart.receive()
+                        }
+                        val nowMs = System.currentTimeMillis()
+                        if (chunk != null) {
+                            when (val update = session.onNotification(chunk, nowMs)) {
+                                is com.m365bleapp.protocol.BegodeA2Session.Update.DeviceInfo -> {
+                                    Log.i("ScooterRepo", "Begode A2 device-info ASCII: ${update.ascii}")
+                                    connectionResources.ifCurrent(expectedEpoch) {
+                                        snapshotStore.updateIdentity(
+                                            mac = connection.deviceId,
+                                            serial = null,
+                                            firmware = update.ascii,
+                                        )
+                                    }
+                                }
+                                is com.m365bleapp.protocol.BegodeA2Session.Update.Telemetry -> {
+                                    if (update.newlyReady) {
+                                        rememberProtocol(com.m365bleapp.protocol.ScooterProtocol.BEGODE_A2_STREAM)
+                                        connectionResources.ifCurrent(expectedEpoch) {
+                                            _connectionState.value = ConnectionState.Ready
+                                        }
+                                    }
+                                    connectionResources.ifCurrent(expectedEpoch) {
+                                        _motorInfo.value = update.motorInfo
+                                        logger.log(update.motorInfo)
+                                    }
+                                }
+                                com.m365bleapp.protocol.BegodeA2Session.Update.AwaitingCompleteFrame -> {}
+                            }
+                        } else {
+                            session.ageIfStale(nowMs)?.let { staleInfo ->
+                                connectionResources.ifCurrent(expectedEpoch) {
+                                    _motorInfo.value = staleInfo
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    session.reset()
+                    Log.i("ScooterRepo", "Begode A2 passive telemetry stream loop ended")
+                }
             }
         }
     }

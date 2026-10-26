@@ -17,18 +17,26 @@ internal class TypedTelemetryReceiver {
         if (generation < latestGeneration || !gate.accept(generation, frame.sequence)) return null
         latestGeneration = generation
         fun value(field: GatewayField): Double? = frame[field].takeIf { it.state == FieldState.VALID }?.value
+        val thermalC = listOf(
+            GatewayField.TEMP_FRAME,
+            GatewayField.TEMP_MOSFET,
+            GatewayField.TEMP_IMU,
+            GatewayField.TEMP_MOTOR,
+            GatewayField.TEMP_BATTERY,
+        ).firstNotNullOfOrNull { value(it) }
         return TelemetryData(
             speedKmh = value(GatewayField.SPEED_KMH)?.toFloat() ?: Float.NaN,
             scooterBattery = value(GatewayField.SOC_PERCENT)?.toInt() ?: -1,
-            temperatureC = value(GatewayField.TEMP_FRAME)?.toFloat() ?: Float.NaN,
+            temperatureC = thermalC?.toFloat() ?: Float.NaN,
             totalMileageM = value(GatewayField.TOTAL_DISTANCE_M)?.toLong() ?: -1,
-            avgSpeedKmh = Float.NaN,
-            remainingRangeKm = Float.NaN,
+            avgSpeedKmh = value(GatewayField.AVG_SPEED_KMH)?.toFloat() ?: Float.NaN,
+            remainingRangeKm = value(GatewayField.REMAINING_RANGE_KM)?.toFloat() ?: Float.NaN,
             tripMeters = value(GatewayField.TRIP_DISTANCE_M)?.toInt() ?: -1,
             tripSeconds = value(GatewayField.TRIP_TIME_S)?.toInt() ?: -1,
             connectionState = frame.connectionState,
             isValid = true,
             typedStates = GatewayField.entries.associateWith { frame[it].state },
+            packVoltageV = value(GatewayField.PACK_VOLTAGE)?.toFloat() ?: Float.NaN,
         )
     }
 }

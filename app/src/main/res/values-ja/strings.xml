@@ -79,6 +79,7 @@
     <string name="info_avg_speed">平均速度</string>
     <string name="info_battery_section">バッテリー情報</string>
     <string name="info_battery_level">バッテリー残量</string>
+    <string name="info_pack_voltage">バッテリー電圧</string>
     <string name="info_remaining_range">推定航続距離</string>
     <string name="info_trip_section">現在の走行</string>
     <string name="info_trip_time">走行時間</string>

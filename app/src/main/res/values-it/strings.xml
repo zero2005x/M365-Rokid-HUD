@@ -79,6 +79,7 @@
     <string name="info_avg_speed">Velocità Media</string>
     <string name="info_battery_section">Info Batteria</string>
     <string name="info_battery_level">Livello Batteria</string>
+    <string name="info_pack_voltage">Tensione Batteria</string>
     <string name="info_remaining_range">Autonomia Stimata</string>
     <string name="info_trip_section">Viaggio Attuale</string>
     <string name="info_trip_time">Tempo di Viaggio</string>

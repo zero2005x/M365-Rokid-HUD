@@ -33,4 +33,26 @@ class TypedTelemetryReceiverTest {
         receiver.reset()
         assertNotNull(receiver.applyTyped(packet(1, 1000, 1100)))
     }
+    @Test fun `multi-device frame with IMU temp and pack voltage exposes thermal and voltage without fake battery`() {
+        val receiver = TypedTelemetryReceiver()
+        val bytes = GatewayV2Frame(
+            vehicleType = GatewayProtocol.VEHICLE_BEGODE_EUC,
+            connectionState = GatewayProtocol.STATE_READY,
+            sequence = 1,
+            generatedAtMs = 2_100L,
+            fields = mapOf(
+                GatewayField.PACK_VOLTAGE to Reading.valid(61.2, 2_000L, Evidence.WIRE_CAPTURED, "begode:a2:0x00"),
+                GatewayField.TEMP_IMU to Reading.valid(31.8, 2_000L, Evidence.WIRE_CAPTURED, "begode:a2:0x00"),
+            ),
+        ).toBytes()
+        val payload = ByteBuffer.allocate(8 + bytes.size).putLong(1L).put(bytes).array()
+        val data = receiver.applyTyped(payload)!!
+        assertTrue(data.speedKmh.isNaN())
+        assertEquals(-1, data.scooterBattery)
+        assertFalse(data.hasValidBattery)
+        assertTrue(data.hasValidPackVoltage)
+        assertEquals(61.2f, data.packVoltageV, 0.01f)
+        assertTrue(data.hasValidTemperature)
+        assertEquals(31.8f, data.temperatureC, 0.01f)
+    }
 }

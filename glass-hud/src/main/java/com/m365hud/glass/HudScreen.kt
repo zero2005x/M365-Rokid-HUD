@@ -317,7 +317,7 @@ private fun RowScope.HudStatusColumn(
         if (displayPrefs.shows(DisplayField.TEMPERATURE)) {
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = if (telemetry.temperatureC.isFinite()) "%.0f°C".format(telemetry.temperatureC) else "—",
+                text = if (telemetry.hasValidTemperature) "%.0f°C".format(telemetry.temperatureC) else "—",
                 color = palette.secondaryColor.copy(alpha = 0.8f),
                 fontSize = (14f * scale).sp,
                 maxLines = 1,
@@ -367,8 +367,10 @@ private fun RowScope.HudSpeedColumn(
         modifier = Modifier.weight(2f)
     ) {
         if (displayPrefs.shows(DisplayField.SPEED)) {
+            val speedValid = telemetry.fieldValid(io.github.zero2005x.pev.core.gateway.GatewayField.SPEED_KMH) &&
+                telemetry.speedKmh.isFinite()
             Text(
-                text = formatSpeedKmh(telemetry.speedKmh),
+                text = if (speedValid) formatSpeedKmh(telemetry.speedKmh) else "—",
                 color = palette.primaryColor,
                 fontSize = (48f * scale).sp,
                 fontWeight = FontWeight.Bold,
@@ -385,8 +387,10 @@ private fun RowScope.HudSpeedColumn(
         }
 
         if (displayPrefs.shows(DisplayField.AVG_SPEED)) {
+            val avgValid = telemetry.fieldValid(io.github.zero2005x.pev.core.gateway.GatewayField.AVG_SPEED_KMH) &&
+                telemetry.avgSpeedKmh.isFinite()
             Text(
-                text = if (telemetry.avgSpeedKmh.isFinite()) "avg %.1f".format(telemetry.avgSpeedKmh) else "—",
+                text = if (avgValid) "avg %.1f".format(telemetry.avgSpeedKmh) else "—",
                 color = palette.secondaryColor.copy(alpha = 0.7f),
                 fontSize = (14f * scale).sp,
                 maxLines = 1
@@ -394,8 +398,10 @@ private fun RowScope.HudSpeedColumn(
         }
 
         if (displayPrefs.shows(DisplayField.REMAINING_RANGE)) {
+            val rangeValid = telemetry.fieldValid(io.github.zero2005x.pev.core.gateway.GatewayField.REMAINING_RANGE_KM) &&
+                telemetry.remainingRangeKm.isFinite()
             Text(
-                text = if (telemetry.remainingRangeKm.isFinite()) "~%.1f km".format(telemetry.remainingRangeKm) else "—",
+                text = if (rangeValid) "~%.1f km".format(telemetry.remainingRangeKm) else "—",
                 color = palette.secondaryColor.copy(alpha = 0.7f),
                 fontSize = (14f * scale).sp,
                 maxLines = 1
@@ -430,6 +436,8 @@ private fun RowScope.HudTripColumn(
         modifier = Modifier.weight(1.2f)
     ) {
         if (displayPrefs.shows(DisplayField.SCOOTER_BATTERY)) {
+            val batteryValid = telemetry.hasValidBattery
+            val voltageFallback = !batteryValid && telemetry.hasValidPackVoltage
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.wrapContentWidth()
@@ -437,10 +445,18 @@ private fun RowScope.HudTripColumn(
                 Text(text = "🛴", fontSize = (14f * scale).sp)
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
-                    text = if (telemetry.scooterBattery >= 0) "${telemetry.scooterBattery}%" else "—",
-                    color = palette.levelColor(telemetry.scooterBattery, palette.primaryColor),
+                    text = when {
+                        batteryValid -> "${telemetry.scooterBattery}%"
+                        voltageFallback -> "%.1fV".format(telemetry.packVoltageV)
+                        else -> "—"
+                    },
+                    color = when {
+                        batteryValid -> palette.levelColor(telemetry.scooterBattery, palette.primaryColor)
+                        voltageFallback -> palette.primaryColor
+                        else -> palette.secondaryColor
+                    },
                     fontSize = (18f * scale).sp,
-                    fontWeight = if (telemetry.scooterBattery <= 15) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = if (batteryValid && telemetry.scooterBattery <= 15) FontWeight.Bold else FontWeight.Normal,
                     maxLines = 1,
                     softWrap = false
                 )

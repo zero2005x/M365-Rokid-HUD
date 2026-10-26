@@ -79,6 +79,7 @@
     <string name="info_avg_speed">Vitesse Moyenne</string>
     <string name="info_battery_section">Info Batterie</string>
     <string name="info_battery_level">Niveau de Batterie</string>
+    <string name="info_pack_voltage">Tension de la Batterie</string>
     <string name="info_remaining_range">Autonomie Estimée</string>
     <string name="info_trip_section">Trajet Actuel</string>
     <string name="info_trip_time">Durée du Trajet</string>

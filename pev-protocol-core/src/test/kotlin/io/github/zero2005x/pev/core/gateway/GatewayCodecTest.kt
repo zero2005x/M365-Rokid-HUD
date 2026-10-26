@@ -21,6 +21,10 @@ class GatewayCodecTest {
     }
 
     @Test fun v1SafeDowngradePreservesAllActualM365FieldsAndDoubleQuantization() {
+        assertTrue(GatewayCodec.supportsLegacyV1(GatewayProtocol.VEHICLE_XIAOMI_M365))
+        assertFalse(GatewayCodec.supportsLegacyV1(GatewayProtocol.VEHICLE_BEGODE_EUC))
+        assertFalse(GatewayCodec.supportsLegacyV1(GatewayProtocol.VEHICLE_VETERAN))
+        assertEquals(GatewayProtocol.VEHICLE_BEGODE_EUC, GatewayCodec.vehicleTypeForFamily(io.github.zero2005x.pev.core.identity.Family.BEGODE))
         val frame = (v1() as V1EncodingResult.Success).frame
         assertEquals(1.15, frame.speedKmh, 0.0)
         assertEquals(12.0, frame.avgSpeedKmh, 0.0)

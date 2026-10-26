@@ -79,6 +79,7 @@
     <string name="info_avg_speed">Середня швидкість</string>
     <string name="info_battery_section">Інформація про батарею</string>
     <string name="info_battery_level">Рівень заряду</string>
+    <string name="info_pack_voltage">Напруга батареї</string>
     <string name="info_remaining_range">Розрахунковий запас ходу</string>
     <string name="info_trip_section">Поточна поїздка</string>
     <string name="info_trip_time">Час поїздки</string>

@@ -62,6 +62,12 @@ test.
 | **Ninebot Max G2** | ✅ | 📗 | — | — | — | — | — | — | ⚠️ Unverified | No register map |
 | **Ninebot F2** | ✅ | 📗 | — | — | — | — | — | — | ⚠️ Unverified | No register map |
 | **Ninebot D-series** | ✅ | 📗 | — | — | — | — | — | — | ⚠️ Unverified | No register map |
+| **Begode A2** | ✅ | ✅ | — | — | ✅ | — | — | — | 📗 Documented | ⚠️ speed/current scale & writes withheld |
+| **InMotion V11 (I1)** | ✅ | 📗 | — | — | — | — | — | — | ⚠️ Unverified | CAN envelope only; scales withheld |
+| **InMotion V12 / V13 / V14 (I2)** | ✅ | ⛔ | — | — | — | — | — | — | ⚠️ Unverified | Protocol & scales unverified |
+| **KingSong EUC** | ✅ | ⛔ | — | — | — | — | — | — | ⚠️ Unverified | No capture |
+| **Veteran / LeaperKim EUC** | ✅ | ⛔ | — | — | — | — | — | — | ⚠️ Unverified | Framing/CRC & scales unverified |
+| **Zydtech / Hobbywing Scooter** | ✅ | ⛔ | — | — | — | — | — | — | ⚠️ Unverified | Password gate & scales unverified |
 | **Segway GT / P / ZT3 / Max G3** | ⚠️ | 📗 | — | — | — | — | — | — | ⛔ Unknown | Not in scope |
 
 **Capability cells are deliberately empty, not zero.** A model with no published

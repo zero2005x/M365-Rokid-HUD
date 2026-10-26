@@ -313,9 +313,31 @@ class ScooterModelRegistryTest {
             ScooterModel.M365_PRO2,
             ScooterModel.MI_1S,
             ScooterModel.MI_LITE,
+            ScooterModel.BEGODE_A2,
         )) {
             assertTrue("${model.displayName} should produce telemetry", model.producesTelemetry)
         }
+    }
+
+    @Test
+    fun `Begode A2 and EUC families are identified from advertisement prefixes with honest capabilities`() {
+        val begode = ScooterModelRegistry.resolve("GotWay_75436")
+        assertEquals(ScooterModel.BEGODE_A2, begode.model)
+        assertEquals(Confidence.UNVERIFIED, begode.confidence)
+        assertTrue(begode.model.producesTelemetry)
+        assertTrue(begode.model.capabilities.packVoltage)
+        assertTrue(begode.model.capabilities.temperature)
+        assertFalse(begode.model.capabilities.speed)
+        assertFalse(begode.model.capabilities.batteryPercent)
+        assertFalse(begode.model.capabilities.motorLock)
+        assertFalse(begode.model.capabilities.tailLight)
+
+        assertEquals(ScooterModel.INMOTION_V11_I1, ScooterModelRegistry.resolve("V11-1234").model)
+        assertEquals(ScooterModel.KINGSONG_EUC, ScooterModelRegistry.resolve("KS-18XL").model)
+        assertEquals(ScooterModel.VETERAN_LEAPERKIM, ScooterModelRegistry.resolve("Sherman-S").model)
+        assertFalse(ScooterModel.INMOTION_V11_I1.producesTelemetry)
+        assertFalse(ScooterModel.KINGSONG_EUC.producesTelemetry)
+        assertFalse(ScooterModel.VETERAN_LEAPERKIM.producesTelemetry)
     }
 
     @Test
@@ -437,6 +459,12 @@ class ScooterModelRegistryTest {
             "NinebotMaxG2",
             "NinebotF2",
             "NinebotD",
+            "BegodeA2",
+            "InmotionV11",
+            "InmotionI2",
+            "KingSongEuc",
+            "VeteranLeaperKim",
+            "ZydtechScooter",
         )
     }
 }

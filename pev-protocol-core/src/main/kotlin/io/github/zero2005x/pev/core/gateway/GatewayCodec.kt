@@ -42,12 +42,29 @@ data class GatewayV2Supplement(
 )
 
 object GatewayCodec {
+    /** True only when [vehicleType] can be safely represented by the legacy 20-byte M365 V1 frame. */
+    fun supportsLegacyV1(vehicleType: Int): Boolean =
+        vehicleType == GatewayProtocol.VEHICLE_XIAOMI_M365
+
+    /** Maps a core [io.github.zero2005x.pev.core.identity.Family] to its [GatewayProtocol] wire code. */
+    fun vehicleTypeForFamily(family: io.github.zero2005x.pev.core.identity.Family): Int = when (family) {
+        io.github.zero2005x.pev.core.identity.Family.UNKNOWN -> GatewayProtocol.VEHICLE_UNKNOWN
+        io.github.zero2005x.pev.core.identity.Family.XIAOMI_SCOOTER -> GatewayProtocol.VEHICLE_XIAOMI_M365
+        io.github.zero2005x.pev.core.identity.Family.BEGODE -> GatewayProtocol.VEHICLE_BEGODE_EUC
+        io.github.zero2005x.pev.core.identity.Family.INMOTION_I1,
+        io.github.zero2005x.pev.core.identity.Family.INMOTION_I2 -> GatewayProtocol.VEHICLE_INMOTION
+        io.github.zero2005x.pev.core.identity.Family.KINGSONG -> GatewayProtocol.VEHICLE_KINGSONG
+        io.github.zero2005x.pev.core.identity.Family.VETERAN -> GatewayProtocol.VEHICLE_VETERAN
+        io.github.zero2005x.pev.core.identity.Family.ZYDTECH_SCOOTER -> GatewayProtocol.VEHICLE_ZYDTECH
+        io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER -> GatewayProtocol.VEHICLE_NINEBOT_G30_ESX
+    }
+
     /** V1 has no per-field unknown/stale representation, so an unsafe downgrade requires upgraded glasses. */
     fun encodeV1(snapshot: TelemetrySnapshot, vehicleType: Int, connectionState: Int, nowMs: Long,
         avgSpeed: Reading = Reading.NOT_PROVIDED, remainingRange: Reading = Reading.NOT_PROVIDED,
         maxAgeMs: Long = GatewayProtocol.DEFAULT_MAX_AGE_MS): V1EncodingResult {
         require(nowMs >= 0 && maxAgeMs >= 0) { "invalid freshness window" }
-        if (vehicleType != GatewayProtocol.VEHICLE_XIAOMI_M365 || !GatewayProtocol.validState(connectionState)) {
+        if (!supportsLegacyV1(vehicleType) || !GatewayProtocol.validState(connectionState)) {
             return incompatible(vehicleType, "vehicle/state cannot be represented")
         }
         val values = mapOf(

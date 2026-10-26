@@ -96,10 +96,7 @@ class ModelSupportDocConsistencyTest {
             val cells = rows[model.displayName] ?: continue
             // Cells: Recognised, Connectable, Speed, Battery, Temp, Odometer,
             // Range, Trip, Confidence, Blocker
-            val speedCell = cells.getOrNull(2) ?: continue
-            val batteryCell = cells.getOrNull(3) ?: continue
-
-            val docSaysReadable = speedCell == "✅" || batteryCell == "✅"
+            val docSaysReadable = cells.drop(2).take(6).any { it == "✅" }
             assertEquals(
                 "${model.displayName}: doc/MODEL_SUPPORT.md says readable=$docSaysReadable " +
                     "but the registry says producesTelemetry=${model.producesTelemetry}. " +

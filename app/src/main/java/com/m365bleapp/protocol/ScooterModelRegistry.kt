@@ -63,6 +63,8 @@ enum class Confidence(val label: String, val description: String) {
 data class ModelCapabilities(
     val speed: Boolean = true,
     val batteryPercent: Boolean = true,
+    /** Pack voltage in volts (`PACK_VOLTAGE`). */
+    val packVoltage: Boolean = false,
     /**
      * A second battery pack.
      *
@@ -90,8 +92,31 @@ data class ModelCapabilities(
         val NONE = ModelCapabilities(
             speed = false,
             batteryPercent = false,
+            packVoltage = false,
             secondaryBattery = false,
             temperature = false,
+            totalMileage = false,
+            remainingRange = false,
+            tripDistance = false,
+            tripTime = false,
+            tailLight = false,
+            motorLock = false,
+        )
+
+        /**
+         * Real-vehicle-verified capabilities for Begode A2 (`GotWay_75436` capture).
+         *
+         * Only `0x00` live pack voltage (`voltageWord / 100.0` V) and MPU6050
+         * temperature (`temperatureRaw / 340.0 + 36.53` °C) are verified on hardware.
+         * Speed, battery %, current, odometer, range, trip, and write controls
+         * remain off so the UI never displays fabricated zeros or unverified buttons.
+         */
+        val BEGODE_A2_VERIFIED = ModelCapabilities(
+            speed = false,
+            batteryPercent = false,
+            packVoltage = true,
+            secondaryBattery = false,
+            temperature = true,
             totalMileage = false,
             remainingRange = false,
             tripDistance = false,
@@ -103,11 +128,12 @@ data class ModelCapabilities(
 }
 
 /**
- * A scooter model this app knows about.
+ * A scooter or PEV model this app knows about.
  *
- * [rustId] must match the variant name in `ninebot_ble::model::ModelId`. The
- * mapping is asserted by a test, so a rename on one side fails the build rather
- * than silently desynchronising the two registries.
+ * [rustId] must match the variant name in `ninebot_ble::model::ModelId` for
+ * Xiaomi models, or appear in `NINEBOT_ONLY_IDS` for non-Rust families. The
+ * mapping is asserted by [ScooterModelRegistryTest], so a rename on one side
+ * fails the build rather than silently desynchronising the registries.
  */
 enum class ScooterModel(
     val rustId: String,
@@ -121,6 +147,8 @@ enum class ScooterModel(
      */
     val namePrefixes: List<String> = emptyList(),
     val capabilities: ModelCapabilities = ModelCapabilities.NONE,
+    val family: io.github.zero2005x.pev.core.identity.Family = io.github.zero2005x.pev.core.identity.Family.UNKNOWN,
+    val telemetryMaxAgeMs: Long = io.github.zero2005x.pev.core.gateway.GatewayProtocol.DEFAULT_MAX_AGE_MS,
 ) {
     M365(
         rustId = "M365",
@@ -129,6 +157,7 @@ enum class ScooterModel(
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
+            packVoltage = true,
             temperature = true,
             totalMileage = true,
             remainingRange = true,
@@ -137,6 +166,7 @@ enum class ScooterModel(
             tailLight = true,
             motorLock = true,
         ),
+        family = io.github.zero2005x.pev.core.identity.Family.XIAOMI_SCOOTER,
     ),
 
     M365_PRO(
@@ -146,6 +176,7 @@ enum class ScooterModel(
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
+            packVoltage = true,
             temperature = true,
             totalMileage = true,
             remainingRange = true,
@@ -154,6 +185,7 @@ enum class ScooterModel(
             tailLight = true,
             motorLock = true,
         ),
+        family = io.github.zero2005x.pev.core.identity.Family.XIAOMI_SCOOTER,
     ),
 
     M365_PRO2(
@@ -163,6 +195,7 @@ enum class ScooterModel(
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
+            packVoltage = true,
             temperature = true,
             totalMileage = true,
             remainingRange = true,
@@ -171,6 +204,7 @@ enum class ScooterModel(
             tailLight = true,
             motorLock = true,
         ),
+        family = io.github.zero2005x.pev.core.identity.Family.XIAOMI_SCOOTER,
     ),
 
     MI_1S(
@@ -180,6 +214,7 @@ enum class ScooterModel(
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
+            packVoltage = true,
             temperature = true,
             totalMileage = true,
             remainingRange = true,
@@ -188,6 +223,7 @@ enum class ScooterModel(
             tailLight = true,
             motorLock = true,
         ),
+        family = io.github.zero2005x.pev.core.identity.Family.XIAOMI_SCOOTER,
     ),
 
     MI_LITE(
@@ -197,6 +233,7 @@ enum class ScooterModel(
         capabilities = ModelCapabilities(
             speed = true,
             batteryPercent = true,
+            packVoltage = true,
             temperature = true,
             totalMileage = true,
             remainingRange = true,
@@ -205,6 +242,7 @@ enum class ScooterModel(
             tailLight = true,
             motorLock = true,
         ),
+        family = io.github.zero2005x.pev.core.identity.Family.XIAOMI_SCOOTER,
     ),
 
     /**
@@ -216,6 +254,7 @@ enum class ScooterModel(
         displayName = "Xiaomi Mi 3",
         namePrefixes = XIAOMI_NAME_PREFIXES,
         capabilities = ModelCapabilities.NONE,
+        family = io.github.zero2005x.pev.core.identity.Family.XIAOMI_SCOOTER,
     ),
 
     // --- Ninebot / Segway families -----------------------------------------
@@ -224,26 +263,117 @@ enum class ScooterModel(
     // published and this project refuses to guess them. Capabilities are NONE so
     // the UI shows no readings rather than zeros.
 
-    NINEBOT_ESX(rustId = "NinebotESx", displayName = "Ninebot ESx"),
-    NINEBOT_MAX_G30(rustId = "NinebotMaxG30", displayName = "Ninebot Max G30"),
-    NINEBOT_E_SERIES(rustId = "NinebotE", displayName = "Ninebot E-series"),
-    NINEBOT_F_SERIES(rustId = "NinebotF", displayName = "Ninebot F-series"),
-    NINEBOT_T15(rustId = "NinebotT15", displayName = "Ninebot Air T15"),
+    NINEBOT_ESX(
+        rustId = "NinebotESx",
+        displayName = "Ninebot ESx",
+        family = io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER,
+    ),
+    NINEBOT_MAX_G30(
+        rustId = "NinebotMaxG30",
+        displayName = "Ninebot Max G30",
+        family = io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER,
+    ),
+    NINEBOT_E_SERIES(
+        rustId = "NinebotE",
+        displayName = "Ninebot E-series",
+        family = io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER,
+    ),
+    NINEBOT_F_SERIES(
+        rustId = "NinebotF",
+        displayName = "Ninebot F-series",
+        family = io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER,
+    ),
+    NINEBOT_T15(
+        rustId = "NinebotT15",
+        displayName = "Ninebot Air T15",
+        family = io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER,
+    ),
 
     NINEBOT_MAX_G2(
         rustId = "NinebotMaxG2",
         displayName = "Ninebot Max G2",
         namePrefixes = listOf("NB", "Ninebot", "Segway"),
+        family = io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER,
     ),
     NINEBOT_F2(
         rustId = "NinebotF2",
         displayName = "Ninebot F2",
         namePrefixes = listOf("NB", "Ninebot", "Segway"),
+        family = io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER,
     ),
     NINEBOT_D_SERIES(
         rustId = "NinebotD",
         displayName = "Ninebot D-series",
         namePrefixes = listOf("NB", "Ninebot", "Segway"),
+        family = io.github.zero2005x.pev.core.identity.Family.NINEBOT_SCOOTER,
+    ),
+
+    // --- EUC & Multi-Device PEV families -----------------------------------
+
+    /**
+     * Begode A2 (`GotWay_*` on `0xffe0`/`0xffe1`).
+     *
+     * Passive 24-byte `55 AA ... 5A 5A 5A 5A` notification stream. Real-vehicle
+     * capture confirms `0x00` pack voltage and MPU6050 IMU temperature; speed,
+     * current, SOC and all write commands remain withheld.
+     */
+    BEGODE_A2(
+        rustId = "BegodeA2",
+        displayName = "Begode A2",
+        namePrefixes = listOf("GotWay_", "Begode"),
+        capabilities = ModelCapabilities.BEGODE_A2_VERIFIED,
+        family = io.github.zero2005x.pev.core.identity.Family.BEGODE,
+        telemetryMaxAgeMs = io.github.zero2005x.pev.core.codec.begode.BegodeA2Codec.STALE_AFTER_MS,
+    ),
+
+    /**
+     * InMotion V11 / I1 family (`AA AA ... 55 55` escaped CAN envelope).
+     *
+     * Envelope parser (`InmotionI1Codec`) is implemented, but physical field scales
+     * and write commands are withheld pending hardware capture.
+     */
+    INMOTION_V11_I1(
+        rustId = "InmotionV11",
+        displayName = "InMotion V11 (I1)",
+        namePrefixes = listOf("V11", "InMotion"),
+        capabilities = ModelCapabilities.NONE,
+        family = io.github.zero2005x.pev.core.identity.Family.INMOTION_I1,
+    ),
+
+    /** InMotion I2 family (V12 / V13 / V14). Recognised only; protocol withheld. */
+    INMOTION_I2(
+        rustId = "InmotionI2",
+        displayName = "InMotion V12 / V13 / V14 (I2)",
+        namePrefixes = listOf("V12", "V13", "V14"),
+        capabilities = ModelCapabilities.NONE,
+        family = io.github.zero2005x.pev.core.identity.Family.INMOTION_I2,
+    ),
+
+    /** KingSong EUC family (`KS-*`). Recognised only; telemetry and writes withheld. */
+    KINGSONG_EUC(
+        rustId = "KingSongEuc",
+        displayName = "KingSong EUC",
+        namePrefixes = listOf("KS-", "KingSong"),
+        capabilities = ModelCapabilities.NONE,
+        family = io.github.zero2005x.pev.core.identity.Family.KINGSONG,
+    ),
+
+    /** Veteran / LeaperKim EUC family (`LK*`, Sherman, Patton, Lynx). Recognised only. */
+    VETERAN_LEAPERKIM(
+        rustId = "VeteranLeaperKim",
+        displayName = "Veteran / LeaperKim EUC",
+        namePrefixes = listOf("LK", "Veteran", "LeaperKim", "Sherman", "Patton", "Lynx"),
+        capabilities = ModelCapabilities.NONE,
+        family = io.github.zero2005x.pev.core.identity.Family.VETERAN,
+    ),
+
+    /** Zydtech / Hobbywing scooter family (`HW_*`). Recognised only; password gate withheld. */
+    ZYDTECH_SCOOTER(
+        rustId = "ZydtechScooter",
+        displayName = "Zydtech / Hobbywing Scooter",
+        namePrefixes = listOf("HW_"),
+        capabilities = ModelCapabilities.NONE,
+        family = io.github.zero2005x.pev.core.identity.Family.ZYDTECH_SCOOTER,
     ),
 
     /** No model could be identified. */
@@ -251,7 +381,7 @@ enum class ScooterModel(
 
     /** True when the app can actually produce readings for this model. */
     val producesTelemetry: Boolean
-        get() = capabilities.speed || capabilities.batteryPercent
+        get() = capabilities.speed || capabilities.batteryPercent || capabilities.packVoltage || capabilities.temperature
 }
 
 /**

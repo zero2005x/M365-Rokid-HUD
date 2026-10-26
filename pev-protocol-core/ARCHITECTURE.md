@@ -43,8 +43,10 @@ cannot identify every delayed same-register reply. The App must isolate polling 
 through one writer before production adoption. That Rust/GATT adapter and phone UI are pending;
 current repository writes are not yet routed through this coordinator.
 
-`BegodeA2Codec` reuses bounded framing and returns raw branch diagnostics. It emits an empty
-physical snapshot, including for unknown profiles: it cannot grant battery/voltage/SOC/PWM truth.
+`BegodeA2Codec` reuses bounded framing and returns raw branch diagnostics. When called with an
+observation timestamp on `Profile.A2`, it populates only the real-vehicle-confirmed `0x00` live
+fields (`PACK_VOLTAGE` and `TEMP_IMU`), while keeping speed, current, SOC, range, distance and the
+`@14..15` packed mode word (which is never PWM) as `NOT_PROVIDED`.
 
 `InmotionI1Codec` decodes a bounded escaped CAN envelope with additive checksum and trailer.
 It accepts observed length codes 08/FE, separates raw CAN metadata/extension and returns no physical
@@ -58,13 +60,14 @@ wrapping; it is a compatibility codec for the existing M365 primitive APIs. The 
 is a separate strict policy and refuses missing, stale or unrepresentable fields. New vehicles
 must never enter the primitive V1 update APIs.
 
-V2 is an unreleased core schema. Explicit field IDs preserve battery/phase current and all
-temperature sensors. Serialization validates states, metadata, finite values, wire bounds and
-source lengths; parsing validates complete length/CRC and ages original observations. Sender
-and receiver need the same epoch clock basis. Receipt time cannot replace observation time.
-The phone must negotiate the schema and bounded packet delivery for each new connection before
-adoption. The App currently does not send V2; glass upgrade UI and negotiated BLE/Wi-Fi delivery
-remain pending. Core alert deduplication also requires per-connection ownership and reset.
+V2 (`0x10`) is active over Wi-Fi (`WifiHudServer` / `TypedTelemetryReceiver`). Explicit field IDs
+preserve battery/phase current and all temperature sensors. Serialization validates states, metadata,
+finite values, wire bounds and source lengths; parsing validates complete length/CRC and ages original
+observations. Sender and receiver need the same epoch clock basis; `TypedTelemetryReceiver` evaluates
+freshness against `frame.generatedAtMs`. Receipt time cannot replace observation time.
+The phone negotiates the schema and bounded packet delivery for each new connection via
+`GatewayNegotiation`, using `GatewayCodec.supportsLegacyV1(vehicleType)` to restrict `LEGACY_V1`
+strictly to Xiaomi M365. Core alert deduplication also requires per-connection ownership and reset.
 
 ## Adding a family
 Create `codec/<family>/`, implement a `FrameSplitter`, a decoder producing `TelemetrySnapshot`,

@@ -104,6 +104,7 @@
     <string name="info_avg_speed">平均速度</string>
     <string name="info_battery_section">電池資訊</string>
     <string name="info_battery_level">電量</string>
+    <string name="info_pack_voltage">電池電壓</string>
     <string name="info_remaining_range">預估剩餘里程</string>
     <string name="info_trip_section">本次行程</string>
     <string name="info_trip_time">行駛時間</string>

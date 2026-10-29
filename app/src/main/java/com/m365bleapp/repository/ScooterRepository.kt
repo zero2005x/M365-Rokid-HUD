@@ -474,7 +474,7 @@ class ScooterRepository private constructor(
     private suspend fun runNinebotHandshake(
         gatt: android.bluetooth.BluetoothGatt,
         advertisedName: ByteArray,
-    ): Boolean {
+    ): com.m365bleapp.protocol.NinebotCryptoCipher? {
         val connection = capturedConnection()
         val stored = sharedPreferences.getString(gatt.device.address.uppercase() + "_nb_random", null)
         val chars = stored?.toCharArray()
@@ -533,12 +533,12 @@ class ScooterRepository private constructor(
 
             return if (handshake.isPaired) {
                 Log.i("ScooterRepo", "NinebotCrypto: paired")
-                true
+                handshake.cipher ?: error("Paired Ninebot without cipher")
             } else {
                 val reason = handshake.failureReason ?: "handshake did not complete"
                 Log.e("ScooterRepo", "NinebotCrypto: pairing failed: $reason")
                 connectionResources.ifCurrent(connection.value) { _connectionState.value = ConnectionState.Error("Pairing failed: $reason") }
-                false
+                null
             }
         } finally {
             connectionResources.ifCurrent(connection.value) { sensitiveHandshake = false }
@@ -975,23 +975,10 @@ class ScooterRepository private constructor(
                         _connectionState.value = ConnectionState.Handshaking(getString(R.string.connecting))
                     }
                     check(bleManager.enableNotifications(gatt, uartService, uartRx) { }) { UART_SUBSCRIPTION_FAILED }
-                    val paired = runNinebotHandshake(gatt, name)
-                    check(paired) { "Ninebot pairing failed" }
-                    connectionResources.ifCurrent(attempt) { _connectionState.value = ConnectionState.Ready }
-                    // The handshake installs the session cipher; the telemetry loop
-                    // still needs the fallback path until an encrypted plaintext loop
-                    // exists, which is the next piece of work.
-                    Log.i("ScooterRepo", "NinebotCrypto: paired; encrypted telemetry pending")
-                    startPlaintextTelemetryLoop(
-                        PlaintextRegisterSession(
-                            protocol = com.m365bleapp.protocol.FrameCodec.Protocol.P2,
-                            write = PlaintextRegisterSession.Write { frame ->
-                                writeChar(uartService, uartTx, frame, waitForResponse = false)
-                            },
-                        ),
-                        gatt,
-                        attemptContext,
-                    )
+                    val cipher = runNinebotHandshake(gatt, name)
+                    checkNotNull(cipher) { "Ninebot pairing failed" }
+                    // Treat pairing as Handshaking until a valid register reply arrives.
+                    startNinebotCryptoTelemetryLoop(cipher, gatt, attemptContext)
                     return@launch
                 }
 
@@ -1350,6 +1337,84 @@ class ScooterRepository private constructor(
     // discipline: per-register scheduling, timeout/retry and reconnect-on-death
     // are one cohesive control flow. Extracting parts would split the request/
     // reply invariant across functions. Restructure needs on-hardware checking.
+    /**
+     * Experimental, read-only SHU telemetry for NinebotCrypto devices.
+     * One in-flight request at a time. Nothing here can lock or reconfigure
+     * the scooter; the BLE epoch owns the cipher and the poll job.
+     */
+    private fun startNinebotCryptoTelemetryLoop(
+        cipher: com.m365bleapp.protocol.NinebotCryptoCipher,
+        gatt: BluetoothGatt,
+        connection: ConnectionEpoch,
+    ) {
+        val epoch = connection.value
+        connectionResources.ifCurrent(epoch) {
+            plaintextJob = scope.launch(ioDispatcher + connection) {
+                val session = com.m365bleapp.protocol.NinebotEncryptedReadSession(cipher)
+                val queries = listOf(0xB5 to 2, 0x1B to 2, 0x3E to 2, 0x3B to 1)
+                var index = 0
+                var failures = 0
+                var sawTelemetry = false
+                while (capturedConnection().uart.tryReceive().isSuccess) { /* discard handshake frames */ }
+                while (currentCoroutineContext().isActive &&
+                    connectionResources.isCurrent(epoch) && activeGatt === gatt
+                ) {
+                    val (register, count) = queries[index++ % queries.size]
+                    var accepted = false
+                    try {
+                        val request = session.buildRead(register, count)
+                        check(submitEncryptedOnce(request, epoch)) { "Ninebot encrypted write failed" }
+                        val deadline = System.currentTimeMillis() + PLAINTEXT_REPLY_TIMEOUT_MS
+                        val frameBuffer = com.m365bleapp.protocol.NinebotEncryptedFrameBuffer()
+                        while (System.currentTimeMillis() < deadline && !accepted) {
+                            val remaining = deadline - System.currentTimeMillis()
+                            val chunk = withTimeoutOrNull(minOf(PLAINTEXT_CHUNK_WAIT_MS, remaining)) {
+                                capturedConnection().uart.receive()
+                            } ?: continue
+                            val frame = frameBuffer.push(chunk) ?: continue
+                            val payload = session.accept(register, frame)
+                            if (payload != null) {
+                                val update = com.m365bleapp.protocol.PlaintextTelemetryMapper.decode(
+                                    register = register, payload = payload, xiaomi = false)
+                                if (update !is com.m365bleapp.protocol.PlaintextTelemetryMapper.Update.Ignored) {
+                                    val motor = com.m365bleapp.protocol.PlaintextTelemetryMapper.apply(
+                                        current = _motorInfo.value, update = update)
+                                    if (motor != null) {
+                                        connectionResources.ifCurrent(epoch) {
+                                            _motorInfo.value = motor
+                                            if (!sawTelemetry) {
+                                                logger.startSession()
+                                                _connectionState.value = ConnectionState.Ready
+                                            }
+                                            logger.log(motor)
+                                        }
+                                        sawTelemetry = true
+                                        accepted = true
+                                    }
+                                }
+                            }
+                            // Do not treat a mismatched notification as this request.
+                            break
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w("ScooterRepo", "Ninebot read-only telemetry failed: " + e.message)
+                    }
+                    failures = if (accepted) 0 else failures + 1
+                    if (failures >= PLAINTEXT_FAILURES_BEFORE_RECONNECT) {
+                        val retired = releaseConnection(expectedEpoch = epoch)
+                        if (retired != null) connectionResources.ifCurrent(retired) {
+                            reportConnectionLost()
+                        }
+                        return@launch
+                    }
+                    delay(PLAINTEXT_POLL_INTERVAL_MS)
+                }
+            }
+        }
+    }
+
     private fun startPlaintextTelemetryLoop(session: PlaintextRegisterSession, gatt: android.bluetooth.BluetoothGatt, connection: ConnectionEpoch) { // NOSONAR
         val expectedEpoch = connection.value
         connectionResources.ifCurrent(expectedEpoch) {

@@ -62,7 +62,7 @@ class NinebotCryptoCipher private constructor(
         const val FRAME_OVERHEAD = 9
 
         /** Smallest legal frame. */
-        const val MIN_FRAME_LEN = FRAME_OVERHEAD
+        const val MIN_FRAME_LEN = 7 // 5A A5 + length + 4-byte inner command; six bytes are appended by encrypt()
 
         /** Nonce domain-separation byte for the payload keystream. */
         private const val NONCE_TAG_PAYLOAD: Byte = 0x01
